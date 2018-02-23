@@ -1,0 +1,29 @@
+{
+    "github_login": "squid-anubis",
+    "github_token": "425af12a0743502b322e93a015bcf868e324d56a",
+    "github_webhook_path": "/anubis",
+    "github_webhook_secret": "720fe5c323514f172f8816b42159bd3f1959f61e",
+    "host": "",
+    "port": 7777,
+    "repo": "squid",
+    "owner": "squid-cache",
+    "dry_run": false,
+    "staged_run": false,
+    "staging_branch": "auto",
+    "necessary_approvals": 1,
+    "sufficient_approvals": 2,
+    "voting_delay_min": "2d",
+    "voting_delay_max": "10d",
+    "staging_checks": 2,
+    "logger_params" : {
+        "name" : "anubis",
+        "streams" : [
+          {
+            "type": "rotating-file",
+            "path": "/var/log/anubis/debug.log",
+            "period": "1d",
+            "count": 3
+          }
+        ]
+    }
+}

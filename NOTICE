@@ -1,0 +1,10 @@
+This product includes Measurement Factory software distributed under the
+Apache v2.0 license.
+    http://www.measurement-factory.com/
+    https://www.apache.org/licenses/LICENSE-2.0
+
+This product includes Doug Melton's EggTimer code (as of EggTimer commit
+c30ec7d) distributed under the Apache v2.0 license.
+    http://dgmltn.com/
+    https://github.com/dgmltn/EggTimer
+    https://www.apache.org/licenses/LICENSE-2.0

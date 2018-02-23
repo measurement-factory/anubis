@@ -1,0 +1,26 @@
+{
+  "name": "change-anubis",
+  "version": "1.0.0",
+  "description": "A bot that merges GitHub pull requests",
+  "main": "Main.js",
+  "dependencies": {
+    "@octokit/rest": "^14.0.8",
+    "bunyan": "^1.8.12",
+    "github-webhook-handler": "^0.6.0",
+    "parse-github-url": "^0.3.2",
+    "timestring": "^5.0.0"
+  },
+  "devDependencies": {
+    "eslint": "^4.14.0"
+  },
+  "homepage": "https://github.com/measurement-factory/anubis#readme"
+  "bugs": {
+    "url": "https://github.com/measurement-factory/anubis/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/measurement-factory/anubis.git"
+  },
+  "author": "The Measurement Factory",
+  "license": "Apache-2.0"
+}
