@@ -156,12 +156,17 @@ request state:
   consult CI logs to determine what happened. The bot does not attempt
   to merge this PR again until the PR branch or PR target branch change.
   When the bot notices that change, it removes this label.
+* `M-cleared-for-merge`: A human allowed the bot running in
+  `config::staged_run` mode to merge the PR. The label has no effect
+  unless the bot is running in that mode. The bot never sets this label.
+  The bot removes this label after successfully merging the PR.
 * `M-merged`: The PR was successfully merged (and probably closed).
   The bot will not attempt to merge this PR again even if it is
   reopened. The bot never removes this label.
 
-All labels, except `M-merged`, are ignored by the bot itself! Humans
-may find them useful when determining the current state of a PR.
+All labels, except `M-cleared-for-merge` and `M-merged`, are ignored by
+the bot itself! Humans may find them useful when determining the current
+state of a PR.
 
 
 ## Commit message
@@ -271,7 +276,7 @@ All configuration fields are required.
 *repo* | The name of the GitHub repository that the bot should serve. | "squid"
 *owner* | The owner (a person or organization) of the GitHub repository. | "squid-cache"
 *dry_run*| A boolean option to enable read-only, no-modifications mode where the bot logs pull requests selected for merging but skips further merging steps, including PR labeling and commit tagging | false
-*staged_run*| A boolean option to enable no-final-modifications mode where the bot performs all the merging steps up to (and not including) the target branch update. Eligible PRs are merged into and tested on the staging branch but are never merged into their target branches. | false
+*staged_run*| A boolean option instructing the bot to avoid target branch updates unless the PR has a human-set `M-cleared-for-merge` label. When enabled, an eligible PR is merged into and tested on the staging branch. A successfully tested staged commit is then automatically merged into its target branch if and only if the PR has an `M-cleared-for-merge` label. | false
 *staging_branch* | The name of the bot-maintained git branch used for testing PR changes as if they were merged into their target branch. | auto
 *necessary_approvals* | The minimal number of core developers required for a PR to be merged. PRs with fewer votes are not merged, regardless of their age. | 1
 *sufficient_approvals* | The minimal number of core developers required for a PR to be merged fast (i.e., without waiting for `config::voting_delay_max`) | 2
