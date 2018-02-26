@@ -23,6 +23,10 @@
             "path": "/var/log/anubis/debug.log",
             "period": "1d",
             "count": 3
+          },
+          {
+              "stream": "process.stdout",
+              "level": "info"
           }
         ]
     }
