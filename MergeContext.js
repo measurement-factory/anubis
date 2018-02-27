@@ -85,6 +85,11 @@ class MergeContext {
             return false;
         }
 
+        if (await this._guardedRun("finish processing")) {
+            await this._labelPassedStagingChecks();
+            return false;
+        }
+
         if (!(await this._finishMerging()))
             return true;
         this._log("merged successfully");
@@ -475,7 +480,8 @@ class MergeContext {
     async _labelMerged() {
         await this._removeLabelsIf([
                 Config.waitingStagingChecksLabel(),
-                Config.passedStagingChecksLabel()
+                Config.passedStagingChecksLabel(),
+                Config.clearedForMergeLabel()
                 ]);
         await this._addLabel(Config.mergedLabel());
     }
@@ -567,6 +573,17 @@ class MergeContext {
         if (!Config.stagedRun())
             return false;
         this._log("skip " + msg + " due to staged_run option");
+        return true;
+    }
+
+    async _guardedRun(msg) {
+        if (!Config.guardedRun())
+            return false;
+        if (await this._hasLabel(Config.clearedForMergeLabel(), this._number())) {
+            this._log("allow " + msg + " due to guarded_run and " + Config.clearedForMergeLabel());
+            return false;
+        }
+        this._log("skip " + msg + " due to guarded_run option");
         return true;
     }
 
