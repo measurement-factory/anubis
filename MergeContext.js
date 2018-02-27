@@ -509,11 +509,11 @@ class MergeContext {
     _prHeadSha() { return this._pr.head.sha; }
 
     _prMessage() {
-        return this._pr.title + ' (#' + this._pr.number + ')' + '\n\n' + this._pr.body;
+        return this._pr.title + ' (#' + this._pr.number + ')' + '\n\n' + this._prBody();
     }
 
     _prMessageValid() {
-        const lines = this._prMessage().split(/\r*\n/);
+        const lines = this._prMessage().split('\n');
         for (let line of lines) {
             if (line.length > 72)
                 return false;
@@ -541,6 +541,8 @@ class MergeContext {
     _prBaseBranchPath() { return "heads/" + this._prBaseBranch(); }
 
     _prOpen() { return this._pr.state === 'open'; }
+
+    _prBody() { return this._pr.body.replace(/\r+\n/g, '\n'); }
 
     _stagingTag() { return Util.StagingTag(this._pr.number); }
 
