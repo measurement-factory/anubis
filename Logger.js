@@ -2,10 +2,7 @@ const assert = require('assert');
 const bunyan = require('bunyan');
 const Config = require('./Config.js');
 
-let Logger = null;
-
-Logger = bunyan.createLogger(Config.loggerParams());
-Logger.addStream({stream: process.stdout}); # XXX: Remove? We have Config.loggerParams().
+const Logger = bunyan.createLogger(Config.loggerParams());
 
 function LogError(err, context) {
     assert(context);
