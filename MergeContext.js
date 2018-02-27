@@ -19,6 +19,10 @@ class MergeContext {
     // Returns 'true' if all PR checks passed successfully and merging
     // started,'false' if we can't start the PR due to some failed checks.
     async startProcessing() {
+        // TODO: Optimize old/busy repo by quitting unless _prOpen().
+
+        // TODO: Optimize label tests by caching all PR labels here.
+
         if (!this._dryRun("reset labels before precondition checking"))
             await this._unlabelPreconditionsChecking();
 
@@ -80,12 +84,7 @@ class MergeContext {
         if (this._dryRun("finish processing"))
             return false;
 
-        if (this._stagedRun("finish processing")) {
-            await this._labelPassedStagingChecks();
-            return false;
-        }
-
-        if (await this._guardedRun("finish processing")) {
+        if (this._stagingOnly("finish processing")) {
             await this._labelPassedStagingChecks();
             return false;
         }
@@ -235,6 +234,7 @@ class MergeContext {
     // throws on unexpected error
     async _finishMerging() {
         assert(this._tagSha);
+        assert(!Config.dryRun());
         assert(!Config.stagedRun());
         this._log("finish merging...");
         try {
@@ -562,6 +562,8 @@ class MergeContext {
         Log.Logger.info(this._debugString() + "):", msg);
     }
 
+    // TODO: Rename to _readOnly()
+    // whether all GitHub/repository changes are prohibited
     _dryRun(msg) {
         if (!Config.dryRun())
             return false;
@@ -569,22 +571,26 @@ class MergeContext {
         return true;
     }
 
-    _stagedRun(msg) {
-        if (!Config.stagedRun())
-            return false;
-        this._log("skip " + msg + " due to staged_run option");
-        return true;
-    }
+    // whether target branch changes are prohibited
+    async _stagingOnly(msg) {
+        // TODO: The caller should not have to remember to call _dryRun() first
+        assert(!this._dryRun("_stagingOnly"));
 
-    async _guardedRun(msg) {
-        if (!Config.guardedRun())
-            return false;
-        if (await this._hasLabel(Config.clearedForMergeLabel(), this._number())) {
-            this._log("allow " + msg + " due to guarded_run and " + Config.clearedForMergeLabel());
-            return false;
+        if (Config.stagedRun()) {
+            this._log("skip " + msg + " due to staged_run option");
+            return true;
         }
-        this._log("skip " + msg + " due to guarded_run option");
-        return true;
+
+        if (Config.guardedRun()) {
+            if (await this._hasLabel(Config.clearedForMergeLabel(), this._number())) {
+                this._log("allow " + msg + " due to " + Config.clearedForMergeLabel() + " overruling guarded_run option");
+                return false;
+            }
+            this._log("skip " + msg + " due to guarded_run option");
+            return true;
+        }
+
+        return false; // no staging-only mode by default
     }
 
     _toString() {

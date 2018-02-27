@@ -82,11 +82,11 @@ class ConfigOptions {
     mergedLabel() { return "M-merged"; }
     // merge started (tag and staging branch successfully adjusted)
     waitingStagingChecksLabel() { return "M-waiting-staging-checks"; }
-    // passed staging checks (in staged-run/guarded_run modes)
+    // passed staging checks (in staging-only mode)
     passedStagingChecksLabel() { return "M-passed-staging-checks"; }
     // future commit message violates requirements
     failedDescriptionLabel() { return "M-failed-description"; }
-    // allows final merge in 'guarded_run' mode
+    // allows target branch update in 'guarded_run' mode
     clearedForMergeLabel() { return "M-cleared-for-merge"; }
 }
 
