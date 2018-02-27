@@ -4,7 +4,14 @@ const assert = require('assert');
 
 class ConfigOptions {
     constructor(fname) {
-        const conf = JSON.parse(fs.readFileSync(fname));
+        const conf = JSON.parse(fs.readFileSync(fname), (key, value) => {
+                    if (value === "process.stdout")
+                         return process.stdout;
+                    if (value === "process.stderr")
+                         return process.stderr;
+                    return value;
+                });
+
         this._githubUserLogin = conf.github_login;
         this._githubToken = conf.github_token;
         this._githubWebhookPath = conf.github_webhook_path;
