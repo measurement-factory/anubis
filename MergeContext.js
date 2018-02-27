@@ -513,7 +513,7 @@ class MergeContext {
     }
 
     _prMessageValid() {
-        const lines = this._prMessage().split('\n');
+        const lines = this._prMessage().split(/\r*\n/);
         for (let line of lines) {
             if (line.length > 72)
                 return false;
