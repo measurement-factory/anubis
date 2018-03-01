@@ -225,6 +225,8 @@ function createReference(sha, ref) {
 
 function updateReference(ref, sha, force) {
     assert(!Config.dryRun());
+    assert((ref === Config.stagingBranchPath()) || !Config.stagedRun());
+
     let params = commonParams();
     params.ref = ref;
     params.sha = sha;

@@ -234,8 +234,6 @@ class MergeContext {
     // throws on unexpected error
     async _finishMerging() {
         assert(this._tagSha);
-        assert(!Config.dryRun());
-        assert(!Config.stagedRun());
         this._log("finish merging...");
         try {
             await GH.updateReference(this._prBaseBranchPath(), this._tagSha, false);
