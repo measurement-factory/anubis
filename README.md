@@ -140,8 +140,9 @@ request state:
   `config::staging_checks` tests have completed.
 * `M-passed-staging-checks`: Similar to the GitHub "green check" mark
   for the staging branch commit (but ignores failures of optional
-  checks). Applied only if `config::staged_run` option is on. The bot
-  removes this label when either PR was successfully merged or staging
+  checks). Applied only when the bot is running in staging-only mode (see
+  `config::staged_run` and `config::guarded_run`). The bot removes this
+  label when either the PR was successfully merged or its staging
   results are no longer fresh/applicable.
 * `M-failed-staging-checks`: Essentially duplicates GitHub "red x" mark
   for the _staging commit_. The bot removes this label when it notices
@@ -156,12 +157,20 @@ request state:
   consult CI logs to determine what happened. The bot does not attempt
   to merge this PR again until the PR branch or PR target branch change.
   When the bot notices that change, it removes this label.
+* `M-cleared-for-merge`: A human has allowed the bot running in
+  `config::guarded_run` mode to perform the final merging step --
+  updating the target branch. The label has no effect unless the bot is
+  running in that mode. This is the only bot-related label that is meant
+  to be set by humans; the bot itself never sets this label. The bot
+  removes this label after successfully merging the PR. Avoid setting
+  this label unless you are a human responsible for testing the bot.
 * `M-merged`: The PR was successfully merged (and probably closed).
   The bot will not attempt to merge this PR again even if it is
   reopened. The bot never removes this label.
 
-All labels, except `M-merged`, are ignored by the bot itself! Humans
-may find them useful when determining the current state of a PR.
+All labels, except `M-cleared-for-merge` and `M-merged`, are ignored by
+the bot itself! Humans may find them useful when determining the current
+state of a PR.
 
 
 ## Commit message
@@ -271,7 +280,8 @@ All configuration fields are required.
 *repo* | The name of the GitHub repository that the bot should serve. | "squid"
 *owner* | The owner (a person or organization) of the GitHub repository. | "squid-cache"
 *dry_run*| A boolean option to enable read-only, no-modifications mode where the bot logs pull requests selected for merging but skips further merging steps, including PR labeling and commit tagging | false
-*staged_run*| A boolean option to enable no-final-modifications mode where the bot performs all the merging steps up to (and not including) the target branch update. Eligible PRs are merged into and tested on the staging branch but are never merged into their target branches. | false
+*staged_run*| A boolean option to enable staging-only mode where the bot performs all the merging steps up to (but not including) the target branch update. Eligible PRs are merged into and tested on the staging branch but are never merged into their target branches. Staging-only mode prevents any target branch modifications by the bot. TODO: Check that the PR target branch is not the configured staging branch, setting `M-failed-other` if needed. | false
+*guarded_run*| Enables staging-only mode (see `config::staged_run`) for PRs without a `M-cleared-for-merge` label. Has no effect on PRs with that label. While `config::staged_run` blocks target branch modifications, this option allows them for a human-designated subset of PRs. | false
 *staging_branch* | The name of the bot-maintained git branch used for testing PR changes as if they were merged into their target branch. | auto
 *necessary_approvals* | The minimal number of core developers required for a PR to be merged. PRs with fewer votes are not merged, regardless of their age. | 1
 *sufficient_approvals* | The minimal number of core developers required for a PR to be merged fast (i.e., without waiting for `config::voting_delay_max`) | 2
@@ -279,6 +289,8 @@ All configuration fields are required.
 *voting_delay_max* | The maximum merging age of a PR that has fewer than `config::sufficient_approvals` votes. The PR age string should comply with [timestring](https://github.com/mike182uk/timestring) parser. | "10d"
 *staging_checks*| The expected number of CI tests executed against the staging branch. | 2
 *logger_params* | A JSON-formatted parameter list for the [Bunyan](https://github.com/trentm/node-bunyan) logging library [constructor](https://github.com/trentm/node-bunyan#constructor-api). | <pre>{<br>    "name": "anubis",<br>    "streams": [ ... ]<br>}</pre>
+
+TODO: Merge all three "mutually exclusive" boolean `*_run` options into one `run_mode` option accepting on of four mode names, including "production". Document individual string values in a separate table (here).
 
 
 ## Caveats

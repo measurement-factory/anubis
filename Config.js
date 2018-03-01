@@ -23,6 +23,7 @@ class ConfigOptions {
         this._stagingBranch = conf.staging_branch;
         this._dryRun = conf.dry_run;
         this._stagedRun = conf.staged_run;
+        this._guardedRun = conf.guarded_run;
         this._necessaryApprovals = conf.necessary_approvals;
         this._sufficientApprovals = conf.sufficient_approvals;
         assert(this._sufficientApprovals > 1);
@@ -72,6 +73,7 @@ class ConfigOptions {
     stagingBranchPath() { return "heads/" + this._stagingBranch; }
     dryRun() { return this._dryRun; }
     stagedRun() { return this._stagedRun; }
+    guardedRun() { return this._guardedRun; }
     necessaryApprovals() { return this._necessaryApprovals; }
     sufficientApprovals() { return this._sufficientApprovals; }
     votingDelayMax() { return this._votingDelayMax; }
@@ -87,10 +89,12 @@ class ConfigOptions {
     mergedLabel() { return "M-merged"; }
     // merge started (tag and staging branch successfully adjusted)
     waitingStagingChecksLabel() { return "M-waiting-staging-checks"; }
-    // passed staging checks (in staged-run mode)
+    // passed staging checks (in staging-only mode)
     passedStagingChecksLabel() { return "M-passed-staging-checks"; }
     // future commit message violates requirements
     failedDescriptionLabel() { return "M-failed-description"; }
+    // allows target branch update in 'guarded_run' mode
+    clearedForMergeLabel() { return "M-cleared-for-merge"; }
 }
 
 const configFile = process.argv.length > 2 ? process.argv[2] : './config.json';
