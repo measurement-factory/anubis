@@ -232,7 +232,7 @@ Properly counting such votes is a missing feature.
 The bot may be started like any node.js script. For example:
 
 ```
-node Main.js /etc/anubis/config.json
+node ./src/Main.js /etc/anubis/config.json
 ```
 
 The bot can be safely killed and started at any time because it uses the
