@@ -13,16 +13,50 @@ const logApiResult = Log.logApiResult;
 
 const GitHubAuthentication = { type: 'token', username: Config.githubUserLogin(), token: Config.githubToken() };
 
+function commonAppender(allPages, aPage) {
+    allPages.data = allPages.data.concat(aPage.data);
+}
+
+function statusAppender(statusPages, aPage) {
+    let statuses = statusPages.data.statuses;
+    statusPages.data.statuses = statuses.concat(aPage.data.statuses);
+}
+
+function protectedBranchAppender(protectedBranchPages, aPage) {
+    let contexts = protectedBranchPages.data.protection.required_status_checks.contexts;
+    protectedBranchPages.data.protection.required_status_checks.contexts =
+        contexts.concat(aPage.data.protection.required_status_checks.contexts);
+}
+
+async function pager(firstPage, appender) {
+    let allPages = null;
+    if (appender === undefined)
+        appender = commonAppender;
+
+    function doPager (nPage) {
+        if (allPages === null)
+            allPages = nPage;
+        else
+            appender(allPages, nPage);
+
+       if (GitHub.hasNextPage(nPage)) {
+            return GitHub.getNextPage(nPage).then(doPager);
+       }
+       return allPages;
+    }
+    return await doPager(firstPage);
+}
 
 function getPRList() {
     const params = commonParams();
     return new Promise( (resolve, reject) => {
         GitHub.authenticate(GitHubAuthentication);
-        GitHub.pullRequests.getAll(params, (err, res) => {
+        GitHub.pullRequests.getAll(params, async (err, res) => {
             if (err) {
                 reject(new ErrorContext(err, getPRList.name, params));
                 return;
             }
+            res = await pager(res);
             const result = res.data.length;
             logApiResult(getPRList.name, params, result);
             resolve(res.data);
@@ -83,15 +117,17 @@ function getRawPR(prNum) {
 function getReviews(prNum) {
     let params = commonParams();
     params.number = prNum;
-    return new Promise( (resolve, reject) => {
+    return new Promise((resolve, reject) => {
         GitHub.authenticate(GitHubAuthentication);
-        GitHub.pullRequests.getReviews(params, (err, res) => {
+        GitHub.pullRequests.getReviews(params, async (err, res) => {
             if (err) {
                 reject(new ErrorContext(err, getReviews.name, params));
                 return;
             }
+            res = await pager(res);
             resolve(res.data);
         });
+
     });
 }
 
@@ -100,11 +136,12 @@ function getStatuses(ref) {
     params.ref = ref;
     return new Promise( (resolve, reject) => {
         GitHub.authenticate(GitHubAuthentication);
-        GitHub.repos.getCombinedStatusForRef(params, (err, res) => {
+        GitHub.repos.getCombinedStatusForRef(params, async (err, res) => {
             if (err) {
                 reject(new ErrorContext(err, getStatuses.name, params));
                 return;
             }
+            res = await pager(res, statusAppender);
             logApiResult(getStatuses.name, params, {statuses: res.data.statuses.length});
             resolve(res.data);
         });
@@ -191,12 +228,13 @@ function getTags() {
     let params = commonParams();
     return new Promise( (resolve, reject) => {
         GitHub.authenticate(GitHubAuthentication);
-        GitHub.gitdata.getTags(params, (err, res) => {
+        GitHub.gitdata.getTags(params, async (err, res) => {
             const notFound = (err && err.code === 404);
             if (err && !notFound) {
                 reject(new ErrorContext(err, getTags.name, params));
                 return;
             }
+            res = await pager(res);
             const result = notFound ? [] : res.data;
             logApiResult(getTags.name, params, {tags: result.length});
             resolve(result);
@@ -340,16 +378,18 @@ function removeLabel(label, prNum) {
 //    });
 //}
 
+
 function getProtectedBranchRequiredStatusChecks(branch) {
     let params = commonParams();
     params.branch = branch;
     return new Promise( (resolve, reject) => {
       GitHub.authenticate(GitHubAuthentication);
-      GitHub.repos.getBranch(params, (err, res) => {
+      GitHub.repos.getBranch(params, async (err, res) => {
           if (err) {
              reject(new ErrorContext(err, getProtectedBranchRequiredStatusChecks.name, params));
              return;
           }
+          res = await pager(res, protectedBranchAppender);
           const result = {checks: res.data.protection.required_status_checks.contexts.length};
           logApiResult(getProtectedBranchRequiredStatusChecks.name, params, result);
           resolve(res.data.protection.required_status_checks.contexts);
@@ -361,11 +401,12 @@ function getCollaborators() {
     const params = commonParams();
     return new Promise( (resolve, reject) => {
       GitHub.authenticate(GitHubAuthentication);
-      GitHub.repos.getCollaborators(params, (err, res) => {
+      GitHub.repos.getCollaborators(params, async (err, res) => {
           if (err) {
              reject(new ErrorContext(err, getCollaborators.name, params));
              return;
           }
+          res = await pager(res);
           const result = {collaborators: res.data.length};
           logApiResult(getCollaborators.name, params, result);
           resolve(res.data);
