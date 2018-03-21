@@ -72,11 +72,11 @@ class MergeContext {
         // but we check compareStatus first to avoid useless api requests
         if (compareStatus === "diverged") {
             this._log("PR branch and it's base branch diverged");
-            return await this._cleanupMergeFailed(true);
+            return await this._cleanupMergeFailed(true, this._labelWillRestart);
         }
         if (await this._needRestart()) {
             this._log("PR will be restarted");
-            return await this._cleanupMergeFailed(true);
+            return await this._cleanupMergeFailed(true, this._labelWillRestart);
         }
 
         assert(compareStatus === "ahead");
@@ -490,6 +490,13 @@ class MergeContext {
                 Config.passedStagingChecksLabel()
                 ]);
         await this._addLabel(Config.failedOtherLabel());
+    }
+
+    async _labelWillRestart() {
+        await this._removeLabelsIf([
+                Config.waitingStagingChecksLabel(),
+                Config.passedStagingChecksLabel()
+        ]);
     }
 
     async _labelFailedStagingChecks() {
