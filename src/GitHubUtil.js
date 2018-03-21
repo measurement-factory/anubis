@@ -13,7 +13,7 @@ const logApiResult = Log.logApiResult;
 
 const GitHubAuthentication = { type: 'token', username: Config.githubUserLogin(), token: Config.githubToken() };
 
-function commonAppender(allPages, aPage) {
+function defaultAppender(allPages, aPage) {
     allPages.data = allPages.data.concat(aPage.data);
 }
 
@@ -31,7 +31,7 @@ function protectedBranchAppender(protectedBranchPages, aPage) {
 async function pager(firstPage, appender) {
     let allPages = null;
     if (appender === undefined)
-        appender = commonAppender;
+        appender = defaultAppender;
 
     function doPager (nPage) {
         if (allPages === null)
