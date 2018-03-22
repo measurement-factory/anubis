@@ -84,7 +84,7 @@ class MergeContext {
         if (this._dryRun("finish processing"))
             return false;
 
-        if (this._stagingOnly("finish processing")) {
+        if (await this._stagingOnly("finish processing")) {
             await this._labelPassedStagingChecks();
             return false;
         }
