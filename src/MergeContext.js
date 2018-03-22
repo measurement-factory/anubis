@@ -49,7 +49,7 @@ class MergeContext {
 
         if (!this._prOpen()) {
             this._log("was unexpectedly closed");
-            return await this._cleanupMergeFailed(true);
+            return await this._cleanupMergeFailed(true, this._labelCleanStaged);
         }
 
         const commitStatus = await this._checkStatuses(this._tagSha, Config.stagingChecks());
@@ -72,11 +72,11 @@ class MergeContext {
         // but we check compareStatus first to avoid useless api requests
         if (compareStatus === "diverged") {
             this._log("PR branch and it's base branch diverged");
-            return await this._cleanupMergeFailed(true);
+            return await this._cleanupMergeFailed(true, this._labelCleanStaged);
         }
         if (await this._needRestart()) {
             this._log("PR will be restarted");
-            return await this._cleanupMergeFailed(true);
+            return await this._cleanupMergeFailed(true, this._labelCleanStaged);
         }
 
         assert(compareStatus === "ahead");
@@ -490,6 +490,13 @@ class MergeContext {
                 Config.passedStagingChecksLabel()
                 ]);
         await this._addLabel(Config.failedOtherLabel());
+    }
+
+    async _labelCleanStaged() {
+        await this._removeLabelsIf([
+                Config.waitingStagingChecksLabel(),
+                Config.passedStagingChecksLabel()
+        ]);
     }
 
     async _labelFailedStagingChecks() {
