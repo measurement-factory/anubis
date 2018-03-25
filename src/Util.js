@@ -37,6 +37,7 @@ class ErrorContext extends Error {
     // be caused by a GitHub API error, so 'err' contains either
     // an error string or the entire API error object.
     constructor(err, method, args) {
+        assert(err);
         let msg = "";
         if (method !== undefined)
             msg = method + ", ";
@@ -51,10 +52,8 @@ class ErrorContext extends Error {
 
     // 404 (Not found)
     notFound() {
-        if (Object.getPrototypeOf(this._err) === Object.prototype) {
-            if ('code' in this._err)
-                return this._err.code === 404;
-        }
+        if (this._err.name === "HttpError")
+            return this._err.code === 404;
         // We treat our local(non-API) promise rejections as
         // if the requested resource was 'not found'.
         // TODO: rework if this simple approach does not work.
@@ -64,10 +63,8 @@ class ErrorContext extends Error {
     // 422 (unprocessable entity).
     // E.g., fast-forward failure returns this error.
     unprocessable() {
-        if (Object.getPrototypeOf(this._err) === Object.prototype) {
-            if ('code' in this._err)
-                return this._err.code === 422;
-        }
+        if (this._err.name === "HttpError")
+            return this._err.code === 422;
         return false;
     }
 }
