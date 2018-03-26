@@ -125,7 +125,7 @@ class MergeContext {
                 return true;
             }
         }
-        if (!Config.dryRun())
+        if (!this._dryRun("deleting staging commit"))
             await GH.deleteReference(this._stagingTag());
         return false;
     }
@@ -173,7 +173,7 @@ class MergeContext {
         // 'precondition' and 'postcondition' steps
         if (what === "precondition") {
             const messageValid = this._prMessageValid();
-            if (!Config.dryRun())
+            if (!this._dryRun("labeling on failed description"))
                 await this._labelFailedDescription(messageValid);
             if (!messageValid) {
                 this._log(what + " 'commit message' failed");
@@ -401,7 +401,8 @@ class MergeContext {
                     // from an already succeeded (matching) check (there can be several matching checks,
                     // e.g., from different Jenkins nodes). After that, there will be two checks
                     // referencing the same targetUrl.
-                    await GH.createStatus(ref, "success", matched.targetUrl, matched.description, requiredContext);
+                    if (!this._dryRun("required status check creation"))
+                        await GH.createStatus(ref, "success", matched.targetUrl, matched.description, requiredContext);
                 }
             }
         }

@@ -379,6 +379,7 @@ function removeLabel(label, prNum) {
 //}
 
 function createStatus(sha, state, targetUrl, desc, context) {
+    assert(!Config.dryRun());
     let params = commonParams();
     params.sha = sha;
     params.state = state;
