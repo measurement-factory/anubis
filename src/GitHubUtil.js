@@ -378,6 +378,26 @@ function removeLabel(label, prNum) {
 //    });
 //}
 
+function createStatus(sha, state, targetUrl, desc, context) {
+    let params = commonParams();
+    params.sha = sha;
+    params.state = state;
+    params.target_url = targetUrl;
+    params.desc = desc;
+    params.context = context;
+    return new Promise( (resolve, reject) => {
+      GitHub.authenticate(GitHubAuthentication);
+      GitHub.repos.createStatus(params, (err, res) => {
+          if (err) {
+             reject(new ErrorContext(err, createCommit.name, params));
+             return;
+          }
+          const result = {context: res.data.context};
+          logApiResult(createStatus.name, params, result);
+          resolve(res.data.context);
+        });
+    });
+}
 
 function getProtectedBranchRequiredStatusChecks(branch) {
     let params = commonParams();
@@ -464,6 +484,7 @@ module.exports = {
     updatePR: updatePR,
     addLabels: addLabels,
     removeLabel: removeLabel,
+    createStatus: createStatus,
     getProtectedBranchRequiredStatusChecks: getProtectedBranchRequiredStatusChecks,
     getCollaborators: getCollaborators,
     getUser: getUser,

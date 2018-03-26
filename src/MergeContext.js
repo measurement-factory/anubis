@@ -52,7 +52,7 @@ class MergeContext {
             return await this._cleanupMergeFailed(true, this._labelCleanStaged);
         }
 
-        const commitStatus = await this._checkStatuses(this._tagSha, Config.stagingChecks());
+        const commitStatus = await this._checkStatuses(this._tagSha, Config.stagingChecks(), true);
         if (commitStatus === 'pending') {
             this._log("waiting for more staging checks completing");
             return false;
@@ -343,13 +343,15 @@ class MergeContext {
     // 'success' if all of required are 'success'
     // 'error' otherwise
     // checksNumber: the explicit number of requires status checks
-    async _checkStatuses(ref, checksNumber) {
+    // andSupplyRequired: if provided, append missing 'required' statuses
+    // to the ref (if the ref has the corresponding matching status already)
+    async _checkStatuses(ref, checksNumber, andSupplyRequired) {
         let requiredContexts;
         try {
             requiredContexts = await GH.getProtectedBranchRequiredStatusChecks(this._prBaseBranch());
         } catch (e) {
            if (e.name === 'ErrorContext' && e.notFound())
-               this._log("required status checks not found not found");
+               this._log("required status checks not found");
            else
                throw e;
         }
@@ -378,7 +380,7 @@ class MergeContext {
         for (let st of combinedStatus.statuses) {
             if (requiredContexts.find((el) => { return needMatching ?
                          st.context.startsWith(el.trim()) : (el.trim() === st.context.trim());}))
-                requiredChecks.push({context: st.context, state: st.state});
+                requiredChecks.push({context: st.context, state: st.state, targetUrl: st.target_url, description: st.description});
         }
 
         if (requiredChecks.length < requiredChecksNumber || requiredChecks.find(check => check.state === 'pending'))
@@ -386,7 +388,25 @@ class MergeContext {
 
         const prevLen = requiredChecks.length;
         requiredChecks = requiredChecks.filter(check => check.state === 'success');
-        return prevLen === requiredChecks.length ? 'success' : 'failure';
+        const ret = (prevLen === requiredChecks.length);
+        if (ret && andSupplyRequired) {
+            for (let requiredContext of requiredContexts) {
+                // a passed check misses a required one
+                if (requiredChecks.find(el => el.context.trim() === requiredContext.trim()) === undefined) {
+                    // but the passed check matches a required one
+                    const matched = requiredChecks.find(el => el.context.startsWith(requiredContext.trim()));
+                    assert(matched);
+                    // Before a 'staged' commit can be applied, it should have all required checks passed.
+                    // We create a new "required" check, taking other attributes like targetUrl
+                    // from an already succeeded (matching) check (there can be several matching checks,
+                    // e.g., from different Jenkins nodes). After that, there will be two checks
+                    // referencing the same targetUrl.
+                    await GH.createStatus(ref, "success", matched.targetUrl, matched.description, requiredContext);
+                }
+            }
+        }
+
+        return ret ? 'success' : 'failure';
     }
 
     async _acquireUserProperties() {
