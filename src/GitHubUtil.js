@@ -468,6 +468,64 @@ function getUserEmails() {
     });
 }
 
+function protectedBranchParams() {
+    const params = commonParams();
+    params.headers = { accept: 'application/vnd.github.luke-cage-preview+json' };
+    return params;
+}
+
+function getProtectedBranchPullRequestReviewEnforcement(branch) {
+    const params = protectedBranchParams();
+    params.branch = branch;
+    return new Promise( (resolve, reject) => {
+      GitHub.authenticate(GitHubAuthentication);
+      GitHub.repos.getProtectedBranchPullRequestReviewEnforcement(params, (err, res) => {
+          if (err) {
+             reject(new ErrorContext(err, getProtectedBranchPullRequestReviewEnforcement.name, params));
+             return;
+          }
+          logApiResult(getProtectedBranchPullRequestReviewEnforcement.name, params, res.data);
+          const result = res.data.required_approving_review_count !== undefined && res.data.required_approving_review_count > 0;
+          resolve(result);
+      });
+    });
+}
+
+function updateProtectedBranchPullRequestReviewEnforcement(branch) {
+    assert(!Config.dryRun());
+    const params = Object.assign(protectedBranchParams(), Config.githubPullRequestReviewEnforcementSettings());
+    params.branch = branch;
+    return new Promise( (resolve, reject) => {
+      GitHub.authenticate(GitHubAuthentication);
+      GitHub.repos.updateProtectedBranchPullRequestReviewEnforcement(params, (err, res) => {
+          if (err) {
+             reject(new ErrorContext(err, updateProtectedBranchPullRequestReviewEnforcement.name, params));
+             return;
+          }
+          logApiResult(updateProtectedBranchPullRequestReviewEnforcement.name, params, res.data);
+          resolve(res.data);
+      });
+    });
+}
+
+function removeProtectedBranchPullRequestReviewEnforcement(branch) {
+    assert(!Config.dryRun());
+    const params = protectedBranchParams();
+    params.branch = branch;
+    return new Promise( (resolve, reject) => {
+      GitHub.authenticate(GitHubAuthentication);
+      GitHub.repos.removeProtectedBranchPullRequestReviewEnforcement(params, (err, res) => {
+          if (err) {
+             reject(new ErrorContext(err, removeProtectedBranchPullRequestReviewEnforcement.name, params));
+             return;
+          }
+          const result = {deleted: true};
+          logApiResult(removeProtectedBranchPullRequestReviewEnforcement.name, params, res.data);
+          resolve(result);
+      });
+    });
+}
+
 module.exports = {
     getPRList: getPRList,
     getLabels: getLabels,
@@ -487,6 +545,9 @@ module.exports = {
     removeLabel: removeLabel,
     createStatus: createStatus,
     getProtectedBranchRequiredStatusChecks: getProtectedBranchRequiredStatusChecks,
+    getProtectedBranchPullRequestReviewEnforcement: getProtectedBranchPullRequestReviewEnforcement,
+    updateProtectedBranchPullRequestReviewEnforcement: updateProtectedBranchPullRequestReviewEnforcement,
+    removeProtectedBranchPullRequestReviewEnforcement: removeProtectedBranchPullRequestReviewEnforcement,
     getCollaborators: getCollaborators,
     getUser: getUser,
     getUserEmails: getUserEmails

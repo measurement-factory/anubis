@@ -236,9 +236,12 @@ class MergeContext {
         assert(this._tagSha);
         this._log("finish merging...");
         try {
+            await GH.removeProtectedBranchPullRequestReviewEnforcement(this._prBaseBranch());
             await GH.updateReference(this._prBaseBranchPath(), this._tagSha, false);
+            await GH.updateProtectedBranchPullRequestReviewEnforcement(this._prBaseBranch());
             return true;
         } catch (e) {
+            await GH.updateProtectedBranchPullRequestReviewEnforcement(this._prBaseBranch());
             if (e.name === 'ErrorContext' && e.unprocessable()) {
                 this._log("fast-forwarding failed");
                 await this._cleanupMergeFailed(true);
