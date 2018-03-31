@@ -474,6 +474,7 @@ function protectedBranchParams() {
     return params;
 }
 
+// unused
 function getProtectedBranchPullRequestReviewEnforcement(branch) {
     const params = protectedBranchParams();
     params.branch = branch;
