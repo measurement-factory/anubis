@@ -66,25 +66,6 @@ class ConfigOptions {
     githubToken() { return this._githubToken; }
     githubWebhookPath() { return this._githubWebhookPath; }
     githubWebhookSecret() { return this._githubWebhookSecret; }
-
-    githubPullRequestReviewEnforcementSettings() {
-        // {
-        //    "dismissal_restrictions": {
-        //      "users": [
-        //        "octocat"
-        //      ],
-        //      "teams": [
-        //        "justice-league"
-        //      ]
-        //    },
-        //    "dismiss_stale_reviews": true,
-        //    "require_code_owner_reviews": true,
-        //    "required_approving_review_count": 2
-        // }
-        return {
-            "required_approving_review_count": 1
-        };
-    }
     repo() { return this._repo; }
     host() { return this._host; }
     port() { return this._port; }
