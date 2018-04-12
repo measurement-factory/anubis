@@ -101,7 +101,7 @@ class MergeContext {
            this._tagSha = await GH.getReference(this._stagingTag());
        } catch (e) {
            if (e.name === 'ErrorContext' && e.notFound())
-               Log.LogExceptionMessage(e, this._toString() + " " + this._stagingTag() + " not found");
+               Log.LogException(e, this._toString() + " " + this._stagingTag() + " not found");
            else
                throw e;
        }
@@ -138,7 +138,8 @@ class MergeContext {
         return tagCommit.tree.sha === prCommit.tree.sha;
     }
 
-    // whether the tag commit and the base HEAD are 'diverged'
+    // whether the staged commit and the base HEAD have independent,
+    // (probably conflicting) changes
     async _tagDiverged() {
         try {
             const compareStatus = await GH.compareCommits(this._prBaseBranch(), this._stagingTag());
@@ -252,7 +253,7 @@ class MergeContext {
         } catch (e) {
             if (e.name === 'ErrorContext' && e.unprocessable()) {
                 if (await this._tagDiverged()) {
-                    Log.LogExceptionMessage(e, this._toString() + " fast-forwarding failed");
+                    Log.LogException(e, this._toString() + " fast-forwarding failed");
                     await this._cleanupMergeFailed(true);
                     return false;
                 }
@@ -364,7 +365,7 @@ class MergeContext {
             requiredContexts = await GH.getProtectedBranchRequiredStatusChecks(this._prBaseBranch());
         } catch (e) {
            if (e.name === 'ErrorContext' && e.notFound())
-               Log.LogExceptionMessage(e, this._toString() + " required status checks not found");
+               Log.LogException(e, this._toString() + " no status checks are required");
            else
                throw e;
         }
@@ -460,7 +461,7 @@ class MergeContext {
             await GH.removeLabel(label, this._number());
         } catch (e) {
             if (e.name === 'ErrorContext' && e.notFound()) {
-                Log.LogExceptionMessage(e, this._toString() + " removeLabel: " + label + " not found");
+                Log.LogException(e, this._toString() + " removeLabel: " + label + " not found");
                 return;
             }
             throw e;

@@ -8,7 +8,7 @@ function LogError(err, context) {
     Log(err, context, "error");
 }
 
-function LogExceptionMessage(err, context) {
+function LogException(err, context) {
     Log(err, context, "info");
 }
 
@@ -31,7 +31,7 @@ function logApiResult(method, params, result) {
 module.exports = {
     Logger: Logger,
     LogError: LogError,
-    LogExceptionMessage: LogExceptionMessage,
+    LogException: LogException,
     logApiResult: logApiResult
 };
 
