@@ -101,7 +101,7 @@ class MergeContext {
            this._tagSha = await GH.getReference(this._stagingTag());
        } catch (e) {
            if (e.name === 'ErrorContext' && e.notFound())
-               this._log(this._stagingTag() + " not found");
+               Log.LogExceptionMessage(e, this._toString() + " " + this._stagingTag() + " not found");
            else
                throw e;
        }
@@ -136,6 +136,17 @@ class MergeContext {
         const prMergeSha = await GH.getReference(this._mergePath());
         const prCommit = await GH.getCommit(prMergeSha);
         return tagCommit.tree.sha === prCommit.tree.sha;
+    }
+
+    // whether the tag commit and the base HEAD are 'diverged'
+    async _tagDiverged() {
+        try {
+            const compareStatus = await GH.compareCommits(this._prBaseBranch(), this._stagingTag());
+            return compareStatus === "diverged";
+        } catch (e) {
+            Log.LogError(e, this._toString() + " compare commits failed");
+            return false;
+        }
     }
 
     // whether the being-in-merge PR state changed so that
@@ -240,9 +251,11 @@ class MergeContext {
             return true;
         } catch (e) {
             if (e.name === 'ErrorContext' && e.unprocessable()) {
-                this._log("fast-forwarding failed");
-                await this._cleanupMergeFailed(true);
-                return false;
+                if (await this._tagDiverged()) {
+                    Log.LogExceptionMessage(e, this._toString() + " fast-forwarding failed");
+                    await this._cleanupMergeFailed(true);
+                    return false;
+                }
             }
             throw e;
         }
@@ -351,7 +364,7 @@ class MergeContext {
             requiredContexts = await GH.getProtectedBranchRequiredStatusChecks(this._prBaseBranch());
         } catch (e) {
            if (e.name === 'ErrorContext' && e.notFound())
-               this._log("required status checks not found");
+               Log.LogExceptionMessage(e, this._toString() + " required status checks not found");
            else
                throw e;
         }
@@ -447,7 +460,7 @@ class MergeContext {
             await GH.removeLabel(label, this._number());
         } catch (e) {
             if (e.name === 'ErrorContext' && e.notFound()) {
-                this._log("removeLabel: " + label + " not found");
+                Log.LogExceptionMessage(e, this._toString() + " removeLabel: " + label + " not found");
                 return;
             }
             throw e;
