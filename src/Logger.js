@@ -5,12 +5,23 @@ const Config = require('./Config.js');
 const Logger = bunyan.createLogger(Config.loggerParams());
 
 function LogError(err, context) {
+    Log(err, context, "error");
+}
+
+function LogException(err, context) {
+    Log(err, context, "info");
+}
+
+function Log(err, context, kind) {
     assert(context);
     let msg = (err.message === undefined) ? JSON.stringify(err) : err.message;
     msg = context + ": " + msg;
     if (err.stack !== undefined)
         msg += " " + err.stack.toString();
-    Logger.error(msg);
+    if (kind === "error")
+        Logger.error(msg);
+    else
+        Logger.info(msg);
 }
 
 function logApiResult(method, params, result) {
@@ -20,6 +31,7 @@ function logApiResult(method, params, result) {
 module.exports = {
     Logger: Logger,
     LogError: LogError,
+    LogException: LogException,
     logApiResult: logApiResult
 };
 
