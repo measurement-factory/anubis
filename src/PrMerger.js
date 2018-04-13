@@ -77,7 +77,7 @@ class PrMerger {
             return null;
         }
         const prNum = Util.ParseTag(tag.ref);
-        Logger.info("Current PR is " + prNum);
+        Logger.info("PR" + prNum + " is the current");
         const stagingPr = await GH.getPR(prNum, false);
         return new MergeContext(stagingPr, stagingSha);
     }

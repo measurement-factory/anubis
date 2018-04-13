@@ -14,10 +14,17 @@ function LogException(err, context) {
 
 function Log(err, context, kind) {
     assert(context);
-    let msg = (err.message === undefined) ? JSON.stringify(err) : err.message;
-    msg = context + ": " + msg;
-    if (err.stack !== undefined)
-        msg += " " + err.stack.toString();
+    msg = context + ": ";
+    // non-Error exceptions, like strings
+    if (err.message === undefined) {
+        msg += JSON.stringify(err);
+    }
+    else {
+        if (err.stack !== undefined)
+            msg += err.stack; // in Error, stack is prefixed with message
+        else
+            msg += err.message;
+    }
     if (kind === "error")
         Logger.error(msg);
     else
