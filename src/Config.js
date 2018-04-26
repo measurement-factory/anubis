@@ -95,6 +95,15 @@ class ConfigOptions {
     failedDescriptionLabel() { return "M-failed-description"; }
     // allows target branch update in 'guarded_run' mode
     clearedForMergeLabel() { return "M-cleared-for-merge"; }
+
+    approvalUrl() { return "https://github.com/measurement-factory/anubis#voting-and-pr-approvals"; }
+
+    // whether the bot will create 'fake' approval statuses for PR and staged commit.
+    // TODO: make configurable or remove
+    manageApprovalStatus() { return true; }
+
+    // the 'context name' of fake approval status
+    approvalContext() { return "PR approval"; }
 }
 
 const configFile = process.argv.length > 2 ? process.argv[2] : './config.json';

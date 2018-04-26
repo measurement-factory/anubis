@@ -14,6 +14,8 @@ class MergeContext {
         this._shaLimit = 6;
         // the remainder (>0) of the min or max voting delay (in ms)
         this._votingDelay = null;
+        // information used for fake approval status creation/updating
+        this._approvalResult = {params: null, delayMs: -1};
     }
 
     // Returns 'true' if all PR checks passed successfully and merging
@@ -198,6 +200,9 @@ class MergeContext {
             return false;
         }
 
+        await this._checkApproved();
+        await this._setApprovalStatus(what === "precondition" ? this._prHeadSha() : this._tagSha);
+
         const commitStatus = await this._checkStatuses(this._prHeadSha());
         if (commitStatus !== 'success') {
             this._log(what + " 'status' failed, status is " + commitStatus);
@@ -209,8 +214,7 @@ class MergeContext {
             return false;
         }
 
-        const delay = await this._checkApproved();
-        if (delay === null) {
+        if (this._approvalResult.delayMs === -1) {
             this._log(what + " 'approved' failed");
             return false;
         }
@@ -222,7 +226,7 @@ class MergeContext {
             }
         }
 
-        this._votingDelay = delay;
+        this._votingDelay = this._approvalResult.delayMs;
         return true;
     }
 
@@ -238,6 +242,7 @@ class MergeContext {
         const committer = {name: Config.githubUserName(), email: Config.githubUserEmail(), date: now.toISOString()};
         const tempCommitSha = await GH.createCommit(mergeCommit.tree.sha, this._prMessage(), [baseSha], mergeCommit.author, committer);
         this._tagSha = await GH.createReference(tempCommitSha, "refs/" + this._stagingTag());
+        await this._setApprovalStatus(this._tagSha);
         await GH.updateReference(Config.stagingBranchPath(), this._tagSha, true);
     }
 
@@ -298,11 +303,13 @@ class MergeContext {
         const collaborators = await GH.getCollaborators();
         const pushCollaborators = collaborators.filter(c => c.permissions.push === true);
         const requestedReviewers = this._prRequestedReviewers();
+        this._approvalResult = {params: null, delayMs: -1};
 
         for (let collaborator of pushCollaborators) {
             if (requestedReviewers.includes(collaborator.login)) {
                 this._log("requested core reviewer: " + collaborator.login);
-                return null;
+                this._approvalResult.params = {desc: "blocked (see review requests)", state: "error"};
+                return;
             }
         }
 
@@ -311,7 +318,9 @@ class MergeContext {
         const prAgeMs = new Date() - new Date(this._createdAt());
         if (prAgeMs < Config.votingDelayMin()) {
             this._log("in minimal voting period");
-            return Config.votingDelayMin() - prAgeMs;
+            this._approvalResult.params = {desc: "waiting for initial review", state: "pending"};
+            this._approvalResult.delayMs = Config.votingDelayMin() - prAgeMs;
+            return;
         }
 
         // An array of [{reviewer, date, state}] elements,
@@ -337,19 +346,47 @@ class MergeContext {
         const userRequested = usersVoted.find(el => el.state === 'changes_requested');
         if (userRequested !== undefined) {
             this._log("changes requested by " + userRequested.reviewer);
-            return null;
+            this._approvalResult.params = {desc: "blocked (see change requests)", state: "error"};
+            return;
         }
         const usersApproved = usersVoted.filter(u => u.state !== 'changes_requested');
         this._log("approved by " + usersApproved.length + " core developer(s)");
 
         if (usersApproved.length < Config.necessaryApprovals()) {
             this._log("not approved by necessary " + Config.necessaryApprovals() + " votes");
-            return null;
+            this._approvalResult.params = {desc: "waiting for more votes", state: "pending"};
+            return;
         }
-        if (usersApproved.length >= Config.sufficientApprovals() || prAgeMs >= Config.votingDelayMax())
-            return 0;
+        if (usersApproved.length >= Config.sufficientApprovals()) {
+            this._approvalResult.params = {desc: "approved", state: "success"};
+            this._approvalResult.delayMs = 0;
+            return;
+        }
+        if (prAgeMs >= Config.votingDelayMax()) {
+            this._approvalResult.params = {desc: "approved (on slow burner)", state: "success"};
+            this._approvalResult.delayMs = 0;
+            return;
+        }
         this._log("in maximum voting period");
-        return Config.votingDelayMax() - prAgeMs;
+        this._approvalResult.params = {desc: "waiting for time (slow burner)", state: "pending"};
+        this._approvalResult.delayMs = Config.votingDelayMax() - prAgeMs;
+        return;
+    }
+
+    async _setApprovalStatus(sha) {
+        if (this._dryRun("setting approval statuses"))
+            return;
+        if (!Config.manageApprovalStatus())
+            return;
+
+        assert(this._approvalResult);
+        let combinedStatus = await GH.getStatuses(sha);
+        const approvalStatus = combinedStatus.statuses ? combinedStatus.statuses.find(el => el.context.trim() === Config.approvalContext()) : null;
+        if (approvalStatus && approvalStatus.state === this._approvalResult.params.state && approvalStatus.description === this._approvalResult.params.desc) {
+            this._log("Approval status already exists: " + Config.approvalContext() + " (" + approvalStatus.state + ", " + approvalStatus.description + ")");
+            return;
+        }
+        await GH.createStatus(sha, this._approvalResult.params.state, Config.approvalUrl(), this._approvalResult.params.desc, Config.approvalContext());
     }
 
     // returns one of:
@@ -409,13 +446,12 @@ class MergeContext {
                 if (requiredChecks.find(el => el.context.trim() === requiredContext.trim()) === undefined) {
                     // but the passed check matches a required one
                     const matched = requiredChecks.find(el => el.context.startsWith(requiredContext.trim()));
-                    assert(matched);
                     // Before a 'staged' commit can be applied, it should have all required checks passed.
                     // We create a new "required" check, taking other attributes like targetUrl
                     // from an already succeeded (matching) check (there can be several matching checks,
                     // e.g., from different Jenkins nodes). After that, there will be two checks
                     // referencing the same targetUrl.
-                    if (!this._dryRun("required status check creation"))
+                    if (matched && !this._dryRun("required status check creation"))
                         await GH.createStatus(ref, "success", matched.targetUrl, matched.description, requiredContext);
                 }
             }

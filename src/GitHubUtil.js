@@ -384,7 +384,7 @@ function createStatus(sha, state, targetUrl, desc, context) {
     params.sha = sha;
     params.state = state;
     params.target_url = targetUrl;
-    params.desc = desc;
+    params.description= desc;
     params.context = context;
     return new Promise( (resolve, reject) => {
       GitHub.authenticate(GitHubAuthentication);
