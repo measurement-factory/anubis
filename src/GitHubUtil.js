@@ -378,13 +378,13 @@ function removeLabel(label, prNum) {
 //    });
 //}
 
-function createStatus(sha, state, targetUrl, desc, context) {
+function createStatus(sha, state, targetUrl, description, context) {
     assert(!Config.dryRun());
     let params = commonParams();
     params.sha = sha;
     params.state = state;
     params.target_url = targetUrl;
-    params.description= desc;
+    params.description = description;
     params.context = context;
     return new Promise( (resolve, reject) => {
       GitHub.authenticate(GitHubAuthentication);

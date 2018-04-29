@@ -4,6 +4,26 @@ const Log = require('./Logger.js');
 const GH = require('./GitHubUtil.js');
 const Util = require('./Util.js');
 
+// Contains properties used for approval test status creation
+class Approval {
+    constructor() {
+        this.reset();
+    }
+
+    reset() {
+        this.assign(null, null, null);
+    }
+
+    assign(aDesc, aState, aDelayMs) {
+        this.description = aDesc;
+        this.state = aState;
+        // If approved(slow burner): the number for milliseconds to wait for
+        // If approved (necessary approvals) or slow burner timeout: 0
+        // If not approved, disqualified or review requested: null
+        this.delayMs = aDelayMs;
+    }
+}
+
 // Processing a single PR
 class MergeContext {
 
@@ -12,10 +32,8 @@ class MergeContext {
         this._pr = pr;
         this._tagSha = (tSha === undefined) ? null : tSha;
         this._shaLimit = 6;
-        // the remainder (>0) of the min or max voting delay (in ms)
-        this._votingDelay = null;
-        // information used for fake approval status creation/updating
-        this._approvalResult = {params: null, delayMs: -1};
+        // information used for approval test status creation/updating
+        this._approvalResult = new Approval();
     }
 
     // Returns 'true' if all PR checks passed successfully and merging
@@ -32,7 +50,7 @@ class MergeContext {
             return false;
 
         // 'slow burner' case
-        if (this._votingDelay > 0)
+        if (this.delay() > 0)
             return false;
 
         if (this._dryRun("start merging"))
@@ -201,6 +219,8 @@ class MergeContext {
         }
 
         await this._checkApproved();
+        this._log("_checkApproved: " + this._approvalResult.description + ", state: " +
+                this._approvalResult.state + ", delay(ms): " + this._approvalResult.delayMs);
         await this._setApprovalStatus(what === "precondition" ? this._prHeadSha() : this._tagSha);
 
         const commitStatus = await this._checkStatuses(this._prHeadSha());
@@ -214,7 +234,7 @@ class MergeContext {
             return false;
         }
 
-        if (this._approvalResult.delayMs === -1) {
+        if (this._approvalResult.delayMs === null) {
             this._log(what + " 'approved' failed");
             return false;
         }
@@ -225,8 +245,6 @@ class MergeContext {
                 return false;
             }
         }
-
-        this._votingDelay = this._approvalResult.delayMs;
         return true;
     }
 
@@ -297,31 +315,22 @@ class MergeContext {
         return true;
     }
 
-    // If approved, returns the number for milliseconds to wait for,
-    // or '0', meaning 'ready'. If not approved or disqualified returns null.
+    // calculates approval status properties (this._approvalResult)
     async _checkApproved() {
         const collaborators = await GH.getCollaborators();
         const pushCollaborators = collaborators.filter(c => c.permissions.push === true);
         const requestedReviewers = this._prRequestedReviewers();
-        this._approvalResult = {params: null, delayMs: -1};
+        this._approvalResult.reset();
 
         for (let collaborator of pushCollaborators) {
             if (requestedReviewers.includes(collaborator.login)) {
                 this._log("requested core reviewer: " + collaborator.login);
-                this._approvalResult.params = {desc: "blocked (see review requests)", state: "error"};
+                this._approvalResult.assign("waiting for requested reviews", "pending", null);
                 return;
             }
         }
 
         let reviews = await GH.getReviews(this._number());
-
-        const prAgeMs = new Date() - new Date(this._createdAt());
-        if (prAgeMs < Config.votingDelayMin()) {
-            this._log("in minimal voting period");
-            this._approvalResult.params = {desc: "waiting for initial review", state: "pending"};
-            this._approvalResult.delayMs = Config.votingDelayMin() - prAgeMs;
-            return;
-        }
 
         // An array of [{reviewer, date, state}] elements,
         // where 'reviewer' is a core developer, 'date' the review date and 'state' is either
@@ -346,7 +355,7 @@ class MergeContext {
         const userRequested = usersVoted.find(el => el.state === 'changes_requested');
         if (userRequested !== undefined) {
             this._log("changes requested by " + userRequested.reviewer);
-            this._approvalResult.params = {desc: "blocked (see change requests)", state: "error"};
+            this._approvalResult.assign("blocked (see change requests)", "pending", null);
             return;
         }
         const usersApproved = usersVoted.filter(u => u.state !== 'changes_requested');
@@ -354,22 +363,26 @@ class MergeContext {
 
         if (usersApproved.length < Config.necessaryApprovals()) {
             this._log("not approved by necessary " + Config.necessaryApprovals() + " votes");
-            this._approvalResult.params = {desc: "waiting for more votes", state: "pending"};
+            this._approvalResult.assign("waiting for more votes", "pending", null);
             return;
         }
+
+        const prAgeMs = new Date() - new Date(this._createdAt());
+        if (prAgeMs < Config.votingDelayMin()) {
+            this._approvalResult.assign("waiting for fast track objections", "pending", Config.votingDelayMin() - prAgeMs);
+            return;
+        }
+
         if (usersApproved.length >= Config.sufficientApprovals()) {
-            this._approvalResult.params = {desc: "approved", state: "success"};
-            this._approvalResult.delayMs = 0;
+            this._approvalResult.assign("approved", "success", 0);
             return;
         }
+
         if (prAgeMs >= Config.votingDelayMax()) {
-            this._approvalResult.params = {desc: "approved (on slow burner)", state: "success"};
-            this._approvalResult.delayMs = 0;
+            this._approvalResult.assign("approved (on slow burner)", "success", 0);
             return;
         }
-        this._log("in maximum voting period");
-        this._approvalResult.params = {desc: "waiting for time (slow burner)", state: "pending"};
-        this._approvalResult.delayMs = Config.votingDelayMax() - prAgeMs;
+        this._approvalResult.assign("waiting for more votes or a slow burner timeout", "pending", Config.votingDelayMax() - prAgeMs);
         return;
     }
 
@@ -381,12 +394,16 @@ class MergeContext {
 
         assert(this._approvalResult);
         let combinedStatus = await GH.getStatuses(sha);
-        const approvalStatus = combinedStatus.statuses ? combinedStatus.statuses.find(el => el.context.trim() === Config.approvalContext()) : null;
-        if (approvalStatus && approvalStatus.state === this._approvalResult.params.state && approvalStatus.description === this._approvalResult.params.desc) {
-            this._log("Approval status already exists: " + Config.approvalContext() + " (" + approvalStatus.state + ", " + approvalStatus.description + ")");
+        const approvalStatus = combinedStatus.statuses ?
+            combinedStatus.statuses.find(el => el.context.trim() === Config.approvalContext()) : null;
+
+        if (approvalStatus && approvalStatus.state === this._approvalResult.state &&
+                approvalStatus.description === this._approvalResult.description) {
+            this._log("Approval status already exists: " + Config.approvalContext() + " (" +
+                    approvalStatus.state + ", " + approvalStatus.description + ")");
             return;
         }
-        await GH.createStatus(sha, this._approvalResult.params.state, Config.approvalUrl(), this._approvalResult.params.desc, Config.approvalContext());
+        await GH.createStatus(sha, this._approvalResult.state, Config.approvalUrl(), this._approvalResult.description, Config.approvalContext());
     }
 
     // returns one of:
@@ -584,7 +601,7 @@ class MergeContext {
 
     // the processing of this PR is delayed on this
     // number of milliseconds
-    delay() { return this._votingDelay; }
+    delay() { return this._approvalResult.delayMs; }
 
     _number() { return this._pr.number; }
 

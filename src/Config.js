@@ -31,6 +31,7 @@ class ConfigOptions {
         this._votingDelayMin = timestring(conf.voting_delay_min, 'ms');
         this._stagingChecks = conf.staging_checks;
         this._loggerParams = conf.logger_params;
+        this._approvalUrl = conf.approval_url;
 
         // unused
         this._githubUserNoreplyEmail = null;
@@ -96,13 +97,13 @@ class ConfigOptions {
     // allows target branch update in 'guarded_run' mode
     clearedForMergeLabel() { return "M-cleared-for-merge"; }
 
-    approvalUrl() { return "https://github.com/measurement-factory/anubis#voting-and-pr-approvals"; }
+    // an URL of the description of the approval test status
+    approvalUrl() { return this._approvalUrl; }
 
-    // whether the bot will create 'fake' approval statuses for PR and staged commit.
-    // TODO: make configurable or remove
-    manageApprovalStatus() { return true; }
+    // whether the bot will create the approval test statuses for PR and staged commit
+    manageApprovalStatus() { return this._approvalUrl.length > 0; }
 
-    // the 'context name' of fake approval status
+    // the 'context name' of the approval test status
     approvalContext() { return "PR approval"; }
 }
 
