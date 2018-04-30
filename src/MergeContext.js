@@ -92,6 +92,11 @@ class MergeContext {
             return await this._cleanupMergeFailed(true, this._labelCleanStaged);
         }
 
+        if (await this._needRestart()) {
+            this._log("PR will be restarted");
+            return await this._cleanupMergeFailed(true, this._labelCleanStaged);
+        }
+
         const commitStatus = await this._checkStatuses(this._tagSha, Config.stagingChecks(), true);
         if (commitStatus === 'pending') {
             this._log("waiting for more staging checks completing");
@@ -108,14 +113,10 @@ class MergeContext {
             this._log("already merged");
             return await this._cleanupMerged();
         }
-        // note that _needRestart() below would notice that the tag is "diverged",
-        // but we check compareStatus first to avoid useless api requests
+        // Probably should not happen since_needRestart() above would notice that
+        // the tag is "diverged".
         if (compareStatus === "diverged") {
             this._log("PR branch and it's base branch diverged");
-            return await this._cleanupMergeFailed(true, this._labelCleanStaged);
-        }
-        if (await this._needRestart()) {
-            this._log("PR will be restarted");
             return await this._cleanupMergeFailed(true, this._labelCleanStaged);
         }
 
