@@ -11,17 +11,33 @@ class Approval {
     }
 
     reset() {
-        this.assign(null, null, null);
+        this.description = null;
+        this.state = null;
+        this._blocked = true;
     }
 
-    assign(aDesc, aState, aDelayMs) {
+    allow(aDesc) {
         this.description = aDesc;
-        this.state = aState;
-        // If approved(slow burner): the number for milliseconds to wait for
-        // If approved (necessary approvals) or slow burner timeout: 0
-        // If not approved, disqualified or review requested: null
-        this.delayMs = aDelayMs;
+        this.state = "success";
+        this._blocked = false;
     }
+
+    block(aDesc) {
+        this.description = aDesc;
+        this.state = "pending";
+        this._blocked = true;
+    }
+
+    blocked() { return this._blocked; }
+
+    matchesGitHubStatusCheck (approvalStatus) {
+        assert(approvalStatus);
+        assert(this.description);
+        assert(this.state);
+        return approvalStatus.state === this.state && approvalStatus.description === this.description;
+    }
+
+    toString() { return "description: " + this.description + ", state: " + this.state; }
 }
 
 // Processing a single PR
@@ -33,7 +49,11 @@ class MergeContext {
         this._tagSha = (tSha === undefined) ? null : tSha;
         this._shaLimit = 6;
         // information used for approval test status creation/updating
-        this._approvalResult = new Approval();
+        this._approval = new Approval();
+        // If waiting for a timeout to merge the staged commit: > 0
+        // If ready to merge the staged commit now: == 0
+        // Otherwise (e.g., failed description, negative votes, or review requested): null
+        this._delayMs = null;
     }
 
     // Returns 'true' if all PR checks passed successfully and merging
@@ -183,6 +203,7 @@ class MergeContext {
     // checks whether the PR is ready for merge
     async _checkMergeConditions(what) {
         this._log("checking merge " + what + "s...");
+        this._delayMs = null;
 
         const pr = await GH.getPR(this._number(), true);
         // refresh PR data
@@ -218,10 +239,11 @@ class MergeContext {
             return false;
         }
 
-        await this._checkApproved();
-        this._log("_checkApproved: " + this._approvalResult.description + ", state: " +
-                this._approvalResult.state + ", delay(ms): " + this._approvalResult.delayMs);
-        await this._setApprovalStatus(what === "precondition" ? this._prHeadSha() : this._tagSha);
+        const delay = await this._checkApproved();
+        this._log("checkApproved: " + this._approval.toString());
+        await this._setApprovalStatus(this._prHeadSha());
+        if (what === "postcondition")
+            await this._setApprovalStatus(this._tagSha);
 
         const commitStatus = await this._checkStatuses(this._prHeadSha());
         if (commitStatus !== 'success') {
@@ -234,7 +256,7 @@ class MergeContext {
             return false;
         }
 
-        if (this._approvalResult.delayMs === null) {
+        if (this._approval.blocked()) {
             this._log(what + " 'approved' failed");
             return false;
         }
@@ -245,6 +267,7 @@ class MergeContext {
                 return false;
             }
         }
+        this._delayMs = delay;
         return true;
     }
 
@@ -315,18 +338,18 @@ class MergeContext {
         return true;
     }
 
-    // calculates approval status properties (this._approvalResult)
+    // calculates approval status properties (this._approval)
     async _checkApproved() {
         const collaborators = await GH.getCollaborators();
         const pushCollaborators = collaborators.filter(c => c.permissions.push === true);
         const requestedReviewers = this._prRequestedReviewers();
-        this._approvalResult.reset();
+        this._approval.reset();
 
         for (let collaborator of pushCollaborators) {
             if (requestedReviewers.includes(collaborator.login)) {
                 this._log("requested core reviewer: " + collaborator.login);
-                this._approvalResult.assign("waiting for requested reviews", "pending", null);
-                return;
+                this._approval.block("waiting for requested reviews");
+                return null;
             }
         }
 
@@ -355,55 +378,53 @@ class MergeContext {
         const userRequested = usersVoted.find(el => el.state === 'changes_requested');
         if (userRequested !== undefined) {
             this._log("changes requested by " + userRequested.reviewer);
-            this._approvalResult.assign("blocked (see change requests)", "pending", null);
-            return;
+            this._approval.block("blocked (see change requests)");
+            return null;
         }
         const usersApproved = usersVoted.filter(u => u.state !== 'changes_requested');
         this._log("approved by " + usersApproved.length + " core developer(s)");
 
         if (usersApproved.length < Config.necessaryApprovals()) {
             this._log("not approved by necessary " + Config.necessaryApprovals() + " votes");
-            this._approvalResult.assign("waiting for more votes", "pending", null);
-            return;
+            this._approval.block("waiting for more votes");
+            return null;
         }
 
         const prAgeMs = new Date() - new Date(this._createdAt());
         if (prAgeMs < Config.votingDelayMin()) {
-            this._approvalResult.assign("waiting for fast track objections", "pending", Config.votingDelayMin() - prAgeMs);
-            return;
+            this._approval.block("waiting for fast track objections");
+            return Config.votingDelayMin() - prAgeMs;
         }
 
         if (usersApproved.length >= Config.sufficientApprovals()) {
-            this._approvalResult.assign("approved", "success", 0);
-            return;
+            this._approval.allow("approved");
+            return 0;
         }
 
         if (prAgeMs >= Config.votingDelayMax()) {
-            this._approvalResult.assign("approved (on slow burner)", "success", 0);
-            return;
+            this._approval.allow("approved (on slow burner)");
+            return 0;
         }
-        this._approvalResult.assign("waiting for more votes or a slow burner timeout", "pending", Config.votingDelayMax() - prAgeMs);
-        return;
+        this._approval.block("waiting for more votes or a slow burner timeout");
+        return Config.votingDelayMax() - prAgeMs;
     }
 
     async _setApprovalStatus(sha) {
-        if (this._dryRun("setting approval statuses"))
+        if (this._dryRun("setting approval status"))
             return;
         if (!Config.manageApprovalStatus())
             return;
 
-        assert(this._approvalResult);
+        assert(this._approval);
         let combinedStatus = await GH.getStatuses(sha);
         const approvalStatus = combinedStatus.statuses ?
             combinedStatus.statuses.find(el => el.context.trim() === Config.approvalContext()) : null;
 
-        if (approvalStatus && approvalStatus.state === this._approvalResult.state &&
-                approvalStatus.description === this._approvalResult.description) {
-            this._log("Approval status already exists: " + Config.approvalContext() + " (" +
-                    approvalStatus.state + ", " + approvalStatus.description + ")");
+        if (approvalStatus && this._approval.matchesGitHubStatusCheck(approvalStatus)) {
+            this._log("Approval status already exists: " + Config.approvalContext() + ", " + this._approval.toString());
             return;
         }
-        await GH.createStatus(sha, this._approvalResult.state, Config.approvalUrl(), this._approvalResult.description, Config.approvalContext());
+        await GH.createStatus(sha, this._approval.state, Config.approvalUrl(), this._approval.description, Config.approvalContext());
     }
 
     // returns one of:
@@ -601,7 +622,7 @@ class MergeContext {
 
     // the processing of this PR is delayed on this
     // number of milliseconds
-    delay() { return this._approvalResult.delayMs; }
+    delay() { return this._delayMs; }
 
     _number() { return this._pr.number; }
 

@@ -101,7 +101,7 @@ class ConfigOptions {
     approvalUrl() { return this._approvalUrl; }
 
     // whether the bot will create the approval test statuses for PR and staged commit
-    manageApprovalStatus() { return this._approvalUrl.length > 0; }
+    manageApprovalStatus() { return this.approvalUrl().length > 0; }
 
     // the 'context name' of the approval test status
     approvalContext() { return "PR approval"; }
