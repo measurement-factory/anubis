@@ -6,36 +6,37 @@ const Util = require('./Util.js');
 
 // Contains properties used for approval test status creation
 class Approval {
-    constructor() {
-        this.reset();
+
+    constructor(description, state, delayMs) {
+        assert(description);
+        assert(state);
+        this.description = description;
+        this.state = state;
+        // If waiting for a timeout to merge the staged commit: > 0
+        // If ready to merge the staged commit now: == 0
+        // Otherwise (e.g., failed description, negative votes, or review requested): null
+        this.delayMs = delayMs;
     }
 
-    reset() {
-        this.description = null;
-        this.state = null;
-        this._blocked = true;
+    static GrantAfterTimeout(description, delayMs) {
+        assert(delayMs > 0);
+        return new Approval(description, "pending", delayMs);
     }
 
-    allow(aDesc) {
-        this.description = aDesc;
-        this.state = "success";
-        this._blocked = false;
+    static GrantNow(description) {
+        return new Approval(description, "success", 0);
     }
 
-    block(aDesc) {
-        this.description = aDesc;
-        this.state = "pending";
-        this._blocked = true;
+    static Block(description) {
+        return new Approval(description, "pending", null);
     }
 
-    blocked() { return this._blocked; }
-
-    matchesGitHubStatusCheck (approvalStatus) {
+    matchesGitHubStatusCheck(approvalStatus) {
         assert(approvalStatus);
-        assert(this.description);
-        assert(this.state);
         return approvalStatus.state === this.state && approvalStatus.description === this.description;
     }
+
+    blocked() { return this.delayMs === null; }
 
     toString() { return "description: " + this.description + ", state: " + this.state; }
 }
@@ -49,11 +50,7 @@ class MergeContext {
         this._tagSha = (tSha === undefined) ? null : tSha;
         this._shaLimit = 6;
         // information used for approval test status creation/updating
-        this._approval = new Approval();
-        // If waiting for a timeout to merge the staged commit: > 0
-        // If ready to merge the staged commit now: == 0
-        // Otherwise (e.g., failed description, negative votes, or review requested): null
-        this._delayMs = null;
+        this._approval = null;
     }
 
     // Returns 'true' if all PR checks passed successfully and merging
@@ -70,7 +67,7 @@ class MergeContext {
             return false;
 
         // 'slow burner' case
-        if (this.delay() > 0)
+        if (this.delay())
             return false;
 
         if (this._dryRun("start merging"))
@@ -113,8 +110,10 @@ class MergeContext {
             this._log("already merged");
             return await this._cleanupMerged();
         }
-        // Probably should not happen since_needRestart() above would notice that
-        // the tag is "diverged".
+
+        // We need to check for divergence here because _tagIsFresh() does not track
+        // conflicts between the base and this PR (GitHub-generated auto commit is
+        // recreated only when there are not conflicts).
         if (compareStatus === "diverged") {
             this._log("PR branch and it's base branch diverged");
             return await this._cleanupMergeFailed(true, this._labelCleanStaged);
@@ -204,7 +203,7 @@ class MergeContext {
     // checks whether the PR is ready for merge
     async _checkMergeConditions(what) {
         this._log("checking merge " + what + "s...");
-        this._delayMs = null;
+        this._approval = null;
 
         const pr = await GH.getPR(this._number(), true);
         // refresh PR data
@@ -240,11 +239,11 @@ class MergeContext {
             return false;
         }
 
-        const delay = await this._checkApproved();
-        this._log("checkApproved: " + this._approval.toString());
-        await this._setApprovalStatus(this._prHeadSha());
+        const approval = await this._checkApproval();
+        this._log("checkApproval: " + approval);
+        await this._setApprovalStatus(approval, this._prHeadSha());
         if (what === "postcondition")
-            await this._setApprovalStatus(this._tagSha);
+            await this._setApprovalStatus(approval, this._tagSha);
 
         const commitStatus = await this._checkStatuses(this._prHeadSha());
         if (commitStatus !== 'success') {
@@ -257,7 +256,7 @@ class MergeContext {
             return false;
         }
 
-        if (this._approval.blocked()) {
+        if (approval.blocked()) {
             this._log(what + " 'approved' failed");
             return false;
         }
@@ -268,7 +267,7 @@ class MergeContext {
                 return false;
             }
         }
-        this._delayMs = delay;
+        this._approval = approval;
         return true;
     }
 
@@ -284,7 +283,7 @@ class MergeContext {
         const committer = {name: Config.githubUserName(), email: Config.githubUserEmail(), date: now.toISOString()};
         const tempCommitSha = await GH.createCommit(mergeCommit.tree.sha, this._prMessage(), [baseSha], mergeCommit.author, committer);
         this._tagSha = await GH.createReference(tempCommitSha, "refs/" + this._stagingTag());
-        await this._setApprovalStatus(this._tagSha);
+        await this._setApprovalStatus(this._approval, this._tagSha);
         await GH.updateReference(Config.stagingBranchPath(), this._tagSha, true);
     }
 
@@ -339,18 +338,18 @@ class MergeContext {
         return true;
     }
 
-    // calculates approval status properties (this._approval)
-    async _checkApproved() {
+    // creates and returns filled Approval object
+    async _checkApproval() {
+        assert(this._approval === null);
+
         const collaborators = await GH.getCollaborators();
         const pushCollaborators = collaborators.filter(c => c.permissions.push === true);
         const requestedReviewers = this._prRequestedReviewers();
-        this._approval.reset();
 
         for (let collaborator of pushCollaborators) {
             if (requestedReviewers.includes(collaborator.login)) {
                 this._log("requested core reviewer: " + collaborator.login);
-                this._approval.block("waiting for requested reviews");
-                return null;
+                return Approval.Block("waiting for requested reviews");
             }
         }
 
@@ -379,53 +378,47 @@ class MergeContext {
         const userRequested = usersVoted.find(el => el.state === 'changes_requested');
         if (userRequested !== undefined) {
             this._log("changes requested by " + userRequested.reviewer);
-            this._approval.block("blocked (see change requests)");
-            return null;
+            return Approval.Block("blocked (see change requests)");
         }
         const usersApproved = usersVoted.filter(u => u.state !== 'changes_requested');
         this._log("approved by " + usersApproved.length + " core developer(s)");
 
         if (usersApproved.length < Config.necessaryApprovals()) {
             this._log("not approved by necessary " + Config.necessaryApprovals() + " votes");
-            this._approval.block("waiting for more votes");
-            return null;
+            return Approval.Block("waiting for more votes");
         }
 
         const prAgeMs = new Date() - new Date(this._createdAt());
-        if (prAgeMs < Config.votingDelayMin()) {
-            this._approval.block("waiting for fast track objections");
-            return Config.votingDelayMin() - prAgeMs;
-        }
+        if (prAgeMs < Config.votingDelayMin())
+            return Approval.GrantAfterTimeout("waiting for fast track objections", Config.votingDelayMin() - prAgeMs);
 
-        if (usersApproved.length >= Config.sufficientApprovals()) {
-            this._approval.allow("approved");
-            return 0;
-        }
+        if (usersApproved.length >= Config.sufficientApprovals())
+            return Approval.GrantNow("approved");
 
-        if (prAgeMs >= Config.votingDelayMax()) {
-            this._approval.allow("approved (on slow burner)");
-            return 0;
-        }
-        this._approval.block("waiting for more votes or a slow burner timeout");
-        return Config.votingDelayMax() - prAgeMs;
+        if (prAgeMs >= Config.votingDelayMax())
+            return Approval.GrantNow("approved (on slow burner)");
+
+        return Approval.GrantAfterTimeout("waiting for more votes or a slow burner timeout", Config.votingDelayMax() - prAgeMs);
     }
 
-    async _setApprovalStatus(sha) {
+    async _setApprovalStatus(approval, sha) {
+        assert(approval);
+        assert(sha);
+
         if (this._dryRun("setting approval status"))
             return;
         if (!Config.manageApprovalStatus())
             return;
 
-        assert(this._approval);
-        let combinedStatus = await GH.getStatuses(sha);
+        const combinedStatus = await GH.getStatuses(sha);
         const approvalStatus = combinedStatus.statuses ?
             combinedStatus.statuses.find(el => el.context.trim() === Config.approvalContext()) : null;
 
-        if (approvalStatus && this._approval.matchesGitHubStatusCheck(approvalStatus)) {
-            this._log("Approval status already exists: " + Config.approvalContext() + ", " + this._approval.toString());
+        if (approvalStatus && approval.matchesGitHubStatusCheck(approvalStatus)) {
+            this._log("Approval status already exists: " + Config.approvalContext() + ", " + approval.toString());
             return;
         }
-        await GH.createStatus(sha, this._approval.state, Config.approvalUrl(), this._approval.description, Config.approvalContext());
+        await GH.createStatus(sha, approval.state, Config.approvalUrl(), approval.description, Config.approvalContext());
     }
 
     // returns one of:
@@ -481,9 +474,9 @@ class MergeContext {
         const ret = (prevLen === requiredChecks.length);
         if (ret && andSupplyRequired) {
             for (let requiredContext of requiredContexts) {
-                // a passed check misses a required one
+                // go further only if the passed check context is not a required one
                 if (requiredChecks.find(el => el.context.trim() === requiredContext.trim()) === undefined) {
-                    // but the passed check matches a required one
+                    // go further only if the passed check context matches the required one
                     const matched = requiredChecks.find(el => el.context.startsWith(requiredContext.trim()));
                     // Before a 'staged' commit can be applied, it should have all required checks passed.
                     // We create a new "required" check, taking other attributes like targetUrl
@@ -623,7 +616,7 @@ class MergeContext {
 
     // the processing of this PR is delayed on this
     // number of milliseconds
-    delay() { return this._delayMs; }
+    delay() { return this._approval === null ? null : this._approval.delayMs; }
 
     _number() { return this._pr.number; }
 
