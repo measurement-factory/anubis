@@ -143,6 +143,7 @@ function getStatuses(ref) {
             }
             res = await pager(res, statusAppender);
             logApiResult(getStatuses.name, params, {statuses: res.data.statuses.length});
+            assert(res.data.state === 'success' || res.data.state === 'pending' || res.data.state === 'failure');
             resolve(res.data);
         });
     });
