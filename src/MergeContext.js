@@ -9,52 +9,50 @@ const Util = require('./Util.js');
 class StepResult
 {
     // treat as private; use static methods below instead
-    constructor(delayMs, suspended) {
+    constructor(delayMs) {
         assert(delayMs !== undefined);
-        assert(suspended !== undefined);
         this._delayMs = delayMs;
-        this._suspended = suspended;
     }
 
     // the step is successfully finished
     static Succeed() {
-        return new StepResult(0, null);
+        return new StepResult(0);
     }
 
     // the step is postponed (and will be resumed some time later)
     static Suspend() {
-        return new StepResult(null, true);
+        return new StepResult(-1);
     }
 
     // the step is finished with failure
     static Fail() {
-        return new StepResult(null, null);
+        return new StepResult(null);
     }
 
     // the step is postponed (and will be resumed in delayMs)
     static Delay(delayMs) {
-        assert(delayMs > 0);
-        return new StepResult(delayMs, null);
+        assert(delayMs !== null && delayMs > 0);
+        return new StepResult(delayMs);
     }
 
     succeeded() {
-        return this._delayMs === 0 && this._suspended === null;
+        return this._delayMs !== null && this._delayMs === 0;
     }
 
     failed() {
-        return this._delayMs === null && this._suspended === null;
+        return this._delayMs === null;
     }
 
     suspended() {
-        return this._delayMs === null && this._suspended === true;
+        return this._delayMs !== null && this._delayMs < 0;
     }
 
     delayed() {
-        return this._delayMs > 0 && this._suspended === null;
+        return this._delayMs !== null && this._delayMs > 0;
     }
 
     delay() {
-        assert(this._delayMs > 0);
+        assert(this.delayed());
         return this._delayMs;
     }
 }
@@ -101,7 +99,12 @@ class Approval {
 
     grantedTimeout() { return this.delayMs > 0; }
 
-    toString() { return "description: " + this.description + ", state: " + this.state; }
+    toString() {
+        let str = "description: " + this.description + ", state: " + this.state;
+        if (this.delayMs !== null)
+            str += ", delayMs: " + this.delayMs;
+        return str;
+    }
 }
 
 // Processing a single PR
@@ -726,7 +729,7 @@ class MergeContext {
     _dryRun(msg) {
         if (!Config.dryRun())
             return false;
-        this._log("skip " + msg + " due to dry_run option");
+        this._log("skip '" + msg + "' due to dry_run option");
         return true;
     }
 
