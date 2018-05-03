@@ -31,6 +31,7 @@ class ConfigOptions {
         this._votingDelayMin = timestring(conf.voting_delay_min, 'ms');
         this._stagingChecks = conf.staging_checks;
         this._loggerParams = conf.logger_params;
+        this._approvalUrl = conf.approval_url;
 
         // unused
         this._githubUserNoreplyEmail = null;
@@ -95,6 +96,15 @@ class ConfigOptions {
     failedDescriptionLabel() { return "M-failed-description"; }
     // allows target branch update in 'guarded_run' mode
     clearedForMergeLabel() { return "M-cleared-for-merge"; }
+
+    // an URL of the description of the approval test status
+    approvalUrl() { return this._approvalUrl; }
+
+    // whether the bot will create the approval test statuses for PR and staged commit
+    manageApprovalStatus() { return this.approvalUrl().length > 0; }
+
+    // the 'context name' of the approval test status
+    approvalContext() { return "PR approval"; }
 }
 
 const configFile = process.argv.length > 2 ? process.argv[2] : './config.json';

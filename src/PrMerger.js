@@ -1,3 +1,4 @@
+const assert = require('assert');
 const Config = require('./Config.js');
 const Log = require('./Logger.js');
 const Logger = Log.Logger;
@@ -21,7 +22,8 @@ class PrMerger {
     // there is a PR still-in-merge.
     async runStep() {
         Logger.info("runStep running");
-        if (await this._resumeCurrent())
+        const currentContext = await this._current();
+        if (currentContext && !(await this._finishContext(currentContext)))
             return true; // still in-process
 
         const prList = await GH.getPRList();
@@ -32,11 +34,17 @@ class PrMerger {
                 const pr = prList.shift();
                 let context = new MergeContext(pr);
                 this.total++;
-                if (await context.startProcessing())
+                const mergeStart = await context.startProcessing();
+                if (mergeStart.succeeded())
                     return true;
-                // the first found will give us the minimal delay
-                if (this.rerunIn === null && context.delay())
-                    this.rerunIn = context.delay();
+                else if (mergeStart.delayed()) {
+                    // the first found will give us the minimal delay
+                    if (this.rerunIn === null)
+                        this.rerunIn = mergeStart.delay();
+                } else {
+                    assert(mergeStart.failed() || mergeStart.suspended());
+                }
+
             } catch (e) {
                 this.errors++;
                 if (prList.length)
@@ -48,19 +56,21 @@ class PrMerger {
         return false;
     }
 
-    // Looks for the being-in-merge PR and resumes its processing, if found.
-    // Returns whether we are still processing the current PR (so that we can
-    // not start the next one):
-    // 'true': current PR was found and its processing not yet finished.
-    // 'false': either the current PR does not exist or the PR was found
-    // and it's processing was finished (succeeded or failed due to an error).
-    async _resumeCurrent() {
-        const context = await this._current();
-        if (!context)
-            return false;
+    // Continues executing the context and returns:
+    // 'true': the context executing was finished (succeeded or failed)
+    // 'false': the context is still in progress
+    async _finishContext(context) {
         this.total = 1;
-        const finished = await context.finishProcessing();
-        return !finished;
+        const mergeFinish = await context.finishProcessing();
+        if (mergeFinish.succeeded() || mergeFinish.failed())
+            return true;
+
+        assert(mergeFinish.delayed() || mergeFinish.suspended());
+        if (mergeFinish.delayed()) {
+            if (this.rerunIn === null)
+                this.rerunIn = mergeFinish.delay();
+        }
+        return false;
     }
 
     // Loads 'being-in-merge' PR, if exists (the PR has tag and staging_branch points to the tag).

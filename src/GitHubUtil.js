@@ -143,6 +143,7 @@ function getStatuses(ref) {
             }
             res = await pager(res, statusAppender);
             logApiResult(getStatuses.name, params, {statuses: res.data.statuses.length});
+            assert(res.data.state === 'success' || res.data.state === 'pending' || res.data.state === 'failure');
             resolve(res.data);
         });
     });
@@ -378,13 +379,13 @@ function removeLabel(label, prNum) {
 //    });
 //}
 
-function createStatus(sha, state, targetUrl, desc, context) {
+function createStatus(sha, state, targetUrl, description, context) {
     assert(!Config.dryRun());
     let params = commonParams();
     params.sha = sha;
     params.state = state;
     params.target_url = targetUrl;
-    params.desc = desc;
+    params.description = description;
     params.context = context;
     return new Promise( (resolve, reject) => {
       GitHub.authenticate(GitHubAuthentication);

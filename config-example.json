@@ -15,6 +15,7 @@
     "voting_delay_min": "2d",
     "voting_delay_max": "10d",
     "staging_checks": 2,
+    "approval_url": "",
     "logger_params" : {
         "name" : "anubis",
         "streams" : [
