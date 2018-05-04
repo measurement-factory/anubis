@@ -62,14 +62,12 @@ class PrMerger {
     async _finishContext(context) {
         this.total = 1;
         const mergeFinish = await context.finishProcessing();
+        assert(!mergeFinish.delayed());
         if (mergeFinish.succeeded() || mergeFinish.failed())
             return true;
-
-        assert(mergeFinish.delayed() || mergeFinish.suspended());
-        if (mergeFinish.delayed()) {
-            if (this.rerunIn === null)
-                this.rerunIn = mergeFinish.delay();
-        }
+        // This result is when one of'dry run' bot options is on.
+        // Will wait while this option is on the way.
+        assert(mergeFinish.suspended());
         return false;
     }
 
