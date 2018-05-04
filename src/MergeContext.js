@@ -74,6 +74,7 @@ class Approval {
     }
 
     static GrantAfterTimeout(description, delayMs) {
+        assert(delayMs);
         assert(delayMs > 0);
         return new Approval(description, "pending", delayMs);
     }
@@ -97,7 +98,7 @@ class Approval {
 
     granted() { return this.delayMs !== null; }
 
-    grantedTimeout() { return this.delayMs > 0; }
+    grantedTimeout() { return this.delayMs !== null && this.delayMs > 0; }
 
     toString() {
         let str = "description: " + this.description + ", state: " + this.state;
@@ -157,10 +158,13 @@ class MergeContext {
         }
 
         const postConditionsResult = await this._mayContinue();
-        if (postConditionsResult.failed()) {
+        // Delayed means that approval timeout settings changed (since startProcessing())
+        // because otherwise startProcessing() would wait for it.
+        // We cannot wait for the timeout and have to cleanup.
+        if (postConditionsResult.failed() || postConditionsResult.delayed()) {
             this._log("PR will be restarted");
             return await this._cleanupMergeFailed(true, this._labelCleanStaged);
-        } else if (postConditionsResult.delayed() || postConditionsResult.suspended()) {
+        } else if (postConditionsResult.suspended()) {
             return postConditionsResult;
         }
 
@@ -281,8 +285,29 @@ class MergeContext {
             return StepResult.Fail();
         }
 
+        // For now, PR commit message validation is only a precondition,
+        // do not validate it after 'staging commit' is created.
+        // TODO: check whether the commit message is unchanged between
+        // 'precondition' and 'postcondition' steps
+        let messageValid = true;
+        if (what === "precondition") {
+            messageValid = this._prMessageValid();
+            await this._labelFailedDescription(messageValid);
+        }
+
+        this._approval = await this._checkApproval();
+        this._log("checkApproval: " + this._approval);
+        await this._setApprovalStatus(this._prHeadSha());
+        if (what === "postcondition")
+            await this._setApprovalStatus(this._tagSha);
+
         if (this._prInProgress()) {
             this._log(what + " 'not in progress' failed");
+            return StepResult.Fail();
+        }
+
+        if (!this._prMergeable()) {
+            this._log(what + " 'mergeable' failed");
             return StepResult.Fail();
         }
 
@@ -293,35 +318,15 @@ class MergeContext {
             }
         }
 
-        // For now, PR commit message validation is only a precondition,
-        // do not validate it after 'staging commit' is created.
-        // TODO: check whether the commit message is unchanged between
-        // 'precondition' and 'postcondition' steps
-        if (what === "precondition") {
-            const messageValid = this._prMessageValid();
-            if (!this._dryRun("labeling on failed description"))
-                await this._labelFailedDescription(messageValid);
-            if (!messageValid) {
-                this._log(what + " 'commit message' failed");
-                return StepResult.Fail();
-            }
-        }
-
-        if (!this._prMergeable()) {
-            this._log(what + " 'mergeable' failed");
+        const commitStatus = await this._checkStatuses(this._prHeadSha());
+        /// status checks either failed, or pending (except the approval check, having timeout)
+        if (commitStatus === 'failure' || (commitStatus === 'pending' && !this._approval.grantedTimeout())) {
+            this._log(what + " 'status' failed, status is " + commitStatus);
             return StepResult.Fail();
         }
 
-        this._approval = await this._checkApproval();
-        this._log("checkApproval: " + this._approval);
-        await this._setApprovalStatus(this._prHeadSha());
-        if (what === "postcondition")
-            await this._setApprovalStatus(this._tagSha);
-
-        const commitStatus = await this._checkStatuses(this._prHeadSha());
-        /// status checks either failed, or pending and we don't know the time to rerun in
-        if (commitStatus === 'failure' || (commitStatus === 'pending' && !this._approval.grantedTimeout())) {
-            this._log(what + " 'status' failed, status is " + commitStatus);
+        if (!messageValid) {
+            this._log(what + " 'commit message' failed");
             return StepResult.Fail();
         }
 
@@ -608,6 +613,8 @@ class MergeContext {
     }
 
     async _labelFailedDescription(isValid) {
+        if (this._dryRun("labeling on failed description"))
+            return;
         const label = Config.failedDescriptionLabel();
         if (isValid)
             await this._removeLabelsIf([label]);
