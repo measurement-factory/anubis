@@ -59,9 +59,11 @@ class PrMerger {
                 if (mergeStart.succeeded())
                     return true;
                 else if (mergeStart.delayed()) {
-                    // the first found will give us the minimal delay
                     if (this.rerunIn === null)
                         this.rerunIn = mergeStart.delay();
+                    else if (this.rerunIn > mergeStart.delay())
+                        this.rerunIn = mergeStart.delay();
+                    assert(this.rerunIn);
                 } else {
                     assert(mergeStart.failed() || mergeStart.suspended());
                 }
