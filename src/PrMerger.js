@@ -17,6 +17,27 @@ class PrMerger {
         this.rerunIn = null;
     }
 
+    async _clearedForMerge(prNum) {
+        const labels = await GH.getLabels(prNum);
+        return labels.find(lbl => lbl.name === Config.clearedForMergeLabel()) !== undefined;
+    }
+
+    async _getPRList() {
+        let prList = await GH.getPRList();
+        for (let pr of prList)
+            pr.clearedForMerge = await this._clearedForMerge(pr.number);
+
+        prList.sort((pr1, pr2) => { return pr2.clearedForMerge - pr1.clearedForMerge || pr1.number - pr2.number; });
+        return prList;
+    }
+
+    _logPRList(prList) {
+        let prStr = prList.length ? "Got PRs from GitHub: " : "PR list is empty";
+        for (let pr of prList)
+            prStr += pr.number + " ";
+        Logger.info(prStr);
+    }
+
     // Gets PR list from GitHub and processes them one by one.
     // Returns if either all PRs have been processed(merged or skipped), or
     // there is a PR still-in-merge.
@@ -26,8 +47,8 @@ class PrMerger {
         if (currentContext && !(await this._finishContext(currentContext)))
             return true; // still in-process
 
-        const prList = await GH.getPRList();
-        prList.sort((pr1, pr2) => { return pr1.number - pr2.number; });
+        const prList = await this._getPRList();
+        this._logPRList(prList);
 
         while (prList.length) {
             try {
