@@ -108,6 +108,92 @@ class Approval {
     }
 }
 
+class StatusCheck
+{
+    constructor(context, state, targetUrl, description) {
+        assert(context);
+        assert(state);
+        assert(targetUrl);
+        assert(description);
+
+        this.context = context;
+        this.state = state;
+        this.targetUrl = targetUrl;
+        this.description = description;
+    }
+}
+
+// Passed status checks analysis
+class StatusResult
+{
+    constructor(requiredChecksNumber) {
+        assert(requiredChecksNumber);
+        this.statusChecks = [];
+        this.requiredChecksNumber = requiredChecksNumber;
+    }
+
+    addStatus(statusCheck) {
+        assert(statusCheck);
+        this.statusChecks.push(statusCheck);
+    }
+
+    pending() {
+        if (this.statusChecks.length < this.requiredChecksNumber)
+            return true;
+        if (this.statusChecks.find(check => check.state === 'pending'))
+            return true;
+        return false;
+    }
+
+    // there are some pending contexts except contextName
+    othersPending(contextName) {
+        if (!this.pending())
+            return false;
+        if (this.statusChecks.find(check => check.context === contextName && check.state === 'pending') !== undefined)
+            return false;
+        return true;
+    }
+
+    // there is only one pending context contextName
+    singlePending(contextName) {
+        return this.pending() && !this.othersPending(contextName);
+    }
+
+    failed() {
+        if (this.pending()) {
+            // some of checks may be failed already, but we need to wait them all finishing
+            return false;
+        }
+        return this.statusChecks.find(check => check.state === 'failure' || check.state === 'error') !== undefined;
+    }
+
+    succeeded() {
+        if (this.pending() || this.failed())
+            return false;
+        // all checks have passed, and none of them is 'pending', 'failure' or 'error'
+        return true;
+    }
+
+    toString() {
+        let combinedStatus = "required/completed: " + this.requiredChecksNumber +
+           "/" + this.statusChecks.length + ", combined: '";
+        if (this.pending())
+            combinedStatus += "pending'";
+        else if (this.failed())
+            combinedStatus += "failure'";
+        else
+            combinedStatus += "success'";
+
+        let statusDetail = "";
+        for (let check of this.statusChecks) {
+            if (statusDetail !== "")
+                statusDetail += ", ";
+            statusDetail += check.context + ": " + "'" + check.state + "'";
+        }
+        return combinedStatus + "; " + statusDetail;
+    }
+}
+
 // Processing a single PR
 class MergeContext {
 
@@ -174,15 +260,16 @@ class MergeContext {
         assert(compareStatus === "ahead");
 
         const commitStatus = await this._checkStatuses(this._tagSha, Config.stagingChecks(), true);
-        if (commitStatus === 'pending') {
+        this._log("status details: " + commitStatus);
+        if (commitStatus.pending()) {
             this._log("waiting for more staging checks completing");
             return StepResult.Suspend();
-        } else if (commitStatus === 'failure') {
+        } else if (commitStatus.failed()) {
             this._log("staging checks failed");
             return await this._cleanupMergeFailed(false, this._labelFailedStagingChecks);
         }
 
-        assert(commitStatus === 'success');
+        assert(commitStatus.succeeded());
         this._log("staging checks succeeded");
 
         if (this._dryRun("finish processing"))
@@ -223,7 +310,8 @@ class MergeContext {
         this._log("staging tag is " + (isFresh ? "fresh" : "stale"));
         if (isFresh) {
             const commitStatus = await this._checkStatuses(this._tagSha, Config.stagingChecks());
-            if (commitStatus === 'failure') {
+            this._log("status details: " + commitStatus);
+            if (commitStatus.failed()) {
                 this._log("staging checks failed some time ago");
                 if (this._prMergeable() !== true)
                     this._log("merge commit did not change due to conflicts with " + this._prBaseBranch());
@@ -319,9 +407,11 @@ class MergeContext {
         }
 
         const commitStatus = await this._checkStatuses(this._prHeadSha());
+        this._log("status details: " + commitStatus);
         /// status checks either failed, or pending (except the approval check, having timeout)
-        if (commitStatus === 'failure' || (commitStatus === 'pending' && !this._approval.grantedTimeout())) {
-            this._log(what + " 'status' failed, status is " + commitStatus);
+        if (commitStatus.failed() || commitStatus.othersPending(Config.approvalContext) ||
+                (commitStatus.singlePending(Config.approvalContext) && !this._approval.grantedTimeout())) {
+            this._log(what + " 'status' failed");
             return StepResult.Fail();
         }
 
@@ -482,10 +572,7 @@ class MergeContext {
         await GH.createStatus(sha, this._approval.state, Config.approvalUrl(), this._approval.description, Config.approvalContext());
     }
 
-    // returns one of:
-    // 'pending' if some of required checks are 'pending'
-    // 'success' if all of required are 'success'
-    // 'failure' otherwise
+    // returns filled StatusResult object
     // checksNumber: the explicit number of requires status checks
     // andSupplyRequired: if provided, append missing 'required' statuses
     // to the ref (if the ref has the corresponding matching status already)
@@ -515,30 +602,19 @@ class MergeContext {
         // For example, if we configured three required checks(Config.stagingChecks=3) but
         // the branch has a single required check named 'Jenkins(build test)',
         // the bot will wait for three checks with 'Jenkins(build test).*' names.
-        const needMatching = checksNumber !== undefined;
-        const requiredChecksNumber = needMatching ? checksNumber : requiredContexts.length;
-
-        // An array of [{context, state}] elements
-        let requiredChecks = [];
+        let statusResult = new StatusResult(checksNumber ? checksNumber : requiredContexts.length);
         // filter out non-required checks
         for (let st of combinedStatus.statuses) {
-            if (requiredContexts.find((el) => { return needMatching ?
-                         st.context.startsWith(el.trim()) : (el.trim() === st.context.trim());}))
-                requiredChecks.push({context: st.context, state: st.state, targetUrl: st.target_url, description: st.description});
+            if (requiredContexts.find(el => checksNumber ? st.context.startsWith(el.trim()) : (el.trim() === st.context.trim())) !== undefined)
+                statusResult.addStatus(new StatusCheck(st.context, st.state, st.target_url, st.description));
         }
 
-        if (requiredChecks.length < requiredChecksNumber || requiredChecks.find(check => check.state === 'pending'))
-            return 'pending';
-
-        const prevLen = requiredChecks.length;
-        requiredChecks = requiredChecks.filter(check => check.state === 'success');
-        const ret = (prevLen === requiredChecks.length);
-        if (ret && andSupplyRequired) {
+        if (statusResult.succeeded() && andSupplyRequired) {
             for (let requiredContext of requiredContexts) {
                 // go further only if the passed check context is not a required one
-                if (requiredChecks.find(el => el.context.trim() === requiredContext.trim()) === undefined) {
+                if (statusResult.statusChecks.find(el => el.context.trim() === requiredContext.trim()) === undefined) {
                     // go further only if the passed check context matches the required one
-                    const matched = requiredChecks.find(el => el.context.startsWith(requiredContext.trim()));
+                    const matched = statusResult.statusChecks.find(el => el.context.startsWith(requiredContext.trim()));
                     // Before a 'staged' commit can be applied, it should have all required checks passed.
                     // We create a new "required" check, taking other attributes like targetUrl
                     // from an already succeeded (matching) check (there can be several matching checks,
@@ -549,8 +625,7 @@ class MergeContext {
                 }
             }
         }
-
-        return ret ? 'success' : 'failure';
+        return statusResult;
     }
 
     async _acquireUserProperties() {
