@@ -110,26 +110,33 @@ class Approval {
 
 class StatusCheck
 {
-    constructor(context, state, targetUrl, description) {
+    constructor(context, state, targetUrl, description, required) {
         assert(context);
         assert(state);
         assert(targetUrl);
         assert(description);
+        assert(required !== undefined && required !== null);
 
         this.context = context;
         this.state = state;
         this.targetUrl = targetUrl;
         this.description = description;
+        this.required = required;
     }
 }
 
 // Passed status checks analysis
 class StatusResult
 {
-    constructor(requiredChecksNumber) {
-        assert(requiredChecksNumber);
+    // checksNumber: for staged commits: the bot-configured number of checks (Config.stagingChecks()),
+    //   for PR commits: GitHub configured number of required checks
+    // requiredContexts: GitHub configured number of required checks
+    constructor(checksNumber, requiredContexts) {
+        assert(checksNumber);
+        assert(requiredContexts);
         this.statusChecks = [];
-        this.requiredChecksNumber = requiredChecksNumber;
+        this.checksNumber = checksNumber;
+        this.requiredContexts = requiredContexts;
     }
 
     addStatus(statusCheck) {
@@ -137,12 +144,34 @@ class StatusResult
         this.statusChecks.push(statusCheck);
     }
 
+    requiredChecksPassed() {
+        let n = 0;
+        for (let check of this.statusChecks)
+            if (check.required)
+                n++;
+        return n;
+    }
+
+    // whether we have all necessary checks (including all required ones) and some them are pending
     pending() {
-        if (this.statusChecks.length < this.requiredChecksNumber)
-            return true;
-        if (this.statusChecks.find(check => check.state === 'pending'))
-            return true;
-        return false;
+        assert(this.requiredContexts);
+        return (this.somePending() || this.requiredChecksPassed() < this.requiredContexts);
+    }
+
+    // whether all necessary checks (including all required ones) finished and some of them failed
+    failed() {
+        if (this.pending()) {
+            // some of checks may be failed already, but we need to wait them all finishing
+            return false;
+        }
+        return this.someFailed();
+    }
+
+    // whether all necessary checks (including all required ones) successfully finished
+    succeeded() {
+        if (this.pending())
+            return false;
+        return this.someSucceeded();
     }
 
     // there are some pending contexts except contextName
@@ -159,24 +188,35 @@ class StatusResult
         return this.pending() && !this.othersPending(contextName);
     }
 
-    failed() {
-        if (this.pending()) {
+    // whether at we have at least checksNumber checks and some of them are pending
+    somePending() {
+        if (this.statusChecks.length < this.checksNumber)
+            return true;
+        if (this.statusChecks.find(check => check.state === 'pending'))
+            return true;
+        return false;
+    }
+
+    // whether at least checksNumber checks finished and some of them failed
+    someFailed() {
+        if (this.somePending()) {
             // some of checks may be failed already, but we need to wait them all finishing
             return false;
         }
         return this.statusChecks.find(check => check.state === 'failure' || check.state === 'error') !== undefined;
     }
 
-    succeeded() {
-        if (this.pending() || this.failed())
+    // whether at least checksNumber checks finished and all of them succeeded
+    someSucceeded() {
+        if (this.somePending() || this.someFailed())
             return false;
         // all checks have passed, and none of them is 'pending', 'failure' or 'error'
         return true;
     }
 
     toString() {
-        let combinedStatus = "required/completed: " + this.requiredChecksNumber +
-           "/" + this.statusChecks.length + ", combined: '";
+        let combinedStatus = "some/finished: " + this.checksNumber + "/" + this.statusChecks.length +
+            " requiredConfigured/requiredCompleted: " + this.requiredContexts + "/" + this.requiredChecksPassed() + ", combined: '";
         if (this.pending())
             combinedStatus += "pending'";
         else if (this.failed())
@@ -602,14 +642,19 @@ class MergeContext {
         // For example, if we configured three required checks(Config.stagingChecks=3) but
         // the branch has a single required check named 'Jenkins(build test)',
         // the bot will wait for three checks with 'Jenkins(build test).*' names.
-        let statusResult = new StatusResult(checksNumber ? checksNumber : requiredContexts.length);
+        let statusResult = new StatusResult(checksNumber ? checksNumber : requiredContexts.length, requiredContexts.length);
         // filter out non-required checks
         for (let st of combinedStatus.statuses) {
-            if (requiredContexts.find(el => checksNumber ? st.context.startsWith(el.trim()) : (el.trim() === st.context.trim())) !== undefined)
-                statusResult.addStatus(new StatusCheck(st.context, st.state, st.target_url, st.description));
+            let required = requiredContexts.find(el => el.trim() === st.context.trim()) !== undefined;
+            if (required) {
+                statusResult.addStatus(new StatusCheck(st.context, st.state, st.target_url, st.description, true));
+            } else if (checksNumber) {
+                required = requiredContexts.find(el => st.context.startsWith(el.trim())) !== undefined;
+                statusResult.addStatus(new StatusCheck(st.context, st.state, st.target_url, st.description, false));
+            }
         }
 
-        if (statusResult.succeeded() && andSupplyRequired) {
+        if (statusResult.someSucceeded() && andSupplyRequired) {
             for (let requiredContext of requiredContexts) {
                 // go further only if the passed check context is not a required one
                 if (statusResult.statusChecks.find(el => el.context.trim() === requiredContext.trim()) === undefined) {
@@ -620,8 +665,10 @@ class MergeContext {
                     // from an already succeeded (matching) check (there can be several matching checks,
                     // e.g., from different Jenkins nodes). After that, there will be two checks
                     // referencing the same targetUrl.
-                    if (matched && !this._dryRun("required status check creation"))
+                    if (matched && !this._dryRun("required status check creation")) {
                         await GH.createStatus(ref, "success", matched.targetUrl, matched.description, requiredContext);
+                        statusResult.addStatus(new StatusCheck(requiredContext, "success", matched.targetUrl, matched.description, true));
+                    }
                 }
             }
         }
