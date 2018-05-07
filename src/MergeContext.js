@@ -110,68 +110,37 @@ class Approval {
 
 class StatusCheck
 {
-    constructor(context, state, targetUrl, description, required) {
+    constructor(context, state, targetUrl, description) {
         assert(context);
         assert(state);
         assert(targetUrl);
         assert(description);
-        assert(required !== undefined && required !== null);
 
         this.context = context;
         this.state = state;
         this.targetUrl = targetUrl;
         this.description = description;
-        this.required = required;
     }
 }
 
 // Passed status checks analysis
 class StatusResult
 {
-    // checksNumber: for staged commits: the bot-configured number of checks (Config.stagingChecks()),
-    //   for PR commits: GitHub configured number of required checks
-    // requiredContexts: GitHub configured number of required checks
-    constructor(checksNumber, requiredContexts) {
+    // checksNumber:
+    //   for staged commits: the bot-configured number of required checks (Config.stagingChecks()),
+    //   for PR commits: GitHub configured number of required checks (requested from GitHub)
+    // context: either "PR" or "Staging";
+    constructor(checksNumber, context) {
         assert(checksNumber);
-        assert(requiredContexts);
-        this.statusChecks = [];
+        assert(context);
         this.checksNumber = checksNumber;
-        this.requiredContexts = requiredContexts;
+        this.context = context;
+        this.statusChecks = [];
     }
 
     addStatus(statusCheck) {
         assert(statusCheck);
         this.statusChecks.push(statusCheck);
-    }
-
-    requiredChecksPassed() {
-        let n = 0;
-        for (let check of this.statusChecks)
-            if (check.required)
-                n++;
-        return n;
-    }
-
-    // whether we have all necessary checks (including all required ones) and some them are pending
-    pending() {
-        assert(this.requiredContexts);
-        return (this.somePending() || this.requiredChecksPassed() < this.requiredContexts);
-    }
-
-    // whether all necessary checks (including all required ones) finished and some of them failed
-    failed() {
-        if (this.pending()) {
-            // some of checks may be failed already, but we need to wait them all finishing
-            return false;
-        }
-        return this.someFailed();
-    }
-
-    // whether all necessary checks (including all required ones) successfully finished
-    succeeded() {
-        if (this.pending())
-            return false;
-        return this.someSucceeded();
     }
 
     // there are some pending contexts except contextName
@@ -189,7 +158,7 @@ class StatusResult
     }
 
     // whether at we have at least checksNumber checks and some of them are pending
-    somePending() {
+    pending() {
         if (this.statusChecks.length < this.checksNumber)
             return true;
         if (this.statusChecks.find(check => check.state === 'pending'))
@@ -197,26 +166,21 @@ class StatusResult
         return false;
     }
 
-    // whether at least checksNumber checks finished and some of them failed
-    someFailed() {
-        if (this.somePending()) {
-            // some of checks may be failed already, but we need to wait them all finishing
-            return false;
-        }
+    // whether some of checks failed
+    failed() {
         return this.statusChecks.find(check => check.state === 'failure' || check.state === 'error') !== undefined;
     }
 
-    // whether at least checksNumber checks finished and all of them succeeded
-    someSucceeded() {
-        if (this.somePending() || this.someFailed())
+    // whether at least checksNumber checks finished and none of them failed
+    succeeded() {
+        if (this.pending() || this.failed())
             return false;
-        // all checks have passed, and none of them is 'pending', 'failure' or 'error'
         return true;
     }
 
     toString() {
-        let combinedStatus = "some/finished: " + this.checksNumber + "/" + this.statusChecks.length +
-            " requiredConfigured/requiredCompleted: " + this.requiredContexts + "/" + this.requiredChecksPassed() + ", combined: '";
+        let combinedStatus = "context: '" + this.context + "' expected/received: " + this.checksNumber + "/" +
+            this.statusChecks.length + ", combined: '";
         if (this.pending())
             combinedStatus += "pending'";
         else if (this.failed())
@@ -299,18 +263,19 @@ class MergeContext {
         // cannot be 'diverged' because _needRestart() succeeded
         assert(compareStatus === "ahead");
 
-        const commitStatus = await this._checkStatuses(this._tagSha, Config.stagingChecks(), true);
+        const commitStatus = await this.__checkStagingStatuses();
         this._log("status details: " + commitStatus);
-        if (commitStatus.pending()) {
-            this._log("waiting for more staging checks completing");
-            return StepResult.Suspend();
-        } else if (commitStatus.failed()) {
+        if (commitStatus.failed()) {
             this._log("staging checks failed");
             return await this._cleanupMergeFailed(false, this._labelFailedStagingChecks);
+        } else if (commitStatus.pending()) {
+            this._log("waiting for more staging checks completing");
+            return StepResult.Suspend();
+        } else {
+            assert(commitStatus.succeeded());
+            await this._supplyStagingWithPrRequired(commitStatus);
+            this._log("staging checks succeeded");
         }
-
-        assert(commitStatus.succeeded());
-        this._log("staging checks succeeded");
 
         if (this._dryRun("finish processing"))
             return StepResult.Suspend();
@@ -349,7 +314,7 @@ class MergeContext {
         const isFresh = await this._tagIsFresh();
         this._log("staging tag is " + (isFresh ? "fresh" : "stale"));
         if (isFresh) {
-            const commitStatus = await this._checkStatuses(this._tagSha, Config.stagingChecks());
+            const commitStatus = await this.__checkStagingStatuses();
             this._log("status details: " + commitStatus);
             if (commitStatus.failed()) {
                 this._log("staging checks failed some time ago");
@@ -446,7 +411,7 @@ class MergeContext {
             }
         }
 
-        const commitStatus = await this._checkStatuses(this._prHeadSha());
+        const commitStatus = await this._checkPRStatuses();
         this._log("status details: " + commitStatus);
         /// status checks either failed, or pending (except the approval check, having timeout)
         if (commitStatus.failed() || commitStatus.othersPending(Config.approvalContext) ||
@@ -612,11 +577,8 @@ class MergeContext {
         await GH.createStatus(sha, this._approval.state, Config.approvalUrl(), this._approval.description, Config.approvalContext());
     }
 
-    // returns filled StatusResult object
-    // checksNumber: the explicit number of requires status checks
-    // andSupplyRequired: if provided, append missing 'required' statuses
-    // to the ref (if the ref has the corresponding matching status already)
-    async _checkStatuses(ref, checksNumber, andSupplyRequired) {
+    // returns filled StatusResult object or throws
+    async _checkPRStatuses() {
         let requiredContexts;
         try {
             requiredContexts = await GH.getProtectedBranchRequiredStatusChecks(this._prBaseBranch());
@@ -626,53 +588,73 @@ class MergeContext {
            else
                throw e;
         }
-        // https://developer.github.com/v3/repos/statuses/#get-the-combined-status-for-a-specific-ref
-        // state is one of 'failure', 'error', 'pending' or 'success'.
-        // We treat both 'failure' and 'error' as an 'error'.
-        let combinedStatus = await GH.getStatuses(ref);
+
+        let combinedStatus = await GH.getStatuses(this._prHeadSha());
         if (requiredContexts === undefined || requiredContexts.length === 0) {
             this._log("no required contexts found");
-            // rely on all available checks then
-            return combinedStatus.state;
-        }
-        // If checksNumber was passed, we use required status context string matching
-        // for required checks counting. Gotten tag checks are compared against those
-        // configured for protected base branch. For simplicity, we use 'starts with'
-        // matching rule.
-        // For example, if we configured three required checks(Config.stagingChecks=3) but
-        // the branch has a single required check named 'Jenkins(build test)',
-        // the bot will wait for three checks with 'Jenkins(build test).*' names.
-        let statusResult = new StatusResult(checksNumber ? checksNumber : requiredContexts.length, requiredContexts.length);
-        // filter out non-required checks
-        for (let st of combinedStatus.statuses) {
-            let required = requiredContexts.find(el => el.trim() === st.context.trim()) !== undefined;
-            if (required) {
-                statusResult.addStatus(new StatusCheck(st.context, st.state, st.target_url, st.description, true));
-            } else if (checksNumber) {
-                required = requiredContexts.find(el => st.context.startsWith(el.trim())) !== undefined;
-                statusResult.addStatus(new StatusCheck(st.context, st.state, st.target_url, st.description, false));
-            }
+            return new StatusResult(0, "PR");
         }
 
-        if (statusResult.someSucceeded() && andSupplyRequired) {
-            for (let requiredContext of requiredContexts) {
-                // go further only if the passed check context is not a required one
-                if (statusResult.statusChecks.find(el => el.context.trim() === requiredContext.trim()) === undefined) {
-                    // go further only if the passed check context matches the required one
-                    const matched = statusResult.statusChecks.find(el => el.context.startsWith(requiredContext.trim()));
-                    // Before a 'staged' commit can be applied, it should have all required checks passed.
-                    // We create a new "required" check, taking other attributes like targetUrl
-                    // from an already succeeded (matching) check (there can be several matching checks,
-                    // e.g., from different Jenkins nodes). After that, there will be two checks
-                    // referencing the same targetUrl.
-                    if (matched && !this._dryRun("required status check creation")) {
-                        await GH.createStatus(ref, "success", matched.targetUrl, matched.description, requiredContext);
-                        statusResult.addStatus(new StatusCheck(requiredContext, "success", matched.targetUrl, matched.description, true));
-                    }
+        let statusResult = new StatusResult(requiredContexts.length, "PR");
+        // filter out non-required checks
+        for (let st of combinedStatus.statuses) {
+            if (requiredContexts.find(el => el.trim() === st.context.trim()) !== undefined)
+                statusResult.addStatus(new StatusCheck(st.context, st.state, st.target_url, st.description));
+        }
+        return statusResult;
+    }
+
+    // returns filled StatusResult object
+    async __checkStagingStatuses() {
+        let combinedStatus = await GH.getStatuses(this._tagSha);
+        // assert(combinedStatus.statuses.length <= Config.stagingChecks());
+        let statusResult = new StatusResult(Config.stagingChecks(), "Staging");
+        // all checks are 'required'
+        for (let st of combinedStatus.statuses) {
+            statusResult.addStatus(new StatusCheck(st.context, st.state, st.target_url, st.description));
+        }
+        return statusResult;
+    }
+
+    // Creates PR-required status checks for staged commit (if possible).
+    // Staged commit needs all PR-required checks (configured on GitHub)
+    // so that GitHub could merge it into the protected base branch.
+    async _supplyStagingWithPrRequired(statusResult) {
+        assert(statusResult.succeeded());
+
+        let requiredContexts;
+        try {
+            requiredContexts = await GH.getProtectedBranchRequiredStatusChecks(this._prBaseBranch());
+        } catch (e) {
+           if (e.name === 'ErrorContext' && e.notFound())
+               Log.LogException(e, this._toString() + " no status checks are required");
+           else
+               throw e;
+        }
+
+        if (requiredContexts === undefined || requiredContexts.length === 0)
+            return;
+
+        let prRequiredCounter = 0;
+        for (let requiredContext of requiredContexts) {
+            const hasPrRequired = statusResult.statusChecks.find(el => el.context.trim() === requiredContext.trim()) !== undefined;
+            if (hasPrRequired)
+                prRequiredCounter++;
+            else {
+                // go further only if the passed check context matches the required one
+                const matched = statusResult.statusChecks.find(el => el.context.startsWith(requiredContext.trim()));
+                // Before a 'staged' commit can be applied, it should have all PR required checks passed.
+                // We create a new "required" check with the same name as PR required check,
+                // taking other attributes like targetUrl from an already succeeded (matching) check
+                // (there can be several matching checks, e.g., from different Jenkins nodes).
+                // After that, there will be two checks, referencing the same targetUrl.
+                if (matched && !this._dryRun("required status check creation")) {
+                    await GH.createStatus(this._tagSha, "success", matched.targetUrl, matched.description, requiredContext);
+                    prRequiredCounter++;
                 }
             }
         }
-        return statusResult;
+        assert(prRequiredCounter === requiredContexts.length);
     }
 
     async _acquireUserProperties() {
