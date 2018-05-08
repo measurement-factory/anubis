@@ -263,24 +263,9 @@ class MergeContext {
         // cannot be 'diverged' because _needRestart() succeeded
         assert(compareStatus === "ahead");
 
-        const commitStatus = await this._checkStagingStatuses();
-        this._log("status details: " + commitStatus);
-        if (commitStatus.failed()) {
-            this._log("staging checks failed");
-            return await this._cleanupMergeFailed(false, this._labelFailedStagingChecks);
-        } else if (commitStatus.pending()) {
-            if (!this._dryRun("setting M-wating-staging-checks label"))
-                await this._labelWaitingStagingChecks();
-            this._log("waiting for more staging checks completing");
-            return StepResult.Suspend();
-        } else {
-            assert(commitStatus.succeeded());
-            this._log("staging checks succeeded");
-            if (this._dryRun("finish processing"))
-                return StepResult.Suspend();
-            else
-                await this._supplyStagingWithPrRequired(commitStatus);
-        }
+        const statusResult = await this._processStagingStatuses();
+        if (!statusResult.succeeded())
+            return statusResult;
 
         if (await this._stagingOnly("finish processing")) {
             await this._labelPassedStagingChecks();
@@ -316,7 +301,7 @@ class MergeContext {
         const isFresh = await this._tagIsFresh();
         this._log("staging tag is " + (isFresh ? "fresh" : "stale"));
         if (isFresh) {
-            const commitStatus = await this._checkStagingStatuses();
+            const commitStatus = await this._getStagingStatuses();
             this._log("status details: " + commitStatus);
             if (commitStatus.failed()) {
                 this._log("staging checks failed some time ago");
@@ -413,14 +398,9 @@ class MergeContext {
             }
         }
 
-        const commitStatus = await this._checkPRStatuses();
-        this._log("status details: " + commitStatus);
-        /// status checks either failed, or pending (except the approval check, having timeout)
-        if (commitStatus.failed() || commitStatus.othersPending(Config.approvalContext) ||
-                (commitStatus.singlePending(Config.approvalContext) && !this._approval.grantedTimeout())) {
-            this._log(what + " 'status' failed");
-            return StepResult.Fail();
-        }
+        const statusResult = await this._checkPRStatuses(what);
+        if (!statusResult.succeeded())
+            return statusResult;
 
         if (!messageValid) {
             this._log(what + " 'commit message' failed");
@@ -599,7 +579,7 @@ class MergeContext {
     }
 
     // returns filled StatusResult object
-    async _checkPRStatuses() {
+    async _getPRStatuses() {
         const requiredContexts = await this._getRequiredContexts();
         if (!requiredContexts)
             return new StatusResult(0, "PR");
@@ -615,8 +595,20 @@ class MergeContext {
         return statusResult;
     }
 
+    async _checkPRStatuses(logContext) {
+        const commitStatus = await this._getPRStatuses();
+        this._log("status details: " + commitStatus);
+        /// status checks either failed, or pending (except the approval check, having timeout)
+        if (commitStatus.failed() || commitStatus.othersPending(Config.approvalContext) ||
+                (commitStatus.singlePending(Config.approvalContext) && !this._approval.grantedTimeout())) {
+            this._log(logContext + " 'status' failed");
+            return StepResult.Fail();
+        }
+        return StepResult.Succeed();
+    }
+
     // returns filled StatusResult object
-    async _checkStagingStatuses() {
+    async _getStagingStatuses() {
         let combinedStatus = await GH.getStatuses(this._tagSha);
         // TODO: use the assert below.
         // The bot should be aware about all passed staging checks. We need to assert
@@ -631,6 +623,30 @@ class MergeContext {
             statusResult.addStatus(new StatusCheck(st.context, st.state, st.target_url, st.description));
         }
         return statusResult;
+    }
+
+    async _processStagingStatuses() {
+        const commitStatus = await this._getStagingStatuses();
+        this._log("status details: " + commitStatus);
+        if (commitStatus.failed()) {
+            this._log("staging checks failed");
+            return await this._cleanupMergeFailed(false, this._labelFailedStagingChecks);
+        } else if (commitStatus.pending()) {
+            if (!this._dryRun("setting M-wating-staging-checks label"))
+                await this._labelWaitingStagingChecks();
+            this._log("waiting for more staging checks completing");
+            return StepResult.Suspend();
+        } else {
+            assert(commitStatus.succeeded());
+            this._log("staging checks succeeded");
+            if (this._dryRun("finish processing"))
+                return StepResult.Suspend();
+            else {
+                await this._supplyStagingWithPrRequired(commitStatus);
+                return StepResult.Succeed();
+            }
+        }
+        // not reachable
     }
 
     // Creates PR-required status checks for staged commit (if possible).
