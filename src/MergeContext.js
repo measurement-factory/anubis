@@ -131,7 +131,7 @@ class StatusResult
     //   for PR commits: GitHub configured number of required checks (requested from GitHub)
     // context: either "PR" or "Staging";
     constructor(checksNumber, context) {
-        assert(checksNumber);
+        assert(checksNumber !== undefined && checksNumber !== null);
         assert(context);
         this.checksNumber = checksNumber;
         this.context = context;
@@ -263,22 +263,24 @@ class MergeContext {
         // cannot be 'diverged' because _needRestart() succeeded
         assert(compareStatus === "ahead");
 
-        const commitStatus = await this.__checkStagingStatuses();
+        const commitStatus = await this._checkStagingStatuses();
         this._log("status details: " + commitStatus);
         if (commitStatus.failed()) {
             this._log("staging checks failed");
             return await this._cleanupMergeFailed(false, this._labelFailedStagingChecks);
         } else if (commitStatus.pending()) {
+            if (!this._dryRun("setting M-wating-staging-checks label"))
+                await this._labelWaitingStagingChecks();
             this._log("waiting for more staging checks completing");
             return StepResult.Suspend();
         } else {
             assert(commitStatus.succeeded());
-            await this._supplyStagingWithPrRequired(commitStatus);
             this._log("staging checks succeeded");
+            if (this._dryRun("finish processing"))
+                return StepResult.Suspend();
+            else
+                await this._supplyStagingWithPrRequired(commitStatus);
         }
-
-        if (this._dryRun("finish processing"))
-            return StepResult.Suspend();
 
         if (await this._stagingOnly("finish processing")) {
             await this._labelPassedStagingChecks();
@@ -314,7 +316,7 @@ class MergeContext {
         const isFresh = await this._tagIsFresh();
         this._log("staging tag is " + (isFresh ? "fresh" : "stale"));
         if (isFresh) {
-            const commitStatus = await this.__checkStagingStatuses();
+            const commitStatus = await this._checkStagingStatuses();
             this._log("status details: " + commitStatus);
             if (commitStatus.failed()) {
                 this._log("staging checks failed some time ago");
@@ -577,8 +579,7 @@ class MergeContext {
         await GH.createStatus(sha, this._approval.state, Config.approvalUrl(), this._approval.description, Config.approvalContext());
     }
 
-    // returns filled StatusResult object or throws
-    async _checkPRStatuses() {
+    async _getRequiredContexts() {
         let requiredContexts;
         try {
             requiredContexts = await GH.getProtectedBranchRequiredStatusChecks(this._prBaseBranch());
@@ -589,11 +590,21 @@ class MergeContext {
                throw e;
         }
 
-        let combinedStatus = await GH.getStatuses(this._prHeadSha());
         if (requiredContexts === undefined || requiredContexts.length === 0) {
             this._log("no required contexts found");
-            return new StatusResult(0, "PR");
+            return null;
         }
+
+        return requiredContexts;
+    }
+
+    // returns filled StatusResult object
+    async _checkPRStatuses() {
+        const requiredContexts = await this._getRequiredContexts();
+        if (!requiredContexts)
+            return new StatusResult(0, "PR");
+
+        let combinedStatus = await GH.getStatuses(this._prHeadSha());
 
         let statusResult = new StatusResult(requiredContexts.length, "PR");
         // filter out non-required checks
@@ -605,8 +616,14 @@ class MergeContext {
     }
 
     // returns filled StatusResult object
-    async __checkStagingStatuses() {
+    async _checkStagingStatuses() {
         let combinedStatus = await GH.getStatuses(this._tagSha);
+        // TODO: use the assert below.
+        // The bot should be aware about all passed staging checks. We need to assert
+        // if we got more checks than expected (>Config.stagingChecks()). However,
+        // this is not possible in staged_run/guarded_run modes (after rerun), because
+        // we cannot separate staging extra checks, created by _supplyStagingWithPrRequired()
+        // from regular staging checks.
         // assert(combinedStatus.statuses.length <= Config.stagingChecks());
         let statusResult = new StatusResult(Config.stagingChecks(), "Staging");
         // all checks are 'required'
@@ -622,17 +639,8 @@ class MergeContext {
     async _supplyStagingWithPrRequired(statusResult) {
         assert(statusResult.succeeded());
 
-        let requiredContexts;
-        try {
-            requiredContexts = await GH.getProtectedBranchRequiredStatusChecks(this._prBaseBranch());
-        } catch (e) {
-           if (e.name === 'ErrorContext' && e.notFound())
-               Log.LogException(e, this._toString() + " no status checks are required");
-           else
-               throw e;
-        }
-
-        if (requiredContexts === undefined || requiredContexts.length === 0)
+        const requiredContexts = await this._getRequiredContexts();
+        if (!requiredContexts)
             return;
 
         let prRequiredCounter = 0;
@@ -742,6 +750,9 @@ class MergeContext {
     }
 
     async _labelWaitingStagingChecks() {
+        await this._removeLabelsIf([
+                Config.passedStagingChecksLabel()
+                ]);
         await this._addLabel(Config.waitingStagingChecksLabel());
     }
 
