@@ -518,8 +518,14 @@ class MergeContext {
         }
 
         const prAgeMs = new Date() - new Date(this._createdAt());
-        if (prAgeMs < Config.votingDelayMin())
+        if (prAgeMs < Config.votingDelayMin()) {
+            if (usersApproved.length < Config.sufficientApprovals()) {
+                this._log("not approved by sufficient " + Config.sufficientApprovals() +
+                        " votes within " + Config.votingDelayMin() + " ms");
+                return Approval.Suspend("waiting for more votes");
+            }
             return Approval.GrantAfterTimeout("waiting for fast track objections", Config.votingDelayMin() - prAgeMs);
+        }
 
         if (usersApproved.length >= Config.sufficientApprovals())
             return Approval.GrantNow("approved");
