@@ -125,18 +125,18 @@ class StatusCheck
     }
 }
 
-// Passed required status checks analysis
-class StatusResult
+// aggregates (required) status check for a PR or commit
+class StatusChecks
 {
-    // checksNumber:
+    // expectedStatusCount:
     //   for staged commits: the bot-configured number of required checks (Config.stagingChecks()),
     //   for PR commits: GitHub configured number of required checks (requested from GitHub)
     // context: either "PR" or "Staging";
-    constructor(checksNumber, context) {
-        assert(checksNumber !== undefined);
-        assert(checksNumber !== null);
+    constructor(expectedStatusCount, context) {
+        assert(expectedStatusCount !== undefined);
+        assert(expectedStatusCount !== null);
         assert(context);
-        this.checksNumber = checksNumber;
+        this.expectedStatusCount = expectedStatusCount;
         this.context = context;
         this.requiredStatuses = [];
     }
@@ -148,7 +148,7 @@ class StatusResult
 
     // no more required status changes or additions are expected
     final() {
-        return (this.requiredStatuses.length >= this.checksNumber) &&
+        return (this.requiredStatuses.length >= this.expectedStatusCount) &&
             this.requiredStatuses.every(check => check.state !== 'pending');
     }
 
@@ -163,16 +163,18 @@ class StatusResult
     }
 
     toString() {
-        let combinedStatus = "context: " + this.context + " expected/received: " + this.checksNumber + "/" +
+        let combinedStatus = "context: " + this.context + " expected/received: " + this.expectedStatusCount + "/" +
             this.requiredStatuses.length + ", combined: ";
         if (this.failed())
             combinedStatus += "failure";
         else if (this.succeeded())
             combinedStatus += "success";
-        else if (!this.final())
-            combinedStatus += "to-be-determined";
-        else
+        else if (this.final()) {
+            // final() implies failed() or succeeded()
             combinedStatus += "unexpected";
+        }
+        else
+            combinedStatus += "to-be-determined";
 
         let statusDetail = "";
         for (let st of this.requiredStatuses) {
@@ -249,9 +251,9 @@ class MergeContext {
         // cannot be 'diverged' because _needRestart() succeeded
         assert(compareStatus === "ahead");
 
-        const statusResult = await this._processStagingStatuses();
-        if (!statusResult.succeeded())
-            return statusResult;
+        const statusChecks = await this._processStagingStatuses();
+        if (!statusChecks.succeeded())
+            return statusChecks;
 
         if (await this._stagingOnly("finish processing")) {
             await this._labelPassedStagingChecks();
@@ -384,9 +386,9 @@ class MergeContext {
             }
         }
 
-        const statusResult = await this._checkPRStatuses(what);
-        if (!statusResult.succeeded())
-            return statusResult;
+        const statusChecks = await this._checkPRStatuses(what);
+        if (!statusChecks.succeeded())
+            return statusChecks;
 
         if (!messageValid) {
             this._log(what + " 'commit message' failed");
@@ -568,40 +570,40 @@ class MergeContext {
         return requiredContexts;
     }
 
-    // returns filled StatusResult object
-    async _getPRStatuses() {
+    // returns filled StatusChecks object
+    async _getPrStatuses() {
         let requiredContexts = await this._getRequiredContexts();
         requiredContexts = requiredContexts.filter(el => el.trim() !== Config.approvalContext());
         const combinedPrStatus = await GH.getStatuses(this._prHeadSha());
-        let statusResult = new StatusResult(requiredContexts.length, "PR");
+        let statusChecks = new StatusChecks(requiredContexts.length, "PR");
         // fill with required status checks
         for (let st of combinedPrStatus.statuses) {
             if (requiredContexts.some(el => el.trim() === st.context.trim() && el.trim() !== Config.approvalContext()))
-                statusResult.addRequiredStatus(new StatusCheck(st));
+                statusChecks.addRequiredStatus(new StatusCheck(st));
         }
-        return statusResult;
+        return statusChecks;
     }
 
     async _checkPRStatuses(logContext) {
-        const prStatus = await this._getPRStatuses();
+        const prStatus = await this._getPrStatuses();
         this._log("status details: " + prStatus);
         if (prStatus.succeeded())
             return StepResult.Succeed();
-        // non-final or failed
+        assert(prStatus.failed() || !prStatus.final());
         this._log(logContext + " 'status' failed");
         return StepResult.Fail();
     }
 
-    // returns filled StatusResult object
+    // returns filled StatusChecks object
     async _getStagingStatuses() {
         const combinedStagingStatuses = await GH.getStatuses(this._tagSha);
         const genuineStatuses = combinedStagingStatuses.statuses.filter(st => !st.description.endsWith(Config.copiedDescriptionSuffix()));
         assert(genuineStatuses.length <= Config.stagingChecks());
-        let statusResult = new StatusResult(Config.stagingChecks(), "Staging");
-        // all checks are 'required'
+        let statusChecks = new StatusChecks(Config.stagingChecks(), "Staging");
+        // all genuine checks are 'required'
         for (let st of genuineStatuses)
-            statusResult.addRequiredStatus(new StatusCheck(st));
-        return statusResult;
+            statusChecks.addRequiredStatus(new StatusCheck(st));
+        return statusChecks;
     }
 
     async _processStagingStatuses() {
@@ -610,7 +612,8 @@ class MergeContext {
         if (stagingStatus.failed()) {
             this._log("staging checks failed");
             return await this._cleanupMergeFailed(false, this._labelFailedStagingChecks);
-        } else if (!stagingStatus.final()) {
+        }
+        if (!stagingStatus.final()) {
             if (!this._dryRun("setting M-wating-staging-checks label"))
                 await this._labelWaitingStagingChecks();
             this._log("waiting for more staging checks completing");
@@ -631,12 +634,13 @@ class MergeContext {
         assert(stagedStatuses.succeeded());
 
         const requiredPrContexts = await this._getRequiredContexts();
-        const prStatuses = await this._getPRStatuses();
+        const prStatuses = await this._getPrStatuses();
 
         for (let requiredContext of requiredPrContexts) {
             if (!stagedStatuses.requiredStatuses.some(el => el.context.trim() === requiredContext.trim())) {
                 const requiredPrStatus = prStatuses.requiredStatuses.find(el => el.context.trim() === requiredContext.trim());
                 assert(requiredPrStatus);
+                assert(!requiredPrStatus.description.endsWith(Config.copiedDescriptionSuffix()));
                 await GH.createStatus(this._tagSha, "success", requiredPrStatus.targetUrl,
                         requiredPrStatus.description + Config.copiedDescriptionSuffix(), requiredPrStatus.context);
             }
