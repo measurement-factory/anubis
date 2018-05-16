@@ -311,7 +311,16 @@ class MergeContext {
         const tagCommit = await GH.getCommit(this._tagSha);
         const prMergeSha = await GH.getReference(this._mergePath());
         const prCommit = await GH.getCommit(prMergeSha);
-        return tagCommit.tree.sha === prCommit.tree.sha;
+        if (tagCommit.tree.sha !== prCommit.tree.sha) {
+            this._log("tag freshness: no (sha mismatch)");
+            return false;
+        }
+        if (this._prMessage() !== tagCommit.message) {
+            this._log("tag freshness: no (message mismatch)");
+            return false;
+        }
+        this._log("tag freshness: yes");
+        return true;
     }
 
     // whether the staged commit and the base HEAD have independent,
