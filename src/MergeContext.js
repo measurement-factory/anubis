@@ -243,7 +243,17 @@ class MergeContext {
         const tagCommit = await GH.getCommit(this._tagSha);
         const prMergeSha = await GH.getReference(this._mergePath());
         const prCommit = await GH.getCommit(prMergeSha);
-        return tagCommit.tree.sha === prCommit.tree.sha;
+        const result = tagCommit.tree.sha === prCommit.tree.sha;
+        this._log("tag freshness: " + result);
+        return result;
+    }
+
+    // Whether the PR message has not changed since the PR staged commit creation.
+    async _messageIsFresh() {
+        const tagCommit = await GH.getCommit(this._tagSha);
+        const result = this._prMessage() === tagCommit.message;
+        this._log("tag message freshness: " + result);
+        return result;
     }
 
     // whether the staged commit and the base HEAD have independent,
@@ -261,6 +271,8 @@ class MergeContext {
     // Is it still OK to resume PR processing?
     async _mayContinue() {
         if (!(await this._tagIsFresh()))
+            return StepResult.Fail();
+        if (!(await this._messageIsFresh()))
             return StepResult.Fail();
         return await this._checkMergeConditions("postcondition");
     }
