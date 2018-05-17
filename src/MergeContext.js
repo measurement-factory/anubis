@@ -196,6 +196,7 @@ class MergeContext {
         this._shaLimit = 6;
         // information used for approval test status creation/updating
         this._approval = null;
+        this._requiredContextsCache = null;
     }
 
     // returns filled StepResult object
@@ -386,9 +387,9 @@ class MergeContext {
             }
         }
 
-        const statusChecks = await this._checkPRStatuses(what);
-        if (!statusChecks.succeeded())
-            return statusChecks;
+        const statusChecks = await this._getPrStatuses(what);
+        if (statusChecks.failed())
+            return StepResult.Fail();
 
         if (!messageValid) {
             this._log(what + " 'commit message' failed");
@@ -402,6 +403,9 @@ class MergeContext {
 
         if (this._approval.grantedTimeout())
             return StepResult.Delay(this._approval.delayMs);
+
+        if (!statusChecks.final())
+            return StepResult.Suspend();
 
         return StepResult.Succeed();
     }
@@ -518,17 +522,12 @@ class MergeContext {
         }
 
         const prAgeMs = new Date() - new Date(this._createdAt());
-        if (prAgeMs < Config.votingDelayMin()) {
-            if (usersApproved.length < Config.sufficientApprovals()) {
-                this._log("not approved by sufficient " + Config.sufficientApprovals() +
-                        " votes within " + Config.votingDelayMin() + " ms");
-                return Approval.Suspend("waiting for more votes");
-            }
-            return Approval.GrantAfterTimeout("waiting for fast track objections", Config.votingDelayMin() - prAgeMs);
+        if (usersApproved.length >= Config.sufficientApprovals()) {
+            if (prAgeMs < Config.votingDelayMin())
+                return Approval.GrantAfterTimeout("waiting for fast track objections", Config.votingDelayMin() - prAgeMs);
+            else
+                return Approval.GrantNow("approved");
         }
-
-        if (usersApproved.length >= Config.sufficientApprovals())
-            return Approval.GrantNow("approved");
 
         if (prAgeMs >= Config.votingDelayMax())
             return Approval.GrantNow("approved (on slow burner)");
@@ -556,9 +555,11 @@ class MergeContext {
     }
 
     async _getRequiredContexts() {
-        let requiredContexts;
+        if (this._requiredContextsCache)
+            return;
+
         try {
-            requiredContexts = await GH.getProtectedBranchRequiredStatusChecks(this._prBaseBranch());
+            this._requiredContextsCache = await GH.getProtectedBranchRequiredStatusChecks(this._prBaseBranch());
         } catch (e) {
            if (e.name === 'ErrorContext' && e.notFound())
                Log.LogException(e, this._toString() + " no status checks are required");
@@ -566,38 +567,25 @@ class MergeContext {
                throw e;
         }
 
-        if (requiredContexts === undefined)
-            requiredContexts = [];
+        if (this._requiredContextsCache === undefined)
+            this._requiredContextsCache = [];
 
-        assert(requiredContexts);
-        if (!requiredContexts.length)
-            this._log("no required contexts found");
-
-        return requiredContexts;
+        assert(this._requiredContextsCache);
+        this._log("required contexts found: " + this._requiredContextsCache.length);
     }
 
     // returns filled StatusChecks object
     async _getPrStatuses() {
-        let requiredContexts = await this._getRequiredContexts();
-        requiredContexts = requiredContexts.filter(el => el.trim() !== Config.approvalContext());
+        await this._getRequiredContexts();
         const combinedPrStatus = await GH.getStatuses(this._prHeadSha());
-        let statusChecks = new StatusChecks(requiredContexts.length, "PR");
+        let statusChecks = new StatusChecks(this._requiredContextsCache.length, "PR");
         // fill with required status checks
         for (let st of combinedPrStatus.statuses) {
-            if (requiredContexts.some(el => el.trim() === st.context.trim() && el.trim() !== Config.approvalContext()))
+            if (this._requiredContextsCache.some(el => el.trim() === st.context.trim()))
                 statusChecks.addRequiredStatus(new StatusCheck(st));
         }
+        this._log("status details: " + statusChecks);
         return statusChecks;
-    }
-
-    async _checkPRStatuses(logContext) {
-        const prStatus = await this._getPrStatuses();
-        this._log("status details: " + prStatus);
-        if (prStatus.succeeded())
-            return StepResult.Succeed();
-        assert(prStatus.failed() || !prStatus.final());
-        this._log(logContext + " 'status' failed");
-        return StepResult.Fail();
     }
 
     // returns filled StatusChecks object
@@ -639,10 +627,10 @@ class MergeContext {
     async _supplyStagingWithPrRequired(stagedStatuses) {
         assert(stagedStatuses.succeeded());
 
-        const requiredPrContexts = await this._getRequiredContexts();
+        await this._getRequiredContexts();
         const prStatuses = await this._getPrStatuses();
 
-        for (let requiredContext of requiredPrContexts) {
+        for (let requiredContext of this._requiredContextsCache) {
             if (!stagedStatuses.requiredStatuses.some(el => el.context.trim() === requiredContext.trim())) {
                 const requiredPrStatus = prStatuses.requiredStatuses.find(el => el.context.trim() === requiredContext.trim());
                 assert(requiredPrStatus);
