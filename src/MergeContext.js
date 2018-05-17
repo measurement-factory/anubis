@@ -196,6 +196,7 @@ class MergeContext {
         this._shaLimit = 6;
         // information used for approval test status creation/updating
         this._approval = null;
+        // cached _getRequiredContexts() result
         this._requiredContextsCache = null;
     }
 
@@ -556,7 +557,7 @@ class MergeContext {
 
     async _getRequiredContexts() {
         if (this._requiredContextsCache)
-            return;
+            return this._requiredContextsCache;
 
         try {
             this._requiredContextsCache = await GH.getProtectedBranchRequiredStatusChecks(this._prBaseBranch());
@@ -572,16 +573,17 @@ class MergeContext {
 
         assert(this._requiredContextsCache);
         this._log("required contexts found: " + this._requiredContextsCache.length);
+        return this._requiredContextsCache;
     }
 
     // returns filled StatusChecks object
     async _getPrStatuses() {
-        await this._getRequiredContexts();
+        const requiredContexts = await this._getRequiredContexts();
         const combinedPrStatus = await GH.getStatuses(this._prHeadSha());
-        let statusChecks = new StatusChecks(this._requiredContextsCache.length, "PR");
+        let statusChecks = new StatusChecks(requiredContexts.length, "PR");
         // fill with required status checks
         for (let st of combinedPrStatus.statuses) {
-            if (this._requiredContextsCache.some(el => el.trim() === st.context.trim()))
+            if (requiredContexts.some(el => el.trim() === st.context.trim()))
                 statusChecks.addRequiredStatus(new StatusCheck(st));
         }
         this._log("status details: " + statusChecks);
@@ -627,10 +629,10 @@ class MergeContext {
     async _supplyStagingWithPrRequired(stagedStatuses) {
         assert(stagedStatuses.succeeded());
 
-        await this._getRequiredContexts();
+        const requiredContexts = await this._getRequiredContexts();
         const prStatuses = await this._getPrStatuses();
 
-        for (let requiredContext of this._requiredContextsCache) {
+        for (let requiredContext of requiredContexts) {
             if (!stagedStatuses.requiredStatuses.some(el => el.context.trim() === requiredContext.trim())) {
                 const requiredPrStatus = prStatuses.requiredStatuses.find(el => el.context.trim() === requiredContext.trim());
                 assert(requiredPrStatus);
