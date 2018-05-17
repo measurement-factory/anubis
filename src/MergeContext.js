@@ -256,7 +256,7 @@ class MergeContext {
         return result;
     }
 
-    // Whether the PR message has not changed since the PR staged commit creation.
+    // Whether the commit message configuration remained intact since staging.
     async _messageIsFresh() {
         const tagCommit = await this._tagCommit();
         const result = this._prMessage() === tagCommit.message;
