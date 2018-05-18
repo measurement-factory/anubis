@@ -105,6 +105,8 @@ class ConfigOptions {
 
     // the 'context name' of the approval test status
     approvalContext() { return "PR approval"; }
+
+    copiedDescriptionSuffix() { return " (copied from PR by Anubis)"; }
 }
 
 const configFile = process.argv.length > 2 ? process.argv[2] : './config.json';
