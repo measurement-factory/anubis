@@ -497,11 +497,19 @@ class MergeContext {
         // reviews from the same reviewer, so the actual 'state' is the most recent one.
         for (let review of reviews) {
             const reviewState = review.state.toLowerCase();
-            if (reviewState !== 'approved' && reviewState !== 'changes_requested')
+            if (reviewState === 'comment')
                 continue;
-            if (!pushCollaborators.find(el => el.login === review.user.login))
+            // TODO: wait for it
+            if (reviewState === 'pending')
                 continue;
+
+            // remove the old vote (if exists)
             usersVoted = usersVoted.filter(el => el.reviewer !== review.user.login);
+
+            if (reviewState === 'dismissed')
+                continue;
+
+            assert(reviewState === 'approved' || reviewState == 'changes_requested');
             usersVoted.push({reviewer: review.user.login, date: review.submitted_at, state: reviewState});
         }
 
