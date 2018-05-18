@@ -120,12 +120,10 @@ class StatusCheck
         this.state = raw.state;
         this.targetUrl = raw.target_url;
         this.description = raw.description;
-
-        this._raw = raw;
     }
 }
 
-// aggregates (required) status check for a PR or commit
+// aggregates (required) status checks for a PR or commit
 class StatusChecks
 {
     // expectedStatusCount:
@@ -169,10 +167,8 @@ class StatusChecks
             combinedStatus += "failure";
         else if (this.succeeded())
             combinedStatus += "success";
-        else if (this.final()) {
-            // final() implies failed() or succeeded()
-            combinedStatus += "unexpected";
-        }
+        else if (this.final())
+            combinedStatus += "unexpected"; // final() implies failed() or succeeded()
         else
             combinedStatus += "to-be-determined";
 
