@@ -238,10 +238,9 @@ class MergeContext {
     }
 
     async _tagCommit() {
-        if (this._tagCommitCache)
-            return this._tagCommitCache;
-         this._tagCommitCache = await GH.getCommit(this._tagSha);
-         return this._tagCommitCache;
+        if (!this._tagCommitCache)
+            this._tagCommitCache = await GH.getCommit(this._tagSha);
+        return this._tagCommitCache;
     }
     // Whether the PR merge commit has not changed since the PR staged commit creation.
     // Note that it does not track possible conflicts between PR base branch and the
