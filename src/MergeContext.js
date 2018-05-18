@@ -516,7 +516,7 @@ class MergeContext {
         // reviews from the same reviewer, so the actual 'state' is the most recent one.
         for (let review of reviews) {
             const reviewState = review.state.toLowerCase();
-            if (reviewState === 'comment')
+            if (reviewState === 'commented')
                 continue;
             // TODO: wait for it
             if (reviewState === 'pending')
