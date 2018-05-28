@@ -3,7 +3,7 @@ const GitHub = require('@octokit/rest')({
     host: 'api.github.com',
     version: '3.0.0'
 });
-const Config = require('./Config.js');
+const Config = require('../config/Config.js');
 const Util = require('./Util.js');
 const Log = require('./Logger.js');
 
