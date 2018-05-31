@@ -350,7 +350,7 @@ function removeLabel(label, prNum) {
       GitHub.authenticate(GitHubAuthentication);
       GitHub.issues.removeLabel(params, (err) => {
           if (err) {
-             reject(new ErrorContext(err, addLabels.name, params));
+             reject(new ErrorContext(err, removeLabel.name, params));
              return;
           }
           const result = {removed: true};
@@ -391,7 +391,7 @@ function createStatus(sha, state, targetUrl, description, context) {
       GitHub.authenticate(GitHubAuthentication);
       GitHub.repos.createStatus(params, (err, res) => {
           if (err) {
-             reject(new ErrorContext(err, createCommit.name, params));
+             reject(new ErrorContext(err, createStatus.name, params));
              return;
           }
           const result = {context: res.data.context};

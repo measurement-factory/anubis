@@ -137,11 +137,22 @@ class StatusChecks
         this.expectedStatusCount = expectedStatusCount;
         this.context = context;
         this.requiredStatuses = [];
+        this.optionalStatuses = [];
     }
 
     addRequiredStatus(requiredStatus) {
         assert(requiredStatus);
         this.requiredStatuses.push(requiredStatus);
+    }
+
+    addOptionalStatus(optionalStatus) {
+        assert(optionalStatus);
+        this.optionalStatuses.push(optionalStatus);
+    }
+
+    hasStatus(context) {
+        return this.requiredStatuses.some(el => el.context.trim() === context.trim()) ||
+            this.optionalStatuses.some(el => el.context.trim() === context.trim());
     }
 
     // no more required status changes or additions are expected
@@ -161,8 +172,8 @@ class StatusChecks
     }
 
     toString() {
-        let combinedStatus = "context: " + this.context + " expected/received: " + this.expectedStatusCount + "/" +
-            this.requiredStatuses.length + ", combined: ";
+        let combinedStatus = "context: " + this.context + " expected/required/optional: " + this.expectedStatusCount + "/" +
+            this.requiredStatuses.length + "/" + this.optionalStatuses.length + ", combined: ";
         if (this.failed())
             combinedStatus += "failure";
         else if (this.succeeded())
@@ -172,13 +183,19 @@ class StatusChecks
         else
             combinedStatus += "to-be-determined";
 
-        let statusDetail = "";
+        let requiredDetail = "";
         for (let st of this.requiredStatuses) {
-            if (statusDetail !== "")
-                statusDetail += ", ";
-            statusDetail += st.context + ": " + st.state;
+            if (requiredDetail !== "")
+                requiredDetail += ", ";
+            requiredDetail += st.context + ": " + st.state;
         }
-        return combinedStatus + "; " + statusDetail;
+        let optionalDetail = "";
+        for (let st of this.optionalStatuses) {
+            if (optionalDetail !== "")
+                optionalDetail += ", ";
+            optionalDetail += st.context + ": " + st.state;
+        }
+        return combinedStatus + "; required: " + requiredDetail + "; optional: " + optionalDetail;
     }
 }
 
@@ -290,7 +307,7 @@ class MergeContext {
         this._log("staging tag is " + (isFresh ? "fresh" : "stale"));
         if (isFresh) {
             const commitStatus = await this._getStagingStatuses();
-            this._log("status details: " + commitStatus);
+            this._log("staging status details: " + commitStatus);
             if (commitStatus.failed()) {
                 this._log("staging checks failed some time ago");
                 if (this._prMergeable() !== true)
@@ -528,7 +545,7 @@ class MergeContext {
             if (reviewState === 'dismissed')
                 continue;
 
-            assert(reviewState === 'approved' || reviewState == 'changes_requested');
+            assert(reviewState === 'approved' || reviewState === 'changes_requested');
             usersVoted.push({reviewer: review.user.login, date: review.submitted_at, state: reviewState});
         }
 
@@ -608,8 +625,10 @@ class MergeContext {
         for (let st of combinedPrStatus.statuses) {
             if (requiredContexts.some(el => el.trim() === st.context.trim()))
                 statusChecks.addRequiredStatus(new StatusCheck(st));
+            else
+                statusChecks.addOptionalStatus(new StatusCheck(st));
         }
-        this._log("status details: " + statusChecks);
+        this._log("pr status details: " + statusChecks);
         return statusChecks;
     }
 
@@ -622,12 +641,17 @@ class MergeContext {
         // all genuine checks are 'required'
         for (let st of genuineStatuses)
             statusChecks.addRequiredStatus(new StatusCheck(st));
+
+        const optionalStatuses = combinedStagingStatuses.statuses.filter(st => st.description.endsWith(Config.copiedDescriptionSuffix()));
+        for (let st of optionalStatuses)
+            statusChecks.addOptionalStatus(new StatusCheck(st));
+
         return statusChecks;
     }
 
     async _processStagingStatuses() {
         const stagingStatus = await this._getStagingStatuses();
-        this._log("status details: " + stagingStatus);
+        this._log("staging status details: " + stagingStatus);
         if (stagingStatus.failed()) {
             this._log("staging checks failed");
             return await this._cleanupMergeFailed(false, this._labelFailedStagingChecks);
@@ -656,13 +680,15 @@ class MergeContext {
         const prStatuses = await this._getPrStatuses();
 
         for (let requiredContext of requiredContexts) {
-            if (!stagedStatuses.requiredStatuses.some(el => el.context.trim() === requiredContext.trim())) {
-                const requiredPrStatus = prStatuses.requiredStatuses.find(el => el.context.trim() === requiredContext.trim());
-                assert(requiredPrStatus);
-                assert(!requiredPrStatus.description.endsWith(Config.copiedDescriptionSuffix()));
-                await GH.createStatus(this._tagSha, "success", requiredPrStatus.targetUrl,
-                        requiredPrStatus.description + Config.copiedDescriptionSuffix(), requiredPrStatus.context);
+            if (stagedStatuses.hasStatus(requiredContext)) {
+                this._log("_supplyStagingWithPrRequired: skip existing " + requiredContext);
+                continue;
             }
+            const requiredPrStatus = prStatuses.requiredStatuses.find(el => el.context.trim() === requiredContext.trim());
+            assert(requiredPrStatus);
+            assert(!requiredPrStatus.description.endsWith(Config.copiedDescriptionSuffix()));
+            await GH.createStatus(this._tagSha, "success", requiredPrStatus.targetUrl,
+                    requiredPrStatus.description + Config.copiedDescriptionSuffix(), requiredPrStatus.context);
         }
     }
 
