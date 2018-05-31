@@ -181,11 +181,11 @@ class StatusChecks
     }
 }
 
-// Processing a single PR
+// Common methods/fields for MergeInitiator and MergeFinalizer.
+// Do not create directly.
 class MergeContext {
 
     constructor(pr) {
-        // true when fast-forwarding master into staging_branch fails
         this._pr = pr;
         this._shaLimit = 6;
         // information used for approval test status creation/updating
@@ -521,7 +521,9 @@ class MergeContext {
     }
 } // MergeContext
 
-// Start processing a PR
+// Starts PR processing.
+// Performs different checks over the PR and creates staged commit
+// for it.
 class MergeInitiator extends MergeContext {
 
     constructor(pr) {
@@ -682,7 +684,10 @@ class MergeInitiator extends MergeContext {
     }
 } // MergeInitiator
 
-// Finish processing a PR
+// Finishes PR processing.
+// Waits for staging checks completing, merges staged commit
+// into base branch and closes the PR. Operates only on PRs having
+// staged commit and staging branch pointing to it.
 class MergeFinalizer extends MergeContext {
     constructor(pr, tSha) {
         super(pr);
