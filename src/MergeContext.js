@@ -4,8 +4,7 @@ const Log = require('./Logger.js');
 const GH = require('./GitHubUtil.js');
 const Util = require('./Util.js');
 
-// A result produced by MergeContext public methods(steps)
-// startProcessing() and finishProcessing() and passed back to PrMerger callers.
+// A result produced by MergeInitiator and MergeFinalizer classes
 class StepResult
 {
     // treat as private; use static methods below instead
@@ -185,306 +184,16 @@ class StatusChecks
 // Processing a single PR
 class MergeContext {
 
-    constructor(pr, tSha) {
+    constructor(pr) {
         // true when fast-forwarding master into staging_branch fails
         this._pr = pr;
-        this._tagSha = (tSha === undefined) ? null : tSha;
         this._shaLimit = 6;
         // information used for approval test status creation/updating
         this._approval = null;
-        // optimization: cached _tagCommit() result
-        this._tagCommitCache = null;
         // cached _getRequiredContexts() result
         this._requiredContextsCache = null;
-    }
-
-    // returns filled StepResult object
-    async startProcessing() {
-        // TODO: Optimize old/busy repo by quitting unless _prOpen().
-
-        // TODO: Optimize label tests by caching all PR labels here.
-
-        if (!this._dryRun("reset labels before precondition checking"))
-            await this._unlabelPreconditionsChecking();
-
-        const result = await this._checkMergeConditions("precondition");
-        if (!result.succeeded())
-            return result;
-
-        if (this._dryRun("start merging"))
-            return StepResult.Suspend();
-
-        await this._unlabelPreconditionsChecked();
-        await this._startMerging();
-        await this._labelWaitingStagingChecks();
-
-        assert(result.succeeded());
-        return result;
-    }
-
-    // returns filled StepResult object
-    async finishProcessing() {
-        if (!this._prOpen()) {
-            this._log("was unexpectedly closed");
-            return await this._cleanupMergeFailed(true, this._labelCleanStaged);
-        }
-
-        const compareStatus = await GH.compareCommits(this._prBaseBranch(), this._stagingTag());
-        if (compareStatus === "identical" || compareStatus === "behind") {
-            this._log("already merged");
-            return await this._cleanupMerged();
-        }
-
-        const postConditionsResult = await this._mayContinue();
-        // Delayed means that approval timeout settings changed (since startProcessing())
-        // because otherwise startProcessing() would wait for it.
-        // We cannot wait for the timeout and have to cleanup.
-        if (postConditionsResult.failed() || postConditionsResult.delayed()) {
-            this._log("PR will be restarted");
-            return await this._cleanupMergeFailed(true, this._labelCleanStaged);
-        } else if (postConditionsResult.suspended()) {
-            return postConditionsResult;
-        }
-
-        assert(postConditionsResult.succeeded());
-
-        // cannot be 'diverged' because _needRestart() succeeded
-        assert(compareStatus === "ahead");
-
-        const statusChecks = await this._processStagingStatuses();
-        if (!statusChecks.succeeded())
-            return statusChecks;
-
-        if (await this._stagingOnly("finish processing")) {
-            await this._labelPassedStagingChecks();
-            return StepResult.Suspend();
-        }
-
-        const finishMergingResult = await this._finishMerging();
-        if (!finishMergingResult.succeeded())
-            return finishMergingResult;
-        this._log("merged successfully");
-        return await this._cleanupMerged();
-    }
-
-    // Tries to load 'staging tag' for the PR.
-    async _loadTag() {
-       try {
-           this._tagSha = await GH.getReference(this._stagingTag());
-       } catch (e) {
-           if (e.name === 'ErrorContext' && e.notFound())
-               Log.LogException(e, this._toString() + " " + this._stagingTag() + " not found");
-           else
-               throw e;
-       }
-    }
-
-    // Check 'staging tag' state as merge precondition.
-    // Returns true if there is a fresh tag with 'failure' status.
-    async _stagingFailed() {
-        await this._loadTag();
-        if (!this._tagSha)
-            return false;
-
-        const isFresh = await this._tagIsFresh();
-        this._log("staging tag is " + (isFresh ? "fresh" : "stale"));
-        if (isFresh) {
-            const commitStatus = await this._getStagingStatuses();
-            this._log("status details: " + commitStatus);
-            if (commitStatus.failed()) {
-                this._log("staging checks failed some time ago");
-                if (this._prMergeable() !== true)
-                    this._log("merge commit did not change due to conflicts with " + this._prBaseBranch());
-                return true;
-            }
-        }
-        if (!this._dryRun("deleting staging commit"))
-            await GH.deleteReference(this._stagingTag());
-        return false;
-    }
-
-    async _tagCommit() {
-        if (!this._tagCommitCache)
-            this._tagCommitCache = await GH.getCommit(this._tagSha);
-        return this._tagCommitCache;
-    }
-    // Whether the PR merge commit has not changed since the PR staged commit creation.
-    // Note that it does not track possible conflicts between PR base branch and the
-    // PR branch (the PR merge commit is recreated only when there are no conflicts).
-    // Conflicts are tracked separately, by checking _prMergeable() flag.
-    async _tagIsFresh() {
-        const tagCommit = await this._tagCommit();
-        const prMergeSha = await GH.getReference(this._mergePath());
-        const prCommit = await GH.getCommit(prMergeSha);
-        const result = tagCommit.tree.sha === prCommit.tree.sha;
-        this._log("tag freshness: " + result);
-        return result;
-    }
-
-    // Whether the commit message configuration remained intact since staging.
-    async _messageIsFresh() {
-        const tagCommit = await this._tagCommit();
-        const result = this._prMessage() === tagCommit.message;
-        this._log("tag message freshness: " + result);
-        return result;
-    }
-
-    // whether the staged commit and the base HEAD have independent,
-    // (probably conflicting) changes
-    async _tagDiverged() {
-        try {
-            const compareStatus = await GH.compareCommits(this._prBaseBranch(), this._stagingTag());
-            return compareStatus === "diverged";
-        } catch (e) {
-            Log.LogError(e, this._toString() + " compare commits failed");
-            return false;
-        }
-    }
-
-    // Is it still OK to resume PR processing?
-    async _mayContinue() {
-        if (!(await this._tagIsFresh()))
-            return StepResult.Fail();
-        if (!(await this._messageIsFresh()))
-            return StepResult.Fail();
-        return await this._checkMergeConditions("postcondition");
-    }
-
-    // checks whether the PR is ready for merge
-    async _checkMergeConditions(what) {
-        this._log("checking merge " + what + "s...");
-        this._approval = null;
-
-        const pr = await GH.getPR(this._number(), true);
-        // refresh PR data
-        assert(pr.number === this._pr.number);
-        this._pr = pr;
-
-        if (!this._prOpen()) {
-            this._log(what + " 'open' failed");
-            return StepResult.Fail();
-        }
-
-        if (await this._hasLabel(Config.mergedLabel(), this._number())) {
-            this._log(what + " 'already merged' failed");
-            return StepResult.Fail();
-        }
-
-        // For now, PR commit message validation is only a precondition,
-        // do not validate it after 'staging commit' is created.
-        // TODO: check whether the commit message is unchanged between
-        // 'precondition' and 'postcondition' steps
-        let messageValid = true;
-        if (what === "precondition") {
-            messageValid = this._prMessageValid();
-            await this._labelFailedDescription(messageValid);
-        }
-
-        this._approval = await this._checkApproval();
-        this._log("checkApproval: " + this._approval);
-        await this._setApprovalStatus(this._prHeadSha());
-        if (what === "postcondition")
-            await this._setApprovalStatus(this._tagSha);
-
-        if (this._prInProgress()) {
-            this._log(what + " 'not in progress' failed");
-            return StepResult.Fail();
-        }
-
-        if (!this._prMergeable()) {
-            this._log(what + " 'mergeable' failed");
-            return StepResult.Fail();
-        }
-
-        if (what === "precondition") {
-            if (await this._stagingFailed()) {
-                this._log(what + " 'fresh tag with failed staging checks' failed'");
-                return StepResult.Fail();
-            }
-        }
-
-        const statusChecks = await this._getPrStatuses(what);
-        if (statusChecks.failed())
-            return StepResult.Fail();
-
-        if (!messageValid) {
-            this._log(what + " 'commit message' failed");
-            return StepResult.Fail();
-        }
-
-        if (!this._approval.granted()) {
-            this._log(what + " 'approved' failed");
-            return StepResult.Fail();
-        }
-
-        if (this._approval.grantedTimeout())
-            return StepResult.Delay(this._approval.delayMs);
-
-        if (!statusChecks.final())
-            return StepResult.Suspend();
-
-        return StepResult.Succeed();
-    }
-
-    // Creates a 'staging commit' and adjusts staging_branch.
-    async _startMerging() {
-        this._log("start merging...");
-        const baseSha = await GH.getReference(this._prBaseBranchPath());
-        const mergeSha = await GH.getReference("pull/" + this._number() + "/merge");
-        const mergeCommit = await GH.getCommit(mergeSha);
-        if (!Config.githubUserName())
-            await this._acquireUserProperties();
-        let now = new Date();
-        const committer = {name: Config.githubUserName(), email: Config.githubUserEmail(), date: now.toISOString()};
-        const tempCommitSha = await GH.createCommit(mergeCommit.tree.sha, this._prMessage(), [baseSha], mergeCommit.author, committer);
-        this._tagSha = await GH.createReference(tempCommitSha, "refs/" + this._stagingTag());
-        await this._setApprovalStatus(this._tagSha);
-        await GH.updateReference(Config.stagingBranchPath(), this._tagSha, true);
-    }
-
-    // fast-forwards base into staging_branch
-    // throws on unexpected error
-    async _finishMerging() {
-        assert(this._tagSha);
-        this._log("finish merging...");
-        try {
-            await GH.updateReference(this._prBaseBranchPath(), this._tagSha, false);
-            return StepResult.Succeed();
-        } catch (e) {
-            if (e.name === 'ErrorContext' && e.unprocessable()) {
-                if (await this._tagDiverged()) {
-                    Log.LogException(e, this._toString() + " fast-forwarding failed");
-                    return await this._cleanupMergeFailed(true);
-                }
-            }
-            throw e;
-        }
-    }
-
-    // Adjusts the successfully merged PR (labels, status, tag).
-    async _cleanupMerged() {
-        if (this._dryRun("cleanup merged"))
-            return StepResult.Suspend();
-
-        this._log("merged, cleanup...");
-        await this._labelMerged();
-        await GH.updatePR(this._number(), 'closed');
-        await GH.deleteReference(this._stagingTag());
-        return StepResult.Succeed();
-    }
-
-    // Adjusts PR when it's merge was failed(labels and tag).
-    async _cleanupMergeFailed(deleteTag, labelsCleanup) {
-        if (this._dryRun("cleanup merge failed"))
-            return StepResult.Suspend();
-        this._log("merge failed, cleanup...");
-        if (labelsCleanup === undefined)
-            labelsCleanup = this._labelFailedOther;
-        labelsCleanup = labelsCleanup.bind(this);
-        await labelsCleanup();
-        if (deleteTag)
-            await GH.deleteReference(this._stagingTag());
-        return StepResult.Fail();
+        this._tagSha = null;
+        this._role = null;
     }
 
     // creates and returns filled Approval object
@@ -528,7 +237,7 @@ class MergeContext {
             if (reviewState === 'dismissed')
                 continue;
 
-            assert(reviewState === 'approved' || reviewState == 'changes_requested');
+            assert(reviewState === 'approved' || reviewState === 'changes_requested');
             usersVoted.push({reviewer: review.user.login, date: review.submitted_at, state: reviewState});
         }
 
@@ -623,62 +332,6 @@ class MergeContext {
         for (let st of genuineStatuses)
             statusChecks.addRequiredStatus(new StatusCheck(st));
         return statusChecks;
-    }
-
-    async _processStagingStatuses() {
-        const stagingStatus = await this._getStagingStatuses();
-        this._log("status details: " + stagingStatus);
-        if (stagingStatus.failed()) {
-            this._log("staging checks failed");
-            return await this._cleanupMergeFailed(false, this._labelFailedStagingChecks);
-        }
-        if (!stagingStatus.final()) {
-            if (!this._dryRun("setting M-wating-staging-checks label"))
-                await this._labelWaitingStagingChecks();
-            this._log("waiting for more staging checks completing");
-            return StepResult.Suspend();
-        }
-        assert(stagingStatus.succeeded());
-        this._log("staging checks succeeded");
-        if (this._dryRun("finish processing"))
-            return StepResult.Suspend();
-        await this._supplyStagingWithPrRequired(stagingStatus);
-        return StepResult.Succeed();
-    }
-
-    // Creates PR-required status checks for staged commit (if possible).
-    // Staged commit needs all PR-required checks (configured on GitHub)
-    // so that GitHub could merge it into the protected base branch.
-    async _supplyStagingWithPrRequired(stagedStatuses) {
-        assert(stagedStatuses.succeeded());
-
-        const requiredContexts = await this._getRequiredContexts();
-        const prStatuses = await this._getPrStatuses();
-
-        for (let requiredContext of requiredContexts) {
-            if (!stagedStatuses.requiredStatuses.some(el => el.context.trim() === requiredContext.trim())) {
-                const requiredPrStatus = prStatuses.requiredStatuses.find(el => el.context.trim() === requiredContext.trim());
-                assert(requiredPrStatus);
-                assert(!requiredPrStatus.description.endsWith(Config.copiedDescriptionSuffix()));
-                await GH.createStatus(this._tagSha, "success", requiredPrStatus.targetUrl,
-                        requiredPrStatus.description + Config.copiedDescriptionSuffix(), requiredPrStatus.context);
-            }
-        }
-    }
-
-    async _acquireUserProperties() {
-        const emails = await GH.getUserEmails();
-        for (let e of emails) {
-            if (e.primary) {
-                Config.githubUserEmail(e.email);
-                break;
-            }
-        }
-        assert(Config.githubUserEmail());
-
-        const user = await GH.getUser(Config.githubUserLogin());
-        Config.githubUserName(user.name);
-        assert(Config.githubUserName());
     }
 
     // Label manipulation methods
@@ -840,12 +493,16 @@ class MergeContext {
     _mergePath() { return "pull/" + this._pr.number + "/merge"; }
 
     _debugString() {
-        return "PR" + this._pr.number + "(head: " + this._pr.head.sha.substr(0, this._shaLimit);
+        return "PR" + this._pr.number + "(" + this._role + ", " + "head: " + this._pr.head.sha.substr(0, this._shaLimit);
     }
 
     _log(msg) {
         Log.Logger.info(this._debugString() + "):", msg);
     }
+
+    _logFailedCondition(cond) {
+        this._log("condition '" + cond + "' failed");
+     }
 
     // TODO: Rename to _readOnly()
     // whether all GitHub/repository changes are prohibited
@@ -856,10 +513,297 @@ class MergeContext {
         return true;
     }
 
+    _toString() {
+        let str = this._debugString();
+        if (this._tagSha !== null)
+            str += ", tag: " + this._tagSha.substr(0, this._shaLimit);
+        return str + ")";
+    }
+} // MergeContext
+
+// Start processing a PR
+class MergeInitiator extends MergeContext {
+
+    constructor(pr) {
+        super(pr);
+        this._role = "initiator";
+    }
+
+    // Tries to load 'staging tag' for the PR.
+    async _loadTag() {
+       try {
+           this._tagSha = await GH.getReference(this._stagingTag());
+       } catch (e) {
+           if (e.name === 'ErrorContext' && e.notFound())
+               Log.LogException(e, this._toString() + " " + this._stagingTag() + " not found");
+           else
+               throw e;
+       }
+    }
+
+    // Check 'staging tag' state as merge condition.
+    // Returns true if there is a fresh tag with 'failure' status.
+    async _stagingFailed() {
+        await this._loadTag();
+        if (!this._tagSha)
+            return false;
+
+        const isFresh = await this._tagIsFresh();
+        this._log("staging tag is " + (isFresh ? "fresh" : "stale"));
+        if (isFresh) {
+            const commitStatus = await this._getStagingStatuses();
+            this._log("status details: " + commitStatus);
+            if (commitStatus.failed()) {
+                this._log("staging checks failed some time ago");
+                if (this._prMergeable() !== true)
+                    this._log("merge commit did not change due to conflicts with " + this._prBaseBranch());
+                return true;
+            }
+        }
+        if (!this._dryRun("deleting staging commit"))
+            await GH.deleteReference(this._stagingTag());
+        return false;
+    }
+
+    async _acquireUserProperties() {
+        const emails = await GH.getUserEmails();
+        for (let e of emails) {
+            if (e.primary) {
+                Config.githubUserEmail(e.email);
+                break;
+            }
+        }
+        assert(Config.githubUserEmail());
+
+        const user = await GH.getUser(Config.githubUserLogin());
+        Config.githubUserName(user.name);
+        assert(Config.githubUserName());
+    }
+
+    async _checkConditions() {
+        this._log("initiator: checking conditions");
+        this._approval = null;
+
+        const pr = await GH.getPR(this._number(), true);
+        // refresh PR data
+        assert(pr.number === this._pr.number);
+        this._pr = pr;
+
+        if (!this._prOpen()) {
+            this._logFailedCondition("open");
+            return StepResult.Fail();
+        }
+
+        if (await this._hasLabel(Config.mergedLabel(), this._number())) {
+            this._logFailedCondition("already has merged status");
+            return StepResult.Fail();
+        }
+
+        const messageValid = this._prMessageValid();
+        await this._labelFailedDescription(messageValid);
+
+        this._approval = await this._checkApproval();
+        this._log("checkApproval: " + this._approval);
+        await this._setApprovalStatus(this._prHeadSha());
+
+        if (this._prInProgress()) {
+            this._logFailedCondition("not in progress");
+            return StepResult.Fail();
+        }
+
+        if (!this._prMergeable()) {
+            this._logFailedCondition("mergeable");
+            return StepResult.Fail();
+        }
+
+        if (await this._stagingFailed()) {
+            this._logFailedCondition("fresh tag with failed staging checks");
+            return StepResult.Fail();
+        }
+
+        const statusChecks = await this._getPrStatuses();
+        if (statusChecks.failed())
+            return StepResult.Fail();
+
+        if (!messageValid) {
+            this._logFailedCondition("commit message");
+            return StepResult.Fail();
+        }
+
+        if (!this._approval.granted()) {
+            this._logFailedCondition("approved");
+            return StepResult.Fail();
+        }
+
+        if (this._approval.grantedTimeout())
+            return StepResult.Delay(this._approval.delayMs);
+
+        if (!statusChecks.final())
+            return StepResult.Suspend();
+
+        return StepResult.Succeed();
+    }
+
+    async _createStaged() {
+        this._log("start merging...");
+        const baseSha = await GH.getReference(this._prBaseBranchPath());
+        const mergeSha = await GH.getReference("pull/" + this._number() + "/merge");
+        const mergeCommit = await GH.getCommit(mergeSha);
+        if (!Config.githubUserName())
+            await this._acquireUserProperties();
+        let now = new Date();
+        const committer = {name: Config.githubUserName(), email: Config.githubUserEmail(), date: now.toISOString()};
+        const tempCommitSha = await GH.createCommit(mergeCommit.tree.sha, this._prMessage(), [baseSha], mergeCommit.author, committer);
+        this._tagSha = await GH.createReference(tempCommitSha, "refs/" + this._stagingTag());
+        await this._setApprovalStatus(this._tagSha);
+        await GH.updateReference(Config.stagingBranchPath(), this._tagSha, true);
+    }
+
+    // returns filled StepResult object
+    async process() {
+        // TODO: Optimize old/busy repo by quitting unless _prOpen().
+        // TODO: Optimize label tests by caching all PR labels here.
+
+        if (!this._dryRun("reset labels before precondition checking"))
+            await this._unlabelPreconditionsChecking();
+
+        const conditions = await this._checkConditions();
+        if (!conditions.succeeded())
+            return conditions;
+
+        if (this._dryRun("start merging"))
+            return StepResult.Suspend();
+
+        await this._unlabelPreconditionsChecked();
+        await this._createStaged();
+        await this._labelWaitingStagingChecks();
+
+        return StepResult.Succeed();
+    }
+} // MergeInitiator
+
+// Finish processing a PR
+class MergeFinalizer extends MergeContext {
+    constructor(pr, tSha) {
+        super(pr);
+        assert(tSha);
+        // optimization: cached _tagCommit() result
+        this._tagCommitCache = null;
+        this._tagSha = tSha;
+        this._role = "finalizer";
+    }
+
+    async _tagCommit() {
+        if (!this._tagCommitCache)
+            this._tagCommitCache = await GH.getCommit(this._tagSha);
+        return this._tagCommitCache;
+    }
+
+    // whether the staged commit and the base HEAD have independent,
+    // (probably conflicting) changes
+    async _tagDiverged() {
+        try {
+            const compareStatus = await GH.compareCommits(this._prBaseBranch(), this._stagingTag());
+            return compareStatus === "diverged";
+        } catch (e) {
+            Log.LogError(e, this._toString() + " compare commits failed");
+            return false;
+        }
+    }
+
+    // Whether the commit message configuration remained intact since staging.
+    async _messageIsFresh() {
+        const tagCommit = await this._tagCommit();
+        const result = this._prMessage() === tagCommit.message;
+        this._log("tag message freshness: " + result);
+        return result;
+    }
+
+    // Whether the PR merge commit has not changed since the PR staged commit creation.
+    // Note that it does not track possible conflicts between PR base branch and the
+    // PR branch (the PR merge commit is recreated only when there are no conflicts).
+    // Conflicts are tracked separately, by checking _prMergeable() flag.
+    async _tagIsFresh() {
+        const tagCommit = await this._tagCommit();
+        const prMergeSha = await GH.getReference(this._mergePath());
+        const prCommit = await GH.getCommit(prMergeSha);
+        const result = tagCommit.tree.sha === prCommit.tree.sha;
+        this._log("tag freshness: " + result);
+        return result;
+    }
+
+    // Adjusts the successfully merged PR (labels, status, tag).
+    async _cleanupMerged() {
+        if (this._dryRun("cleanup merged"))
+            return StepResult.Suspend();
+
+        this._log("merged, cleanup...");
+        await this._labelMerged();
+        await GH.updatePR(this._number(), 'closed');
+        await GH.deleteReference(this._stagingTag());
+        return StepResult.Succeed();
+    }
+
+    async _cleanupMergeFailed(deleteTag, labelsCleanup) {
+        if (this._dryRun("cleanup merge failed"))
+            return StepResult.Suspend();
+        this._log("merge failed, cleanup...");
+        if (labelsCleanup === undefined)
+            labelsCleanup = this._labelFailedOther;
+        labelsCleanup = labelsCleanup.bind(this);
+        await labelsCleanup();
+        if (deleteTag)
+            await GH.deleteReference(this._stagingTag());
+        return StepResult.Fail();
+    }
+
+    // returns filled StepResult object
+    async _processStagingStatuses() {
+        const stagingStatus = await this._getStagingStatuses();
+        this._log("status details: " + stagingStatus);
+        if (stagingStatus.failed()) {
+            this._log("staging checks failed");
+            return await this._cleanupMergeFailed(false, this._labelFailedStagingChecks);
+        }
+        if (!stagingStatus.final()) {
+            if (!this._dryRun("setting M-wating-staging-checks label"))
+                await this._labelWaitingStagingChecks();
+            this._log("waiting for more staging checks completing");
+            return StepResult.Suspend();
+        }
+        assert(stagingStatus.succeeded());
+        this._log("staging checks succeeded");
+        if (this._dryRun("finish processing"))
+            return StepResult.Suspend();
+        await this._supplyStagingWithPrRequired(stagingStatus);
+        return StepResult.Succeed();
+    }
+
+    // Creates PR-required status checks for staged commit (if possible).
+    // Staged commit needs all PR-required checks (configured on GitHub)
+    // so that GitHub could merge it into the protected base branch.
+    async _supplyStagingWithPrRequired(stagedStatuses) {
+        assert(stagedStatuses.succeeded());
+
+        const requiredContexts = await this._getRequiredContexts();
+        const prStatuses = await this._getPrStatuses();
+
+        for (let requiredContext of requiredContexts) {
+            if (!stagedStatuses.requiredStatuses.some(el => el.context.trim() === requiredContext.trim())) {
+                const requiredPrStatus = prStatuses.requiredStatuses.find(el => el.context.trim() === requiredContext.trim());
+                assert(requiredPrStatus);
+                assert(!requiredPrStatus.description.endsWith(Config.copiedDescriptionSuffix()));
+                await GH.createStatus(this._tagSha, "success", requiredPrStatus.targetUrl,
+                        requiredPrStatus.description + Config.copiedDescriptionSuffix(), requiredPrStatus.context);
+            }
+        }
+    }
+
     // whether target branch changes are prohibited
-    async _stagingOnly(msg) {
+    async _stagingOnly() {
         // TODO: The caller should not have to remember to call _dryRun() first
         assert(!this._dryRun("_stagingOnly"));
+        const msg = "finalize merging";
 
         if (Config.stagedRun()) {
             this._log("skip " + msg + " due to staged_run option");
@@ -878,13 +822,107 @@ class MergeContext {
         return false; // no staging-only mode by default
     }
 
-    _toString() {
-        let str = this._debugString();
-        if (this._tagSha !== null)
-            str += ", tag: " + this._tagSha.substr(0, this._shaLimit);
-        return str + ")";
-    }
-} // MergeContext
+    async _checkConditions() {
+        const pr = await GH.getPR(this._number(), true);
+        // refresh PR data
+        assert(pr.number === this._pr.number);
+        this._pr = pr;
 
-module.exports = MergeContext;
+        if (!this._prOpen()) {
+            this._logFailedCondition("not opened");
+            return StepResult.Fail();
+        }
+
+        if (await this._hasLabel(Config.mergedLabel(), this._number())) {
+            this._logFailedCondition("already has merged status");
+            return StepResult.Fail();
+        }
+
+        const compareStatus = await GH.compareCommits(this._prBaseBranch(), this._stagingTag());
+        if (compareStatus === "identical" || compareStatus === "behind") {
+            this._logFailedCondition("already merged to base");
+            return await this._cleanupMerged();
+        }
+
+        if (!(await this._tagIsFresh()))
+            return await this._cleanupMergeFailed(true, this._labelCleanStaged);
+
+        if (!(await this._messageIsFresh()))
+            return await this._cleanupMergeFailed(true, this._labelCleanStaged);
+
+        this._approval = await this._checkApproval();
+        this._log("checkApproval: " + this._approval);
+        await this._setApprovalStatus(this._prHeadSha());
+        await this._setApprovalStatus(this._tagSha);
+
+        if (this._prInProgress()) {
+            this._logFailedCondition("not in progress");
+            return await this._cleanupMergeFailed(true, this._labelCleanStaged);
+        }
+
+        const statusChecks = await this._getPrStatuses();
+        if (statusChecks.failed())
+            return await this._cleanupMergeFailed(true, this._labelCleanStaged);
+
+        if (!this._approval.granted()) {
+            this._logFailedCondition("approved");
+            return await this._cleanupMergeFailed(true, this._labelCleanStaged);
+        }
+
+        if (this._approval.grantedTimeout())
+            return await this._cleanupMergeFailed(true, this._labelCleanStaged);
+
+        if (!statusChecks.final())
+            return StepResult.Suspend();
+
+        assert(compareStatus === "ahead");
+
+        const stagingResult = await this._processStagingStatuses();
+        if (!stagingResult.succeeded())
+            return stagingResult;
+
+        if (await this._stagingOnly()) {
+            await this._labelPassedStagingChecks();
+            return StepResult.Suspend();
+        }
+        return StepResult.Succeed();
+    }
+
+    async _mergeToBase() {
+        assert(this._tagSha);
+        this._log("merging to base...");
+        try {
+            await GH.updateReference(this._prBaseBranchPath(), this._tagSha, false);
+            return StepResult.Succeed();
+        } catch (e) {
+            if (e.name === 'ErrorContext' && e.unprocessable()) {
+                if (await this._tagDiverged()) {
+                    Log.LogException(e, this._toString() + " fast-forwarding failed");
+                    return await this._cleanupMergeFailed(true);
+                }
+            }
+            throw e;
+        }
+    }
+
+    // returns filled StepResult object
+    async process() {
+        const conditions = await this._checkConditions();
+        if (!conditions.succeeded())
+            return conditions;
+
+        const result = await this._mergeToBase();
+        if (!result.succeeded())
+            return result;
+
+        this._log("merged successfully");
+        return await this._cleanupMerged();
+
+    }
+} // MergeFinalizer
+
+module.exports = {
+    MergeInitiator: MergeInitiator,
+    MergeFinalizer: MergeFinalizer
+};
 
