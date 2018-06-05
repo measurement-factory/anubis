@@ -546,8 +546,7 @@ class MergeContext {
 } // MergeContext
 
 // Starts PR processing.
-// Performs different checks over the PR and creates staged commit
-// for it.
+// Performs all PR merge steps up to and including the staged commit creation.
 class MergeInitiator extends MergeContext {
 
     constructor(pr) {
@@ -709,9 +708,8 @@ class MergeInitiator extends MergeContext {
 } // MergeInitiator
 
 // Finishes PR processing.
-// Waits for staging checks completing, merges staged commit
-// into base branch and closes the PR. Operates only on PRs having
-// staged commit and staging branch pointing to it.
+// Performs all PR merge steps after the staged commit creation.
+// Requires PRs having staged commit and staging branch pointing to it.
 class MergeFinalizer extends MergeContext {
     constructor(pr, tSha) {
         super(pr);
