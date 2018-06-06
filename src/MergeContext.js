@@ -358,6 +358,25 @@ class MergeContext {
         return statusChecks;
     }
 
+    async _tagCommit() {
+        if (!this._tagCommitCache)
+            this._tagCommitCache = await GH.getCommit(this._tagSha);
+        return this._tagCommitCache;
+    }
+
+    // Whether the PR merge commit has not changed since the PR staged commit creation.
+    // Note that it does not track possible conflicts between PR base branch and the
+    // PR branch (the PR merge commit is recreated only when there are no conflicts).
+    // Conflicts are tracked separately, by checking _prMergeable() flag.
+    async _tagIsFresh() {
+        const tagCommit = await this._tagCommit();
+        const prMergeSha = await GH.getReference(this._mergePath());
+        const prCommit = await GH.getCommit(prMergeSha);
+        const result = tagCommit.tree.sha === prCommit.tree.sha;
+        this._log("tag freshness: " + result);
+        return result;
+    }
+
     // Label manipulation methods
 
     async _hasLabel(label) {
@@ -720,12 +739,6 @@ class MergeFinalizer extends MergeContext {
         this._role = "finalizer";
     }
 
-    async _tagCommit() {
-        if (!this._tagCommitCache)
-            this._tagCommitCache = await GH.getCommit(this._tagSha);
-        return this._tagCommitCache;
-    }
-
     // whether the staged commit and the base HEAD have independent,
     // (probably conflicting) changes
     async _tagDiverged() {
@@ -743,19 +756,6 @@ class MergeFinalizer extends MergeContext {
         const tagCommit = await this._tagCommit();
         const result = this._prMessage() === tagCommit.message;
         this._log("tag message freshness: " + result);
-        return result;
-    }
-
-    // Whether the PR merge commit has not changed since the PR staged commit creation.
-    // Note that it does not track possible conflicts between PR base branch and the
-    // PR branch (the PR merge commit is recreated only when there are no conflicts).
-    // Conflicts are tracked separately, by checking _prMergeable() flag.
-    async _tagIsFresh() {
-        const tagCommit = await this._tagCommit();
-        const prMergeSha = await GH.getReference(this._mergePath());
-        const prCommit = await GH.getCommit(prMergeSha);
-        const result = tagCommit.tree.sha === prCommit.tree.sha;
-        this._log("tag freshness: " + result);
         return result;
     }
 
