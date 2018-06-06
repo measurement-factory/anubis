@@ -24,12 +24,22 @@ class PrMerger {
         return labels.find(lbl => lbl.name === Config.clearedForMergeLabel()) !== undefined;
     }
 
-    async _getPRList() {
+    async _getPRList(finalizer) {
         let prList = await GH.getPRList();
-        for (let pr of prList)
+        for (let pr of prList) {
             pr.clearedForMerge = await this._clearedForMerge(pr.number);
+            if (finalizer !== null && finalizer._number() === pr.number) {
+                pr.isCurrent = true;
+                pr.processor = finalizer;
+            } else {
+                pr.isCurrent = false;
+                pr.processor = new MergeInitiator(pr);
+            }
+        }
 
-        prList.sort((pr1, pr2) => { return pr2.clearedForMerge - pr1.clearedForMerge || pr1.number - pr2.number; });
+        prList.sort((pr1, pr2) => { return (Config.guardedRun() && (pr2.clearedForMerge - pr1.clearedForMerge)) ||
+                pr2.isCurrent - pr1.isCurrent || pr1.number - pr2.number; });
+        this._logPRList(prList);
         return prList;
     }
 
@@ -46,18 +56,13 @@ class PrMerger {
     async runStep() {
         Logger.info("runStep running");
         const finalizer = await this._current();
-        if (finalizer && !(await this._finalize(finalizer)))
-            return true; // still in-process
-
-        const prList = await this._getPRList();
-        this._logPRList(prList);
+        const prList = await this._getPRList(finalizer);
 
         while (prList.length) {
             try {
                 const pr = prList.shift();
-                let initiator = new MergeInitiator(pr);
-                if (await this._initiate(initiator))
-                    return true;
+                if (await this._process(pr))
+                    return true; // still in process
             } catch (e) {
                 this.errors++;
                 if (prList.length)
@@ -69,24 +74,33 @@ class PrMerger {
         return false;
     }
 
+    async _process(pr) {
+        if (pr.isCurrent)
+            return await this._finalize(pr);
+        else
+            return await this._initiate(pr);
+    }
+
     // Continues executing the context and returns:
-    // 'true': the context executing was finished (succeeded or failed)
-    // 'false': the context is still in progress
-    async _finalize(finalizer) {
+    // 'false': the context executing was finished (succeeded or failed)
+    // 'true': the context is still in progress
+    async _finalize(pr) {
+        assert(pr.processor.constructor.name === "MergeFinalizer");
         this.total = 1;
-        const result = await finalizer.process();
+        const result = await pr.processor.process();
         assert(!result.delayed());
         if (result.succeeded() || result.failed())
-            return true;
+            return false;
         // This result is when one of'dry run' bot options is on.
         // Will wait while this option is on the way.
         assert(result.suspended());
-        return false;
+        return true;
     }
 
-    async _initiate(initiator) {
+    async _initiate(pr) {
+        assert(pr.processor.constructor.name === "MergeInitiator");
         this.total++;
-        const result = await initiator.process();
+        const result = await pr.processor.process();
         if (result.succeeded())
             return true;
 
