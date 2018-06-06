@@ -5,6 +5,8 @@ const Logger = Log.Logger;
 const GH = require('./GitHubUtil.js');
 const Util = require('./Util.js');
 const MergeContext = require('./MergeContext.js');
+const MergeInitiator = MergeContext.MergeInitiator;
+const MergeFinalizer = MergeContext.MergeFinalizer;
 
 // Gets PR list from GitHub and processes some/all PRs from this list.
 class PrMerger {
@@ -43,8 +45,8 @@ class PrMerger {
     // there is a PR still-in-merge.
     async runStep() {
         Logger.info("runStep running");
-        const currentContext = await this._current();
-        if (currentContext && !(await this._finishContext(currentContext)))
+        const finalizer = await this._current();
+        if (finalizer && !(await this._finalize(finalizer)))
             return true; // still in-process
 
         const prList = await this._getPRList();
@@ -53,21 +55,9 @@ class PrMerger {
         while (prList.length) {
             try {
                 const pr = prList.shift();
-                let context = new MergeContext(pr);
-                this.total++;
-                const mergeStart = await context.startProcessing();
-                if (mergeStart.succeeded())
+                let initiator = new MergeInitiator(pr);
+                if (await this._initiate(initiator))
                     return true;
-                else if (mergeStart.delayed()) {
-                    if (this.rerunIn === null)
-                        this.rerunIn = mergeStart.delay();
-                    else if (this.rerunIn > mergeStart.delay())
-                        this.rerunIn = mergeStart.delay();
-                    assert(this.rerunIn);
-                } else {
-                    assert(mergeStart.failed() || mergeStart.suspended());
-                }
-
             } catch (e) {
                 this.errors++;
                 if (prList.length)
@@ -82,15 +72,33 @@ class PrMerger {
     // Continues executing the context and returns:
     // 'true': the context executing was finished (succeeded or failed)
     // 'false': the context is still in progress
-    async _finishContext(context) {
+    async _finalize(finalizer) {
         this.total = 1;
-        const mergeFinish = await context.finishProcessing();
-        assert(!mergeFinish.delayed());
-        if (mergeFinish.succeeded() || mergeFinish.failed())
+        const result = await finalizer.process();
+        assert(!result.delayed());
+        if (result.succeeded() || result.failed())
             return true;
         // This result is when one of'dry run' bot options is on.
         // Will wait while this option is on the way.
-        assert(mergeFinish.suspended());
+        assert(result.suspended());
+        return false;
+    }
+
+    async _initiate(initiator) {
+        this.total++;
+        const result = await initiator.process();
+        if (result.succeeded())
+            return true;
+
+        if (result.delayed()) {
+            if (this.rerunIn === null)
+                this.rerunIn = result.delay();
+            else if (this.rerunIn > result.delay())
+                this.rerunIn = result.delay();
+            assert(this.rerunIn);
+        } else {
+            assert(result.failed() || result.suspended());
+        }
         return false;
     }
 
@@ -110,14 +118,13 @@ class PrMerger {
         const prNum = Util.ParseTag(tag.ref);
         Logger.info("PR" + prNum + " is the current");
         const stagingPr = await GH.getPR(prNum, false);
-        return new MergeContext(stagingPr, stagingSha);
+        return new MergeFinalizer(stagingPr, stagingSha);
     }
 
     logStatistics() {
         Logger.info("Merge step finished. Total PRs processed: " + this.total + ", skipped due to errors: " + this.errors);
     }
 } // PrMerger
-
 
 module.exports = PrMerger;
 
