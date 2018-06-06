@@ -28,7 +28,6 @@ class PrMerger {
             pr.clearedForMerge = await this._clearedForMerge(pr.number);
 
         prList.sort((pr1, pr2) => { return pr2.clearedForMerge - pr1.clearedForMerge || pr1.number - pr2.number; });
-        this._logPRList(prList);
         return prList;
     }
 
@@ -44,31 +43,12 @@ class PrMerger {
     // there is a PR still-in-merge.
     async runStep() {
         Logger.info("runStep running");
+        const currentContext = await this._current();
+        if (currentContext && !(await this._finishContext(currentContext)))
+            return true; // still in-process
 
-        let prList = await this._getPRList();
-
-        let currentContext = await this._current();
-
-        if (currentContext && Config.guardedRun()) {
-            const clearedForMerge = await this._clearedForMerge(currentContext.number());
-            if (!clearedForMerge && prList.length && prList[0].clearedForMerge) {
-                Logger.info("will try to give up the not-cleared-for-merge PR" + currentContext.number() +
-                        " in favor of a cleared-for-merge PR" + prList[0].number);
-                // Give only other PRs a chance to start.
-                // Without removing current PR from the list, we can get into
-                // a loop of useless restarting it from scratch.
-                prList = prList.filter(pr => pr.number !== currentContext.number());
-                currentContext = null;
-            }
-        }
-
-        if (currentContext) {
-            if (!(await this._finishContext(currentContext)))
-                return true; // still in-process
-            // refresh the list
-            prList = await this._getPRList();
-            currentContext = null;
-        }
+        const prList = await this._getPRList();
+        this._logPRList(prList);
 
         while (prList.length) {
             try {
@@ -129,11 +109,7 @@ class PrMerger {
         }
         const prNum = Util.ParseTag(tag.ref);
         Logger.info("PR" + prNum + " is the current");
-        // TODO: handle 'not found' errors
         const stagingPr = await GH.getPR(prNum, false);
-        assert(stagingPr);
-        stagingPr.clearedForMerge = await this._clearedForMerge(prNum);
-
         return new MergeContext(stagingPr, stagingSha);
     }
 
