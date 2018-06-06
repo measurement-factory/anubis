@@ -28,7 +28,7 @@ class PrMerger {
         let prList = await GH.getPRList();
         for (let pr of prList) {
             pr.clearedForMerge = await this._clearedForMerge(pr.number);
-            if (finalizer !== null && finalizer._number() === pr.number) {
+            if (finalizer !== null && finalizer.number() === pr.number) {
                 pr.isCurrent = true;
                 pr.processor = finalizer;
             } else {
