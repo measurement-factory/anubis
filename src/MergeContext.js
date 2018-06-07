@@ -228,7 +228,7 @@ class MergeContext {
             }
         }
 
-        let reviews = await GH.getReviews(this._number());
+        let reviews = await GH.getReviews(this.prNumber());
 
         // An array of [{reviewer, date, state}] elements,
         // where 'reviewer' is a core developer, 'date' the review date and 'state' is either
@@ -358,15 +358,34 @@ class MergeContext {
         return statusChecks;
     }
 
+    async _tagCommit() {
+        if (!this._tagCommitCache)
+            this._tagCommitCache = await GH.getCommit(this._tagSha);
+        return this._tagCommitCache;
+    }
+
+    // Whether the PR merge commit has not changed since the PR staged commit creation.
+    // Note that it does not track possible conflicts between PR base branch and the
+    // PR branch (the PR merge commit is recreated only when there are no conflicts).
+    // Conflicts are tracked separately, by checking _prMergeable() flag.
+    async _tagIsFresh() {
+        const tagCommit = await this._tagCommit();
+        const prMergeSha = await GH.getReference(this._mergePath());
+        const prCommit = await GH.getCommit(prMergeSha);
+        const result = tagCommit.tree.sha === prCommit.tree.sha;
+        this._log("tag freshness: " + result);
+        return result;
+    }
+
     // Label manipulation methods
 
     async _hasLabel(label) {
-        const labels = await GH.getLabels(this._number());
+        const labels = await GH.getLabels(this.prNumber());
         return labels.find(lbl => lbl.name === label) !== undefined;
     }
 
     async _removeLabelsIf(labels) {
-        const currentLabels = await GH.getLabels(this._number());
+        const currentLabels = await GH.getLabels(this.prNumber());
         for (let label of labels) {
             if (currentLabels.find(lbl => lbl.name === label) !== undefined)
                 await this._removeLabel(label);
@@ -377,7 +396,7 @@ class MergeContext {
 
     async _removeLabel(label) {
         try {
-            await GH.removeLabel(label, this._number());
+            await GH.removeLabel(label, this.prNumber());
         } catch (e) {
             if (e.name === 'ErrorContext' && e.notFound()) {
                 Log.LogException(e, this._toString() + " removeLabel: " + label + " not found");
@@ -388,14 +407,14 @@ class MergeContext {
     }
 
     async _addLabel(label) {
-        const currentLabels = await GH.getLabels(this._number());
+        const currentLabels = await GH.getLabels(this.prNumber());
         if (currentLabels.find(lbl => lbl.name === label) !== undefined) {
             this._log("addLabel: skip already existing " + label);
             return;
         }
 
         let params = Util.commonParams();
-        params.number = this._number();
+        params.number = this.prNumber();
         params.labels = [];
         params.labels.push(label);
 
@@ -470,7 +489,7 @@ class MergeContext {
 
     // Getters
 
-    _number() { return this._pr.number; }
+    prNumber() { return this._pr.number; }
 
     _prHeadSha() { return this._pr.head.sha; }
 
@@ -515,6 +534,10 @@ class MergeContext {
     _createdAt() { return this._pr.created_at; }
 
     _mergePath() { return "pull/" + this._pr.number + "/merge"; }
+
+    isFinalizer() { return this._role === "finalizer"; }
+
+    isInitiator() { return this._role === "initiator"; }
 
     _debugString() {
         return "PR" + this._pr.number + "(" + this._role + ", " + "head: " + this._pr.head.sha.substr(0, this._shaLimit);
@@ -609,7 +632,7 @@ class MergeInitiator extends MergeContext {
         this._log("initiator: checking conditions");
         this._approval = null;
 
-        const pr = await GH.getPR(this._number(), true);
+        const pr = await GH.getPR(this.prNumber(), true);
         // refresh PR data
         assert(pr.number === this._pr.number);
         this._pr = pr;
@@ -619,7 +642,7 @@ class MergeInitiator extends MergeContext {
             return StepResult.Fail();
         }
 
-        if (await this._hasLabel(Config.mergedLabel(), this._number())) {
+        if (await this._hasLabel(Config.mergedLabel(), this.prNumber())) {
             this._logFailedCondition("already has merged status");
             return StepResult.Fail();
         }
@@ -672,7 +695,7 @@ class MergeInitiator extends MergeContext {
     async _createStaged() {
         this._log("start merging...");
         const baseSha = await GH.getReference(this._prBaseBranchPath());
-        const mergeSha = await GH.getReference("pull/" + this._number() + "/merge");
+        const mergeSha = await GH.getReference("pull/" + this.prNumber() + "/merge");
         const mergeCommit = await GH.getCommit(mergeSha);
         if (!Config.githubUserName())
             await this._acquireUserProperties();
@@ -720,12 +743,6 @@ class MergeFinalizer extends MergeContext {
         this._role = "finalizer";
     }
 
-    async _tagCommit() {
-        if (!this._tagCommitCache)
-            this._tagCommitCache = await GH.getCommit(this._tagSha);
-        return this._tagCommitCache;
-    }
-
     // whether the staged commit and the base HEAD have independent,
     // (probably conflicting) changes
     async _tagDiverged() {
@@ -746,19 +763,6 @@ class MergeFinalizer extends MergeContext {
         return result;
     }
 
-    // Whether the PR merge commit has not changed since the PR staged commit creation.
-    // Note that it does not track possible conflicts between PR base branch and the
-    // PR branch (the PR merge commit is recreated only when there are no conflicts).
-    // Conflicts are tracked separately, by checking _prMergeable() flag.
-    async _tagIsFresh() {
-        const tagCommit = await this._tagCommit();
-        const prMergeSha = await GH.getReference(this._mergePath());
-        const prCommit = await GH.getCommit(prMergeSha);
-        const result = tagCommit.tree.sha === prCommit.tree.sha;
-        this._log("tag freshness: " + result);
-        return result;
-    }
-
     // Adjusts the successfully merged PR (labels, status, tag).
     async _cleanupMerged() {
         if (this._dryRun("cleanup merged"))
@@ -766,7 +770,7 @@ class MergeFinalizer extends MergeContext {
 
         this._log("merged, cleanup...");
         await this._labelMerged();
-        await GH.updatePR(this._number(), 'closed');
+        await GH.updatePR(this.prNumber(), 'closed');
         await GH.deleteReference(this._stagingTag());
         return StepResult.Succeed();
     }
@@ -840,7 +844,7 @@ class MergeFinalizer extends MergeContext {
         }
 
         if (Config.guardedRun()) {
-            if (await this._hasLabel(Config.clearedForMergeLabel(), this._number())) {
+            if (await this._hasLabel(Config.clearedForMergeLabel(), this.prNumber())) {
                 this._log("allow " + msg + " due to " + Config.clearedForMergeLabel() + " overruling guarded_run option");
                 return false;
             }
@@ -852,7 +856,7 @@ class MergeFinalizer extends MergeContext {
     }
 
     async _checkConditions() {
-        const pr = await GH.getPR(this._number(), true);
+        const pr = await GH.getPR(this.prNumber(), true);
         // refresh PR data
         assert(pr.number === this._pr.number);
         this._pr = pr;
@@ -862,7 +866,7 @@ class MergeFinalizer extends MergeContext {
             return StepResult.Fail();
         }
 
-        if (await this._hasLabel(Config.mergedLabel(), this._number())) {
+        if (await this._hasLabel(Config.mergedLabel(), this.prNumber())) {
             this._logFailedCondition("already has merged status");
             return StepResult.Fail();
         }
