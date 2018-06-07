@@ -28,17 +28,16 @@ class PrMerger {
         let prList = await GH.getPRList();
         for (let pr of prList) {
             pr.clearedForMerge = await this._clearedForMerge(pr.number);
-            if (finalizer !== null && finalizer.number() === pr.number) {
-                pr.isCurrent = true;
-                pr.processor = finalizer;
-            } else {
-                pr.isCurrent = false;
-                pr.processor = new MergeInitiator(pr);
-            }
+            if (finalizer && finalizer.prNumber() === pr.number)
+                pr.anubisProcessor = finalizer;
+            else
+                pr.anubisProcessor = new MergeInitiator(pr);
         }
 
         prList.sort((pr1, pr2) => { return (Config.guardedRun() && (pr2.clearedForMerge - pr1.clearedForMerge)) ||
-                pr2.isCurrent - pr1.isCurrent || pr1.number - pr2.number; });
+                pr2.anubisProcessor.isFinalizer() - pr1.anubisProcessor.isFinalizer() ||
+                pr1.number - pr2.number;
+        });
         this._logPRList(prList);
         return prList;
     }
@@ -58,11 +57,14 @@ class PrMerger {
         const finalizer = await this._current();
         const prList = await this._getPRList(finalizer);
 
+        this.total = 0;
         while (prList.length) {
             try {
                 const pr = prList.shift();
-                if (await this._process(pr))
-                    return true; // still in process
+                this.total++;
+                const result = await pr.anubisProcessor.process();
+                if (!this.prDone(pr.anubisProcessor, result))
+                    return true;
             } catch (e) {
                 this.errors++;
                 if (prList.length)
@@ -74,44 +76,29 @@ class PrMerger {
         return false;
     }
 
-    async _process(pr) {
-        if (pr.isCurrent)
-            return await this._finalize(pr);
-        else
-            return await this._initiate(pr);
-    }
-
-    // Continues executing the context and returns:
-    // 'false': the context executing was finished (succeeded or failed)
-    // 'true': the context is still in progress
-    async _finalize(pr) {
-        assert(pr.processor.constructor.name === "MergeFinalizer");
-        this.total = 1;
-        const result = await pr.processor.process();
-        assert(!result.delayed());
-        if (result.succeeded() || result.failed())
-            return false;
-        // This result is when one of'dry run' bot options is on.
-        // Will wait while this option is on the way.
-        assert(result.suspended());
-        return true;
-    }
-
-    async _initiate(pr) {
-        assert(pr.processor.constructor.name === "MergeInitiator");
-        this.total++;
-        const result = await pr.processor.process();
-        if (result.succeeded())
-            return true;
-
-        if (result.delayed()) {
-            if (this.rerunIn === null)
-                this.rerunIn = result.delay();
-            else if (this.rerunIn > result.delay())
-                this.rerunIn = result.delay();
-            assert(this.rerunIn);
+    // 'true': the PR processing finished (succeeded or failed)
+    // 'false': the PR is still in progress (started or suspended)
+    prDone(processor, result) {
+        if (processor.isFinalizer()) {
+            assert(!result.delayed());
+            if (result.succeeded() || result.failed())
+                return true;
+            // This result is when one of'dry run' bot options is on.
+            // Will wait while this option is on the way.
+            assert(result.suspended());
         } else {
-            assert(result.failed() || result.suspended());
+            assert(processor.isInitiator());
+            if (result.failed() || result.suspended())
+                return true;
+
+            if (result.delayed()) {
+                if (this.rerunIn === null || this.rerunIn > result.delay())
+                    this.rerunIn = result.delay();
+                assert(this.rerunIn);
+                return true;
+            }
+
+            assert(result.succeeded());
         }
         return false;
     }

@@ -59,6 +59,8 @@ function getPRList() {
             res = await pager(res);
             const result = res.data.length;
             logApiResult(getPRList.name, params, result);
+            for (let pr of res.data)
+                pr.anubisProcessor = null;
             resolve(res.data);
         });
     });
