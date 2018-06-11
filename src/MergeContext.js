@@ -568,13 +568,13 @@ class MergeContext {
     }
 } // MergeContext
 
-// Starts PR processing.
-// Performs all PR merge steps up to and including the staged commit creation.
-class MergeInitiator extends MergeContext {
+// Checks whether the PR can be initiated.
+// Adjusts GitHub PR metadata (labels, approvals, etc) up to date.
+class PrUpdater extends MergeContext {
 
     constructor(pr) {
         super(pr);
-        this._role = "initiator";
+        this._role = "updater";
     }
 
     // Tries to load 'staging tag' for the PR.
@@ -613,23 +613,8 @@ class MergeInitiator extends MergeContext {
         return false;
     }
 
-    async _acquireUserProperties() {
-        const emails = await GH.getUserEmails();
-        for (let e of emails) {
-            if (e.primary) {
-                Config.githubUserEmail(e.email);
-                break;
-            }
-        }
-        assert(Config.githubUserEmail());
-
-        const user = await GH.getUser(Config.githubUserLogin());
-        Config.githubUserName(user.name);
-        assert(Config.githubUserName());
-    }
-
     async _checkConditions() {
-        this._log("initiator: checking conditions");
+        this._log("checking conditions");
         this._approval = null;
 
         const pr = await GH.getPR(this.prNumber(), true);
@@ -692,6 +677,43 @@ class MergeInitiator extends MergeContext {
         return StepResult.Succeed();
     }
 
+    // returns filled StepResult object
+    async process() {
+        // TODO: Optimize old/busy repo by quitting unless _prOpen().
+        // TODO: Optimize label tests by caching all PR labels here.
+
+        if (!this._dryRun("reset labels before precondition checking"))
+            await this._unlabelPreconditionsChecking();
+
+        return await this._checkConditions();
+    }
+} // PrUpdater
+
+
+// Starts PR processing.
+// Performs all PR merge steps up to and including the staged commit creation.
+class MergeInitiator extends PrUpdater {
+
+    constructor(pr) {
+        super(pr);
+        this._role = "initiator";
+    }
+
+    async _acquireUserProperties() {
+        const emails = await GH.getUserEmails();
+        for (let e of emails) {
+            if (e.primary) {
+                Config.githubUserEmail(e.email);
+                break;
+            }
+        }
+        assert(Config.githubUserEmail());
+
+        const user = await GH.getUser(Config.githubUserLogin());
+        Config.githubUserName(user.name);
+        assert(Config.githubUserName());
+    }
+
     async _createStaged() {
         this._log("start merging...");
         const baseSha = await GH.getReference(this._prBaseBranchPath());
@@ -709,13 +731,7 @@ class MergeInitiator extends MergeContext {
 
     // returns filled StepResult object
     async process() {
-        // TODO: Optimize old/busy repo by quitting unless _prOpen().
-        // TODO: Optimize label tests by caching all PR labels here.
-
-        if (!this._dryRun("reset labels before precondition checking"))
-            await this._unlabelPreconditionsChecking();
-
-        const conditions = await this._checkConditions();
+        const conditions = await super.process();
         if (!conditions.succeeded())
             return conditions;
 
@@ -728,7 +744,7 @@ class MergeInitiator extends MergeContext {
 
         return StepResult.Succeed();
     }
-} // MergeInitiator
+}
 
 // Finishes PR processing.
 // Performs all PR merge steps after the staged commit creation.
@@ -753,6 +769,11 @@ class MergeFinalizer extends MergeContext {
             Log.LogError(e, this._toString() + " compare commits failed");
             return false;
         }
+    }
+
+    async _isStaging() {
+        const stagingSha = await GH.getReference(Config.stagingBranchPath());
+        return stagingSha === this._tagSha;
     }
 
     // Whether the commit message configuration remained intact since staging.
@@ -856,6 +877,7 @@ class MergeFinalizer extends MergeContext {
     }
 
     async _checkConditions() {
+        this._log("checking conditions");
         const pr = await GH.getPR(this.prNumber(), true);
         // refresh PR data
         assert(pr.number === this._pr.number);
@@ -868,6 +890,11 @@ class MergeFinalizer extends MergeContext {
 
         if (await this._hasLabel(Config.mergedLabel(), this.prNumber())) {
             this._logFailedCondition("already has merged status");
+            return StepResult.Fail();
+        }
+
+        if (!(await this._isStaging())) {
+            this._logFailedCondition("staging branch");
             return StepResult.Fail();
         }
 
@@ -955,6 +982,7 @@ class MergeFinalizer extends MergeContext {
 } // MergeFinalizer
 
 module.exports = {
+    PrUpdater: PrUpdater,
     MergeInitiator: MergeInitiator,
     MergeFinalizer: MergeFinalizer
 };

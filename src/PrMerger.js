@@ -5,6 +5,7 @@ const Logger = Log.Logger;
 const GH = require('./GitHubUtil.js');
 const Util = require('./Util.js');
 const MergeContext = require('./MergeContext.js');
+const PrUpdater = MergeContext.PrUpdater;
 const MergeInitiator = MergeContext.MergeInitiator;
 const MergeFinalizer = MergeContext.MergeFinalizer;
 
@@ -24,28 +25,44 @@ class PrMerger {
         return labels.find(lbl => lbl.name === Config.clearedForMergeLabel()) !== undefined;
     }
 
-    async _getPRList(finalizer) {
-        let prList = await GH.getPRList();
-        for (let pr of prList) {
-            pr.clearedForMerge = await this._clearedForMerge(pr.number);
-            if (finalizer && finalizer.prNumber() === pr.number)
+    /// Obtain PR list from GitHub, updates GitHub PR state
+    /// (labels, approvals, etc.) and filters out PRs not ready
+    /// for further processing.
+    /// Returns a sorted list of PRs ready-for-processing.
+    async _preparePRList(finalizer) {
+        let prs = await GH.getPRList();
+        this._logPRList(prs, "PRs got from GitHub: ");
+        let prList = [];
+        for (let pr of prs) {
+            if (finalizer && finalizer.prNumber() === pr.number) {
+                // TODO: update PR metatata the current PR also
                 pr.anubisProcessor = finalizer;
-            else
-                pr.anubisProcessor = new MergeInitiator(pr);
+                prList.push(pr);
+            } else {
+                let updater = new PrUpdater(pr);
+                const result = await updater.process();
+                if (!result.failed()) {
+                    pr.anubisProcessor = new MergeInitiator(pr);
+                    prList.push(pr);
+                }
+            }
         }
-
         prList.sort((pr1, pr2) => { return (Config.guardedRun() && (pr2.clearedForMerge - pr1.clearedForMerge)) ||
                 pr2.anubisProcessor.isFinalizer() - pr1.anubisProcessor.isFinalizer() ||
                 pr1.number - pr2.number;
         });
-        this._logPRList(prList);
+        this._logPRList(prList, "PRs selected for processing: ");
         return prList;
     }
 
-    _logPRList(prList) {
-        let prStr = prList.length ? "Got PRs from GitHub: " : "PR list is empty";
-        for (let pr of prList)
-            prStr += pr.number + " ";
+    _logPRList(prList, description) {
+        let prStr = description;
+        if (prList.length === 0)
+            prStr += "empty list";
+        else {
+            for (let pr of prList)
+                prStr += pr.number + " ";
+        }
         Logger.info(prStr);
     }
 
@@ -55,7 +72,7 @@ class PrMerger {
     async runStep() {
         Logger.info("runStep running");
         const finalizer = await this._current();
-        const prList = await this._getPRList(finalizer);
+        const prList = await this._preparePRList(finalizer);
 
         this.total = 0;
         while (prList.length) {
