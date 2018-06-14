@@ -1,13 +1,10 @@
-const assert = require('assert');
 const Config = require('./Config.js');
 const Log = require('./Logger.js');
 const Logger = Log.Logger;
 const GH = require('./GitHubUtil.js');
 const Util = require('./Util.js');
 const MergeContext = require('./MergeContext.js');
-const PrUpdater = MergeContext.PrUpdater;
-const MergeInitiator = MergeContext.MergeInitiator;
-const MergeFinalizer = MergeContext.MergeFinalizer;
+const Merger = MergeContext.Merger;
 
 // Gets PR list from GitHub and processes some/all PRs from this list.
 class PrMerger {
@@ -29,26 +26,11 @@ class PrMerger {
     /// (labels, approvals, etc.) and filters out PRs not ready
     /// for further processing.
     /// Returns a sorted list of PRs ready-for-processing.
-    async _preparePRList(finalizer) {
-        let prs = await GH.getPRList();
-        this._logPRList(prs, "PRs got from GitHub: ");
-        let prList = [];
-        for (let pr of prs) {
-            if (finalizer && finalizer.prNumber() === pr.number) {
-                // TODO: update PR metatata the current PR also
-                pr.anubisProcessor = finalizer;
-                prList.push(pr);
-            } else {
-                let updater = new PrUpdater(pr);
-                const result = await updater.process();
-                if (!result.failed()) {
-                    pr.anubisProcessor = new MergeInitiator(pr);
-                    prList.push(pr);
-                }
-            }
-        }
+    async _preparePRList(stagingPr) {
+        let prList = await GH.getPRList();
+        this._logPRList(prList, "PRs got from GitHub: ");
         prList.sort((pr1, pr2) => { return (Config.guardedRun() && (pr2.clearedForMerge - pr1.clearedForMerge)) ||
-                pr2.anubisProcessor.isFinalizer() - pr1.anubisProcessor.isFinalizer() ||
+                (stagingPr && ((pr2.number === stagingPr.number) - (pr1.number === stagingPr.number))) ||
                 pr1.number - pr2.number;
         });
         this._logPRList(prList, "PRs selected for processing: ");
@@ -71,17 +53,21 @@ class PrMerger {
     // there is a PR still-in-merge.
     async runStep() {
         Logger.info("runStep running");
-        const finalizer = await this._current();
-        const prList = await this._preparePRList(finalizer);
+        const stagingPr = await this._current();
+        const prList = await this._preparePRList(stagingPr);
 
         this.total = 0;
+        let merging = false;
         while (prList.length) {
             try {
                 const pr = prList.shift();
                 this.total++;
-                const result = await pr.anubisProcessor.process();
-                if (!this.prDone(pr.anubisProcessor, result))
-                    return true;
+                let merger = new Merger(pr);
+                const result = await merger.process(merging);
+                if (!merging)
+                    merging = (result === 0);
+                if (result > 0 && (this.rerunIn === null || this.rerunIn > result))
+                    this.rerunIn = result;
             } catch (e) {
                 this.errors++;
                 if (prList.length)
@@ -93,32 +79,6 @@ class PrMerger {
         return false;
     }
 
-    // 'true': the PR processing finished (succeeded or failed)
-    // 'false': the PR is still in progress (started or suspended)
-    prDone(processor, result) {
-        if (processor.isFinalizer()) {
-            assert(!result.delayed());
-            if (result.succeeded() || result.failed())
-                return true;
-            // This result is when one of'dry run' bot options is on.
-            // Will wait while this option is on the way.
-            assert(result.suspended());
-        } else {
-            assert(processor.isInitiator());
-            if (result.failed() || result.suspended())
-                return true;
-
-            if (result.delayed()) {
-                if (this.rerunIn === null || this.rerunIn > result.delay())
-                    this.rerunIn = result.delay();
-                assert(this.rerunIn);
-                return true;
-            }
-
-            assert(result.succeeded());
-        }
-        return false;
-    }
 
     // Loads 'being-in-merge' PR, if exists (the PR has tag and staging_branch points to the tag).
     async _current() {
@@ -136,7 +96,7 @@ class PrMerger {
         const prNum = Util.ParseTag(tag.ref);
         Logger.info("PR" + prNum + " is the current");
         const stagingPr = await GH.getPR(prNum, false);
-        return new MergeFinalizer(stagingPr, stagingSha);
+        return stagingPr;
     }
 
     logStatistics() {
