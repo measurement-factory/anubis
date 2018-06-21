@@ -4,7 +4,7 @@ const Logger = Log.Logger;
 const GH = require('./GitHubUtil.js');
 const Util = require('./Util.js');
 const MergeContext = require('./MergeContext.js');
-const PrProcessor = MergeContext.PrProcessor;
+const PullRequest = MergeContext.PullRequest;
 
 // Gets PR list from GitHub and processes some/all PRs from this list.
 class PrMerger {
@@ -63,10 +63,10 @@ class PrMerger {
         let merging = false;
         while (prList.length) {
             try {
-                const pr = prList.shift();
+                const rawPr = prList.shift();
                 this.total++;
-                let processor = new PrProcessor(pr);
-                const result = await processor.process(merging);
+                let pr = new PullRequest(rawPr);
+                const result = await pr.process(merging);
                 if (!merging)
                     merging = result.succeeded();
                 if (result.delayed() && (this.rerunIn === null || this.rerunIn > result.delay()))

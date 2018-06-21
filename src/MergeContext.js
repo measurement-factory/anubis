@@ -200,10 +200,10 @@ class StatusChecks
 
 // TODO: combine with Merger into a single class?
 // Do not create directly.
-class PrProcessor {
+class PullRequest {
 
     constructor(pr) {
-        this._pr = pr;
+        this._rawPr = pr;
         this._shaLimit = 6;
         // information used for approval test status creation/updating
         this._approval = null;
@@ -427,8 +427,8 @@ class PrProcessor {
 
         const pr = await GH.getPR(this._prNumber(), true);
         // refresh PR data
-        assert(pr.number === this._pr.number);
-        this._pr = pr;
+        assert(pr.number === this._prNumber());
+        this._rawPr = pr;
 
         if (!this._prOpen()) {
             this._logFailedCondition("open");
@@ -610,12 +610,12 @@ class PrProcessor {
 
     // Getters
 
-    _prNumber() { return this._pr.number; }
+    _prNumber() { return this._rawPr.number; }
 
-    _prHeadSha() { return this._pr.head.sha; }
+    _prHeadSha() { return this._rawPr.head.sha; }
 
     _prMessage() {
-        return (this._pr.title + ' (#' + this._pr.number + ')' + '\n\n' + this._prBody()).trim();
+        return (this._rawPr.title + ' (#' + this._rawPr.number + ')' + '\n\n' + this._prBody()).trim();
     }
 
     _prMessageValid() {
@@ -627,37 +627,37 @@ class PrProcessor {
         return true;
     }
 
-    _prInProgress() { return this._pr.title.startsWith('WIP:'); }
+    _prInProgress() { return this._rawPr.title.startsWith('WIP:'); }
 
     _prRequestedReviewers() {
         let reviewers = [];
-        if (this._pr.requested_reviewers) {
-            for (let r of this._pr.requested_reviewers)
+        if (this._rawPr.requested_reviewers) {
+            for (let r of this._rawPr.requested_reviewers)
                reviewers.push(r.login);
         }
         return reviewers;
     }
 
-    _prAuthor() { return this._pr.user.login; }
+    _prAuthor() { return this._rawPr.user.login; }
 
-    _prMergeable() { return this._pr.mergeable; }
+    _prMergeable() { return this._rawPr.mergeable; }
 
-    _prBaseBranch() { return this._pr.base.ref; }
+    _prBaseBranch() { return this._rawPr.base.ref; }
 
     _prBaseBranchPath() { return "heads/" + this._prBaseBranch(); }
 
-    _prOpen() { return this._pr.state === 'open'; }
+    _prOpen() { return this._rawPr.state === 'open'; }
 
-    _prBody() { return this._pr.body.replace(/\r+\n/g, '\n'); }
+    _prBody() { return this._rawPr.body.replace(/\r+\n/g, '\n'); }
 
-    _stagingTag() { return Util.StagingTag(this._pr.number); }
+    _stagingTag() { return Util.StagingTag(this._rawPr.number); }
 
-    _createdAt() { return this._pr.created_at; }
+    _createdAt() { return this._rawPr.created_at; }
 
-    _mergePath() { return "pull/" + this._pr.number + "/merge"; }
+    _mergePath() { return "pull/" + this._rawPr.number + "/merge"; }
 
     _debugString() {
-        return "PR" + this._pr.number + "(" + this._role + ", " + "head: " + this._pr.head.sha.substr(0, this._shaLimit);
+        return "PR" + this._rawPr.number + "(" + this._role + ", " + "head: " + this._rawPr.head.sha.substr(0, this._shaLimit);
     }
 
     _log(msg) {
@@ -808,8 +808,8 @@ class PrProcessor {
         this._log("checking postconditions");
         const pr = await GH.getPR(this._prNumber(), true);
         // refresh PR data
-        assert(pr.number === this._pr.number);
-        this._pr = pr;
+        assert(pr.number === this._rawPr.number);
+        this._rawPr = pr;
 
         if (!this._prOpen()) {
             this._logFailedCondition("not opened");
@@ -989,6 +989,6 @@ class PrProcessor {
 }
 
 module.exports = {
-    PrProcessor: PrProcessor
+    PullRequest: PullRequest
 };
 
