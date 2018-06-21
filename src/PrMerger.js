@@ -4,7 +4,7 @@ const Logger = Log.Logger;
 const GH = require('./GitHubUtil.js');
 const Util = require('./Util.js');
 const MergeContext = require('./MergeContext.js');
-const Merger = MergeContext.Merger;
+const PrProcessor = MergeContext.PrProcessor;
 
 // Gets PR list from GitHub and processes some/all PRs from this list.
 class PrMerger {
@@ -28,6 +28,9 @@ class PrMerger {
     /// Returns a sorted list of PRs ready-for-processing.
     async _preparePRList(stagingPr) {
         let prList = await GH.getPRList();
+        for (let pr of prList)
+            pr.clearedForMerge = await this._clearedForMerge(pr.number);
+
         this._logPRList(prList, "PRs got from GitHub: ");
         prList.sort((pr1, pr2) => { return (Config.guardedRun() && (pr2.clearedForMerge - pr1.clearedForMerge)) ||
                 (stagingPr && ((pr2.number === stagingPr.number) - (pr1.number === stagingPr.number))) ||
@@ -62,12 +65,12 @@ class PrMerger {
             try {
                 const pr = prList.shift();
                 this.total++;
-                let merger = new Merger(pr);
-                const result = await merger.process(merging);
+                let processor = new PrProcessor(pr);
+                const result = await processor.process(merging);
                 if (!merging)
-                    merging = (result === 0);
-                if (result > 0 && (this.rerunIn === null || this.rerunIn > result))
-                    this.rerunIn = result;
+                    merging = result.succeeded();
+                if (result.delayed() && (this.rerunIn === null || this.rerunIn > result.delay()))
+                    this.rerunIn = result.delay();
             } catch (e) {
                 this.errors++;
                 if (prList.length)
