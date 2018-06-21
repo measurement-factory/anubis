@@ -4,7 +4,8 @@ const Log = require('./Logger.js');
 const GH = require('./GitHubUtil.js');
 const Util = require('./Util.js');
 
-// A result produced by Merger::_startProcessing() and Merger::_finishProcessing()
+// A result produced by PullRequest.process() (at higher level) or
+// a result of various checks (at low level)
 class StepResult
 {
     // treat as private; use static methods below instead
@@ -198,8 +199,6 @@ class StatusChecks
     }
 }
 
-// TODO: combine with Merger into a single class?
-// Do not create directly.
 class PullRequest {
 
     constructor(pr) {
