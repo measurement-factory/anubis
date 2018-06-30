@@ -4,8 +4,9 @@ const Log = require('./Logger.js');
 const GH = require('./GitHubUtil.js');
 const Util = require('./Util.js');
 
-// A result produced by PullRequest.process() (at higher level) or
-// a result of various checks (at low level)
+// Action outcome, with support for paused and snoozed actions.
+// For example, is returned by PullRequest.process() (at higher level) or
+// various checks (at low level).
 class StepResult
 {
     // treat as private; use static methods below instead
@@ -206,14 +207,17 @@ class PullRequest {
         this._shaLimit = 6;
         // information used for approval test status creation/updating
         this._approval = null;
-        // cached _getRequiredContexts() result
+
+        // optimization: cached _getRequiredContexts() result
         this._requiredContextsCache = null;
+
         this._tagSha = null;
         this._stagingSha = null;
 
         // optimization: cached _tagCommit() result
         this._tagCommitCache = null;
-        this._role = null; // "updater" or "merger"
+
+        this._role = null; // "updater" or "merger" (for debugging only)
         this._messageValid = null;
     }
 
@@ -395,11 +399,9 @@ class PullRequest {
        }
     }
 
-    // Preconditions
-
-    // Check 'staging tag' state as merge condition.
-    // Returns true if there is a fresh merge commit with 'failure' status.
-    async _stagingFailed() {
+    // Checks 'staging tag' state as merge precondition.
+    // Returns true if there is a fresh merge commit with failed status checks.
+    async __previousStagingFailed() {
         await this._loadTag();
         if (!this._tagSha)
             return false;
@@ -421,6 +423,20 @@ class PullRequest {
         return false;
     }
 
+    async _checkTimelessConditions() {
+        if (!this._prOpen()) {
+            this._logFailedCondition("not opened");
+            return StepResult.Fail();
+        }
+
+        if (await this._hasLabel(Config.mergedLabel(), this._prNumber())) {
+            this._logFailedCondition("already merged and labeled");
+            return StepResult.Fail();
+        }
+        return StepResult.Succeed();
+    }
+
+    // checks whether this PR can be tagged
     async _checkPreconditions() {
         this._log("checking preconditions");
 
@@ -429,15 +445,9 @@ class PullRequest {
         assert(pr.number === this._prNumber());
         this._rawPr = pr;
 
-        if (!this._prOpen()) {
-            this._logFailedCondition("open");
+        const timelessResult = await this._checkTimelessConditions();
+        if (timelessResult.failed())
             return StepResult.Fail();
-        }
-
-        if (await this._hasLabel(Config.mergedLabel(), this._prNumber())) {
-            this._logFailedCondition("already has merged status");
-            return StepResult.Fail();
-        }
 
         if (this._prInProgress()) {
             this._logFailedCondition("not in progress");
@@ -449,7 +459,7 @@ class PullRequest {
             return StepResult.Fail();
         }
 
-        if (await this._stagingFailed()) {
+        if (await this.__previousStagingFailed()) {
             this._logFailedCondition("fresh merge commit with failed staging checks");
             return StepResult.Fail();
         }
@@ -803,6 +813,7 @@ class PullRequest {
         return false; // no staging-only mode by default
     }
 
+    // checks whether this tagged PR can be merged
     async _checkPostconditions() {
         this._log("checking postconditions");
         const pr = await GH.getPR(this._prNumber(), true);
@@ -810,24 +821,18 @@ class PullRequest {
         assert(pr.number === this._rawPr.number);
         this._rawPr = pr;
 
-        if (!this._prOpen()) {
-            this._logFailedCondition("not opened");
+        const timelessResult = await this._checkTimelessConditions();
+        if (timelessResult.failed())
             return StepResult.Fail();
-        }
-
-        if (await this._hasLabel(Config.mergedLabel(), this._prNumber())) {
-            this._logFailedCondition("already has merged status");
-            return StepResult.Fail();
-        }
 
         if (!(await this._isStaging())) {
-            this._logFailedCondition("staging branch");
+            this._logFailedCondition("no longer staged");
             return StepResult.Fail();
         }
 
         const compareStatus = await GH.compareCommits(this._prBaseBranch(), this._stagingTag());
         if (compareStatus === "identical" || compareStatus === "behind") {
-            this._logFailedCondition("already merged to base");
+            this._logFailedCondition("already merged (but not yet labeled)");
             return await this._cleanupMerged();
         }
 
@@ -838,7 +843,7 @@ class PullRequest {
             return await this._cleanupMergeFailed(true, this._labelCleanStaged);
 
         if (this._prInProgress()) {
-            this._logFailedCondition("not in progress");
+            this._logFailedCondition("work-in-progress");
             return await this._cleanupMergeFailed(true, this._labelCleanStaged);
         }
 
@@ -905,7 +910,7 @@ class PullRequest {
     }
 
     async _createStaged() {
-        this._log("start merging...");
+        this._log("start staging...");
         const baseSha = await GH.getReference(this._prBaseBranchPath());
         const mergeSha = await GH.getReference("pull/" + this._prNumber() + "/merge");
         const mergeCommit = await GH.getCommit(mergeSha);
@@ -920,7 +925,7 @@ class PullRequest {
     }
 
     // returns filled StepResult object
-    async _startProcessing() {
+    async _stage() {
         if (!this._dryRun("reset labels before precondition checking"))
             await this._unlabelPreconditionsChecking();
 
@@ -976,7 +981,7 @@ class PullRequest {
             assert(result.suspended());
         } else {
             this._role = "initiator";
-            result = await this._startProcessing();
+            result = await this._stage();
             if (result.failed() || result.suspended())
                 return StepResult.Fail();
             if (result.delayed())
