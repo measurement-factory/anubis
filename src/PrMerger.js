@@ -22,9 +22,8 @@ class PrMerger {
         return labels.find(lbl => lbl.name === Config.clearedForMergeLabel()) !== undefined;
     }
 
-    /// Obtain PR list from GitHub, updates GitHub PR state
-    /// (labels, approvals, etc.) and filters out PRs not ready
-    /// for further processing.
+    /// Obtains PR list from GitHub, updates GitHub PR state
+    /// (labels, approvals, etc.)
     /// Returns a sorted list of PRs ready-for-processing.
     async _preparePRList(stagingPr) {
         let prList = await GH.getPRList();
@@ -60,15 +59,14 @@ class PrMerger {
         const prList = await this._preparePRList(stagingPr);
 
         this.total = 0;
-        let merging = false;
+        let suspendedEarlier = false;
         while (prList.length) {
             try {
                 const rawPr = prList.shift();
                 this.total++;
                 let pr = new PullRequest(rawPr);
-                const result = await pr.process(merging);
-                if (!merging)
-                    merging = result.succeeded();
+                const result = await pr.process(suspendedEarlier);
+                suspendedEarlier = suspendedEarlier || result.suspended();
                 if (result.delayed() && (this.rerunIn === null || this.rerunIn > result.delay()))
                     this.rerunIn = result.delay();
             } catch (e) {

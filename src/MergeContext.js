@@ -977,20 +977,24 @@ class PullRequest {
     async _stage() {
         this._unlabelPreconditionsChecking();
         const conditions = await this._checkPreconditions();
-        if (!conditions.succeeded())
-            return conditions;
+        if (!conditions.succeeded()) {
+            if (conditions.delayed())
+                return conditions;
+            // failed() or suspended()
+            return StepResult.Fail();
+        }
         this._unlabelPreconditionsChecked();
-        if (this._dryRun("start merging"))
+        if (this._dryRun("create staged"))
             return StepResult.Suspend();
         await this._createStaged();
         this._labelWaitingStagingChecks();
-        return StepResult.Succeed();
+        return StepResult.Suspend();
     }
 
     // Finish processing
 
     // returns filled StepResult object
-    async _finishProcessing() {
+    async _mergeStaged() {
         const conditions = await this._checkPostconditions();
         if (!conditions.succeeded())
             return conditions;
@@ -1004,42 +1008,38 @@ class PullRequest {
 
     }
 
-    // StepResult.Succeed: this PR is in-progress
+    // StepResult.Suspend: this PR is in-progress
     // StepResult.Delay: this PR is delayed
-    // StepResult.Fail: all other cases
-    async _doProcess(running) {
+    // Other outcomes mean that this PR is not in-progress
+    async _doProcess(anotherPrWasStaged) {
         this._role = "updater";
         await this._loadTag();
         await this._loadLabels();
         let result = await this.update();
-        if (running)
+        if (anotherPrWasStaged)
             return result.delayed() ? result : StepResult.Fail();
+
+        if (!(await this._isStaging())) {
+            this._role = "initiator";
+            result = await this._stage();
+            if (!result.succeeded())
+                return result;
+        }
 
         if (await this._isStaging()) {
             this._role = "finalizer";
-            result = await this._finishProcessing();
+            result = await this._mergeStaged();
             assert(!result.delayed());
-            if (result.succeeded() || result.failed())
-                return StepResult.Fail();
-            // This result is when one of 'dry run' bot options is on.
-            // Will wait while this option is on the way.
-            assert(result.suspended());
-        } else {
-            this._role = "initiator";
-            result = await this._stage();
-            if (result.failed() || result.suspended())
-                return StepResult.Fail();
-            if (result.delayed())
-                return result;
-            assert(result.succeeded());
+            return result;
         }
+
         return StepResult.Succeed();
     }
 
-    async process(running) {
+    async process(anotherPrWasStaged) {
         let result = null;
         try {
-            result = await this._doProcess(running);
+            result = await this._doProcess(anotherPrWasStaged);
         } catch (e) {
             await this._applyLabels();
             throw e;
