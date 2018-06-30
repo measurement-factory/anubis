@@ -503,7 +503,7 @@ class PullRequest {
 
     // Checks 'staging tag' state as merge precondition.
     // Returns true if there is a fresh merge commit with failed status checks.
-    async __previousStagingFailed() {
+    async _previousStagingFailed() {
         await this._loadTag();
         if (!this._tagSha)
             return false;
@@ -561,7 +561,7 @@ class PullRequest {
             return StepResult.Fail();
         }
 
-        if (await this.__previousStagingFailed()) {
+        if (await this._previousStagingFailed()) {
             this._logFailedCondition("fresh merge commit with failed staging checks");
             return StepResult.Fail();
         }
@@ -612,8 +612,10 @@ class PullRequest {
     // applies the cached label state to GitHub
     async _applyLabels() {
         this._log(this._labels.toString());
-        if (this._labels)
-            await this._labels.apply();
+        if (!this._dryRun("applying labels")) {
+            if (this._labels)
+                await this._labels.apply();
+        }
     }
 
 
@@ -775,7 +777,7 @@ class PullRequest {
             return StepResult.Suspend();
 
         this._log("merged, cleanup...");
-        await this._labelMerged();
+        this._labelMerged();
         await GH.updatePR(this._prNumber(), 'closed');
         await GH.deleteReference(this._stagingTag());
         return StepResult.Succeed();
@@ -788,7 +790,7 @@ class PullRequest {
         if (labelsCleanup === undefined)
             labelsCleanup = this._labelFailedOther;
         labelsCleanup = labelsCleanup.bind(this);
-        await labelsCleanup();
+        labelsCleanup();
         if (deleteTag)
             await GH.deleteReference(this._stagingTag());
         return StepResult.Fail();
@@ -803,8 +805,7 @@ class PullRequest {
             return await this._cleanupMergeFailed(false, this._labelFailedStagingChecks);
         }
         if (!stagingStatus.final()) {
-            if (!this._dryRun("setting M-wating-staging-checks label"))
-                await this._labelWaitingStagingChecks();
+            this._labelWaitingStagingChecks();
             this._log("waiting for more staging checks completing");
             return StepResult.Suspend();
         }
@@ -850,7 +851,7 @@ class PullRequest {
         }
 
         if (Config.guardedRun()) {
-            if (await this._labels.has(Config.clearedForMergeLabel())) {
+            if (this._labels.has(Config.clearedForMergeLabel())) {
                 this._log("allow " + msg + " due to " + Config.clearedForMergeLabel() + " overruling guarded_run option");
                 return false;
             }
@@ -917,7 +918,7 @@ class PullRequest {
             return stagingResult;
 
         if (await this._stagingOnly()) {
-            await this._labelPassedStagingChecks();
+            this._labelPassedStagingChecks();
             return StepResult.Suspend();
         }
         return StepResult.Succeed();
@@ -974,20 +975,15 @@ class PullRequest {
 
     // returns filled StepResult object
     async _stage() {
-        if (!this._dryRun("reset labels before precondition checking"))
-            await this._unlabelPreconditionsChecking();
-
+        this._unlabelPreconditionsChecking();
         const conditions = await this._checkPreconditions();
         if (!conditions.succeeded())
             return conditions;
-
+        this._unlabelPreconditionsChecked();
         if (this._dryRun("start merging"))
             return StepResult.Suspend();
-
-        await this._unlabelPreconditionsChecked();
         await this._createStaged();
-        await this._labelWaitingStagingChecks();
-
+        this._labelWaitingStagingChecks();
         return StepResult.Succeed();
     }
 
