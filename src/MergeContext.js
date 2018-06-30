@@ -200,6 +200,100 @@ class StatusChecks
     }
 }
 
+// Cached label state
+class Label
+{
+    constructor(name, on, old) {
+        this.name = name;
+        this.on = on; // current state
+        // whether this label was received from GitHub or created by the bot
+        this.old = old;
+    }
+
+    toString() {
+        return this.name + "(on: " + this.on + "; old: " + this.old + ")";
+    }
+}
+
+// Keeps labels state (received from GitHub), caches labels modifications
+// and applies them back to GitHub
+class Labels
+{
+    // labels parameter keeps label array received from GitHub
+    constructor(labels, prNum) {
+        this._prNum = prNum;
+        this._labels = [];
+        for (let label of labels)
+            this._doCache(label.name, true, true);
+    }
+
+    _doCache(name, on, old) {
+        const label = this._labels.find(lbl => lbl.name === name);
+        if (label)
+            label.on = on;
+        else {
+            if (on)
+                this._labels.push(new Label(name, on, old));
+        }
+    }
+
+    // changes the cached label state (or adds it to the cache)
+    cache(name, on) { this._doCache(name, on, false); }
+
+    // whether the label is cached and 'on'
+    has(name) {
+        const label = this._labels.find(lbl => lbl.name === name);
+        return label && label.on;
+    }
+
+    // removes a single label from GitHub
+    async _remove(name) {
+        try {
+            await GH.removeLabel(name, this._prNum);
+        } catch (e) {
+            if (e.name === 'ErrorContext' && e.notFound()) {
+                Log.LogException(e, "_remove: " + name + " not found");
+                return;
+            }
+            throw e;
+        }
+    }
+
+    // adds a single label to GitHub
+    async _add(name) {
+        let params = Util.commonParams();
+        params.number = this._prNum;
+        params.labels = [];
+        params.labels.push(name);
+
+        await GH.addLabels(params);
+    }
+
+    // applies all cached labels to GitHub
+    async apply() {
+        for (let label of this._labels) {
+            if (label.old && !label.on)
+                await this._remove(label.name);
+            if (!label.old && label.on)
+                await this._add(label.name);
+        }
+    }
+
+    toString() {
+        let str = "";
+        for (let label of this._labels) {
+            if ( (label.old && !label.on) || (!label.old && label.on)) {
+                if (str.length)
+                    str += ", ";
+                str += label.toString();
+            }
+        }
+        if (!str.length)
+            return "no pending labels";
+        return "pending labels: " + str;
+    }
+}
+
 class PullRequest {
 
     constructor(pr) {
@@ -219,6 +313,8 @@ class PullRequest {
 
         this._role = null; // "updater" or "merger" (for debugging only)
         this._messageValid = null;
+
+        this._labels = null;
     }
 
     // creates and returns filled Approval object
@@ -399,6 +495,12 @@ class PullRequest {
        }
     }
 
+    async _loadLabels() {
+        let labels = await GH.getLabels(this._prNumber());
+        assert(!this._labels);
+        this._labels = new Labels(labels, this._prNumber());
+    }
+
     // Checks 'staging tag' state as merge precondition.
     // Returns true if there is a fresh merge commit with failed status checks.
     async __previousStagingFailed() {
@@ -429,7 +531,7 @@ class PullRequest {
             return StepResult.Fail();
         }
 
-        if (await this._hasLabel(Config.mergedLabel(), this._prNumber())) {
+        if (this._labels.has(Config.mergedLabel(), this._prNumber())) {
             this._logFailedCondition("already merged and labeled");
             return StepResult.Fail();
         }
@@ -491,7 +593,7 @@ class PullRequest {
     async update() {
         this._messageValid = this._prMessageValid();
         this._log("messageValid: " + this._messageValid);
-        await this._labelFailedDescription();
+        this._labelFailedDescription();
 
         this._approval = await this._checkApproval();
         this._log("checkApproval: " + this._approval);
@@ -507,114 +609,60 @@ class PullRequest {
 
     // Label manipulation methods
 
-    // TODO: Optimize label tests by caching all PR labels.
-
-    async _hasLabel(label) {
-        const labels = await GH.getLabels(this._prNumber());
-        return labels.find(lbl => lbl.name === label) !== undefined;
+    // applies the cached label state to GitHub
+    async _applyLabels() {
+        this._log(this._labels.toString());
+        if (this._labels)
+            await this._labels.apply();
     }
 
-    async _removeLabelsIf(labels) {
-        const currentLabels = await GH.getLabels(this._prNumber());
-        for (let label of labels) {
-            if (currentLabels.find(lbl => lbl.name === label) !== undefined)
-                await this._removeLabel(label);
-            else
-                this._log("_removeLabelsIf: skip non-existent " + label);
-        }
+
+    _labelFailedDescription() {
+        this._labels.cache(Config.failedDescriptionLabel(), !this._messageValid);
     }
 
-    async _removeLabel(label) {
-        try {
-            await GH.removeLabel(label, this._prNumber());
-        } catch (e) {
-            if (e.name === 'ErrorContext' && e.notFound()) {
-                Log.LogException(e, this._toString() + " removeLabel: " + label + " not found");
-                return;
-            }
-            throw e;
-        }
+    _unlabelPreconditionsChecking() {
+        this._labels.cache(Config.passedStagingChecksLabel(), false);
+        this._labels.cache(Config.waitingStagingChecksLabel(), false);
     }
 
-    async _addLabel(label) {
-        const currentLabels = await GH.getLabels(this._prNumber());
-        if (currentLabels.find(lbl => lbl.name === label) !== undefined) {
-            this._log("addLabel: skip already existing " + label);
-            return;
-        }
-
-        let params = Util.commonParams();
-        params.number = this._prNumber();
-        params.labels = [];
-        params.labels.push(label);
-
-        await GH.addLabels(params);
+    _unlabelPreconditionsChecked() {
+        this._labels.cache(Config.failedOtherLabel(), false);
+        this._labels.cache(Config.failedStagingChecksLabel(), false);
+        this._labels.cache(Config.failedDescriptionLabel(), false);
     }
 
-    async _labelFailedDescription() {
-        if (this._dryRun("labeling on failed description"))
-            return;
-        const label = Config.failedDescriptionLabel();
-        if (this._messageValid)
-            await this._removeLabelsIf([label]);
-        else
-            await this._addLabel(label);
+    _labelWaitingStagingChecks() {
+        this._labels.cache(Config.passedStagingChecksLabel(), false);
+        this._labels.cache(Config.waitingStagingChecksLabel(), true);
     }
 
-    async _unlabelPreconditionsChecking() {
-        await this._removeLabelsIf([
-                Config.passedStagingChecksLabel(),
-                Config.waitingStagingChecksLabel()
-                ]);
+    _labelMerged() {
+        this._labels.cache(Config.waitingStagingChecksLabel(), false);
+        this._labels.cache(Config.passedStagingChecksLabel(), false);
+        this._labels.cache(Config.clearedForMergeLabel(), false);
+        this._labels.cache(Config.mergedLabel(), true);
     }
 
-    async _unlabelPreconditionsChecked() {
-        await this._removeLabelsIf([
-                Config.failedOtherLabel(),
-                Config.failedStagingChecksLabel(),
-                Config.failedDescriptionLabel()
-                ]);
+    _labelFailedOther() {
+        this._labels.cache(Config.waitingStagingChecksLabel(), false);
+        this._labels.cache(Config.passedStagingChecksLabel(), false);
+        this._labels.cache(Config.failedOtherLabel(), true);
     }
 
-    async _labelWaitingStagingChecks() {
-        await this._removeLabelsIf([
-                Config.passedStagingChecksLabel()
-                ]);
-        await this._addLabel(Config.waitingStagingChecksLabel());
+    _labelCleanStaged() {
+        this._labels.cache(Config.waitingStagingChecksLabel());
+        this._labels.cache(Config.passedStagingChecksLabel());
     }
 
-    async _labelMerged() {
-        await this._removeLabelsIf([
-                Config.waitingStagingChecksLabel(),
-                Config.passedStagingChecksLabel(),
-                Config.clearedForMergeLabel()
-                ]);
-        await this._addLabel(Config.mergedLabel());
+    _labelFailedStagingChecks() {
+        this._labels.cache(Config.waitingStagingChecksLabel(), false);
+        this._labels.cache(Config.failedStagingChecksLabel(), true);
     }
 
-    async _labelFailedOther() {
-        await this._removeLabelsIf([
-                Config.waitingStagingChecksLabel(),
-                Config.passedStagingChecksLabel()
-                ]);
-        await this._addLabel(Config.failedOtherLabel());
-    }
-
-    async _labelCleanStaged() {
-        await this._removeLabelsIf([
-                Config.waitingStagingChecksLabel(),
-                Config.passedStagingChecksLabel()
-        ]);
-    }
-
-    async _labelFailedStagingChecks() {
-        await this._removeLabelsIf([ Config.waitingStagingChecksLabel() ]);
-        await this._addLabel(Config.failedStagingChecksLabel());
-    }
-
-    async _labelPassedStagingChecks() {
-        await this._removeLabelsIf([ Config.waitingStagingChecksLabel() ]);
-        await this._addLabel(Config.passedStagingChecksLabel());
+    _labelPassedStagingChecks() {
+        this._labels.cache(Config.waitingStagingChecksLabel(), false);
+        this._labels.cache(Config.passedStagingChecksLabel(), true);
     }
 
     // Getters
@@ -802,7 +850,7 @@ class PullRequest {
         }
 
         if (Config.guardedRun()) {
-            if (await this._hasLabel(Config.clearedForMergeLabel(), this._prNumber())) {
+            if (await this._labels.has(Config.clearedForMergeLabel())) {
                 this._log("allow " + msg + " due to " + Config.clearedForMergeLabel() + " overruling guarded_run option");
                 return false;
             }
@@ -963,9 +1011,10 @@ class PullRequest {
     // StepResult.Succeed: this PR is in-progress
     // StepResult.Delay: this PR is delayed
     // StepResult.Fail: all other cases
-    async process(running) {
+    async _doProcess(running) {
         this._role = "updater";
         await this._loadTag();
+        await this._loadLabels();
         let result = await this.update();
         if (running)
             return result.delayed() ? result : StepResult.Fail();
@@ -989,6 +1038,18 @@ class PullRequest {
             assert(result.succeeded());
         }
         return StepResult.Succeed();
+    }
+
+    async process(running) {
+        let result = null;
+        try {
+            result = await this._doProcess(running);
+        } catch (e) {
+            await this._applyLabels();
+            throw e;
+        }
+        await this._applyLabels();
+        return result;
     }
 }
 
