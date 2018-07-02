@@ -528,7 +528,7 @@ class PullRequest {
     // checks conditions shared by the staging and merging actions
     async _checkTimelessConditions() {
         if (!this._prOpen()) {
-            this._logFailedCondition("not opened");
+            this._logFailedCondition("opened");
             return StepResult.Fail();
         }
 
@@ -774,7 +774,7 @@ class PullRequest {
 
     // Adjusts the successfully merged PR (labels, status, tag).
     async _cleanupMerged() {
-        if (this._dryRun("cleanup merged"))
+        if (this._dryRun("cleanup after merge staged succeeded"))
             return StepResult.Suspend();
 
         this._log("merged, cleanup...");
@@ -785,9 +785,9 @@ class PullRequest {
     }
 
     async _cleanupMergeFailed(deleteTag, labelsCleanup) {
-        if (this._dryRun("cleanup merge failed"))
+        if (this._dryRun("cleanup after merge staged failed"))
             return StepResult.Suspend();
-        this._log("merge failed, cleanup...");
+        this._log("merge staged failed, cleanup...");
         if (labelsCleanup === undefined)
             labelsCleanup = this._labelFailedOther;
         labelsCleanup = labelsCleanup.bind(this);
@@ -812,7 +812,7 @@ class PullRequest {
         }
         assert(stagingStatus.succeeded());
         this._log("staging checks succeeded");
-        if (this._dryRun("finish processing"))
+        if (this._dryRun("applying required PR statues to staged"))
             return StepResult.Suspend();
         await this._supplyStagingWithPrRequired(stagingStatus);
         return StepResult.Succeed();
@@ -844,7 +844,7 @@ class PullRequest {
     async _stagingOnly() {
         // TODO: The caller should not have to remember to call _dryRun() first
         assert(!this._dryRun("_stagingOnly"));
-        const msg = "finalize merging";
+        const msg = "merge staged";
 
         if (Config.stagedRun()) {
             this._log("skip " + msg + " due to staged_run option");
