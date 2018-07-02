@@ -102,6 +102,11 @@ WebhookHandler.on('pull_request', (ev) => {
 // https://developer.github.com/v3/activity/events/types/#pushevent
 WebhookHandler.on('push', (ev) => {
     const e = ev.payload;
+    if (!e.head_commit) {
+        Logger.info("Push event ", e.ref, ",no head_commit, skipping");
+        return;
+    }
+
     Logger.info("push event:", e.ref, e.head_commit.id);
     if (e.ref.endsWith(Config.stagingBranchPath()))
         Emulator.run(e.head_commit.id, "staged_status");

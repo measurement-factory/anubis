@@ -48,6 +48,7 @@ class ConfigOptions {
     loggerParams() { return this._loggerParams; }
     statusParams() { return this._statusParams; }
     statusUrl() { return "http://example.com"; }
+    dryRun() { return false; }
 
     prStatuses(scope) {
         for (let p of this._statusParams) {
