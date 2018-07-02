@@ -525,6 +525,7 @@ class PullRequest {
         return false;
     }
 
+    // checks conditions shared by the staging and merging actions
     async _checkTimelessConditions() {
         if (!this._prOpen()) {
             this._logFailedCondition("not opened");
@@ -538,7 +539,7 @@ class PullRequest {
         return StepResult.Succeed();
     }
 
-    // checks whether this PR can be tagged
+    // whether the PR should be staged (including re-staged)
     async _checkPreconditions() {
         this._log("checking preconditions");
 
@@ -551,8 +552,8 @@ class PullRequest {
         if (timelessResult.failed())
             return StepResult.Fail();
 
-        if (this._prInProgress()) {
-            this._logFailedCondition("not in progress");
+        if (this._wipPr()) {
+            this._logFailedCondition("work-in-progress");
             return StepResult.Fail();
         }
 
@@ -562,7 +563,7 @@ class PullRequest {
         }
 
         if (await this._previousStagingFailed()) {
-            this._logFailedCondition("fresh merge commit with failed staging checks");
+            this._logFailedCondition("lack of fresh staging commit with failed checks");
             return StepResult.Fail();
         }
 
@@ -571,7 +572,7 @@ class PullRequest {
             return StepResult.Fail();
 
         if (!this._messageValid) {
-            this._logFailedCondition("commit message");
+            this._logFailedCondition("valid commit message");
             return StepResult.Fail();
         }
 
@@ -686,7 +687,7 @@ class PullRequest {
         return true;
     }
 
-    _prInProgress() { return this._rawPr.title.startsWith('WIP:'); }
+    _wipPr() { return this._rawPr.title.startsWith('WIP:'); }
 
     _prRequestedReviewers() {
         let reviewers = [];
@@ -862,7 +863,7 @@ class PullRequest {
         return false; // no staging-only mode by default
     }
 
-    // checks whether this tagged PR can be merged
+    // checks whether this staged PR can be merged
     async _checkPostconditions() {
         this._log("checking postconditions");
         const pr = await GH.getPR(this._prNumber(), true);
@@ -873,11 +874,6 @@ class PullRequest {
         const timelessResult = await this._checkTimelessConditions();
         if (timelessResult.failed())
             return StepResult.Fail();
-
-        if (!(await this._isStaging())) {
-            this._logFailedCondition("no longer staged");
-            return StepResult.Fail();
-        }
 
         const compareStatus = await GH.compareCommits(this._prBaseBranch(), this._stagingTag());
         if (compareStatus === "identical" || compareStatus === "behind") {
@@ -891,7 +887,7 @@ class PullRequest {
         if (!(await this._messageIsFresh()))
             return await this._cleanupMergeFailed(true, this._labelCleanStaged);
 
-        if (this._prInProgress()) {
+        if (this._wipPr()) {
             this._logFailedCondition("work-in-progress");
             return await this._cleanupMergeFailed(true, this._labelCleanStaged);
         }
@@ -941,8 +937,6 @@ class PullRequest {
         }
     }
 
-    // Start processing
-
     async _acquireUserProperties() {
         const emails = await GH.getUserEmails();
         for (let e of emails) {
@@ -991,8 +985,6 @@ class PullRequest {
         return StepResult.Suspend();
     }
 
-    // Finish processing
-
     // returns filled StepResult object
     async _mergeStaged() {
         const conditions = await this._checkPostconditions();
@@ -1008,9 +1000,9 @@ class PullRequest {
 
     }
 
-    // StepResult.Suspend: this PR is in-progress
-    // StepResult.Delay: this PR is delayed
-    // Other outcomes mean that this PR is not in-progress
+    // Maintain Anubis-controlled PR metadata.
+    // If possible, also merge or advance the PR towards merging.
+    // The caller is responsible for setting PR labels computed here.
     async _doProcess(anotherPrWasStaged) {
         this._role = "updater";
         await this._loadTag();

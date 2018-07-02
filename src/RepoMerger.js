@@ -96,8 +96,10 @@ class RepoMerger {
 
     _plan(ms) {
         assert(ms > 0);
+        // obey node.js setTimeout() limits
         const maxMs = Math.pow(2, 31) - 1;
         ms = ms < maxMs ? ms : maxMs;
+
         assert(this._timer === null);
         let date = new Date();
         date.setSeconds(date.getSeconds() + ms/1000);
