@@ -29,8 +29,13 @@ class PrMerger {
         let prList = await GH.getPRList();
         for (let pr of prList)
             pr.clearedForMerge = await this._clearedForMerge(pr.number);
-
         this._logPRList(prList, "PRs got from GitHub: ");
+
+        // Include a not-fully-cleanupped staging PR (if it is missing),
+        // since the list contains only opened PRs
+        if (stagingPr && !prList.some(pr => pr.number === stagingPr.number))
+            prList.push(stagingPr);
+
         prList.sort((pr1, pr2) => { return (Config.guardedRun() && (pr2.clearedForMerge - pr1.clearedForMerge)) ||
                 (stagingPr && ((pr2.number === stagingPr.number) - (pr1.number === stagingPr.number))) ||
                 pr1.number - pr2.number;
@@ -97,6 +102,8 @@ class PrMerger {
         const prNum = Util.ParseTag(tag.ref);
         Logger.info("PR" + prNum + " is the current");
         const stagingPr = await GH.getPR(prNum, false);
+        if (stagingPr.state !== "open")
+            Logger.warn("PR" + stagingPr.number + " was closed but needs cleanup");
         return stagingPr;
     }
 
