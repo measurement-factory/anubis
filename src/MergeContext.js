@@ -297,7 +297,7 @@ class Labels
 // manage pull request states, one of:
 // pre-staged: prior to staged commit creation
 // staged: prior to staged commit merging into base
-// post-staged: up to all post-merge cleanup completion
+// post-staged: prior to merged PR closure
 class PrState
 {
     // treat as private; use static methods below instead
@@ -650,7 +650,6 @@ class PullRequest {
     // Label manipulation methods
 
     // applies the cached label state to GitHub
-    // and removes staging tag, if needed
     async _applyLabels() {
         if (this._dryRun("apply labels"))
             return;
@@ -663,9 +662,11 @@ class PullRequest {
     // Atomize PR post-merge cleanup: suspend this PR
     // until all required operations are complete.
     async _finalize() {
-        if (!this._prState.postStaged() || this._dryRun("finalize"))
+        if (this._dryRun("finalize"))
             return StepResult.Suspend();
+
         try {
+            assert(this._prState.postStaged());
             await this._applyLabels();
             await GH.updatePR(this._prNumber(), 'closed');
             if (this._prState.postStaged())
@@ -1086,19 +1087,23 @@ class PullRequest {
         await this._loadPrState();
         this._log("PR state calculated: " + this._prState.toString());
         let result = await this.update();
-        if (anotherPrWasStaged)
+        if (anotherPrWasStaged) {
+            assert(!result.suspended());
             return result.delayed() ? result : StepResult.Fail();
+        }
 
         if (this._prState.preStaged()) {
             result = await this._stage();
             if (!result.succeeded())
                 return result;
+            assert(this._prState.staged());
         }
 
         if (this._prState.staged()) {
             result = await this._mergeStaged();
             if (!result.succeeded())
                 return result;
+            assert(this._prState.postStaged());
         }
 
         if (this._prState.postStaged()) {

@@ -85,8 +85,8 @@ class PrMerger {
         return false;
     }
 
-
-    // Loads 'being-in-merge' PR, if exists (the PR has tag and staging_branch points to the tag).
+    // returns raw PR having staging commit at the tip of the staging branch (or null)
+    // if that PR exists, it is either "staged" or "post-staged"
     async _current() {
         Logger.info("Looking for the current PR...");
         const stagingSha = await GH.getReference(Config.stagingBranchPath());
