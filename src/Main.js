@@ -41,5 +41,10 @@ WebhookHandler.on('push', (ev) => {
     Merger.run();
 });
 
+WebhookHandler.on('ping', (ev) => {
+    const e = ev.payload;
+    Logger.info("ping event, hook_id:", e.hook_id);
+});
+
 Merger.run(WebhookHandler);
 
