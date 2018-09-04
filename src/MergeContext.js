@@ -494,7 +494,7 @@ class MergeContext {
     _prHeadSha() { return this._pr.head.sha; }
 
     _prMessage() {
-        return this._pr.title + ' (#' + this._pr.number + ')' + '\n\n' + this._prBody();
+        return (this._pr.title + ' (#' + this._pr.number + ')' + '\n\n' + this._prBody()).trim();
     }
 
     _prMessageValid() {
@@ -527,7 +527,11 @@ class MergeContext {
 
     _prOpen() { return this._pr.state === 'open'; }
 
-    _prBody() { return this._pr.body.replace(/\r+\n/g, '\n'); }
+    _prBody() {
+        if (this._pr.body === undefined || this._pr.body === null)
+            return "";
+        return this._pr.body.replace(/\r+\n/g, '\n');
+    }
 
     _stagingTag() { return Util.StagingTag(this._pr.number); }
 
