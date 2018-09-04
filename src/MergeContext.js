@@ -527,7 +527,11 @@ class MergeContext {
 
     _prOpen() { return this._pr.state === 'open'; }
 
-    _prBody() { return this._pr.body ? this._pr.body.replace(/\r+\n/g, '\n') : ""; }
+    _prBody() {
+        if (this._pr.body === undefined || this._pr.body === null)
+            return "";
+        return this._pr.body.replace(/\r+\n/g, '\n');
+    }
 
     _stagingTag() { return Util.StagingTag(this._pr.number); }
 
