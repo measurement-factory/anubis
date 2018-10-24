@@ -7,6 +7,10 @@ const Logger = Log.Logger;
 
 const WebhookHandler = createHandler({ path: Config.githubWebhookPath(), secret: Config.githubWebhookSecret() });
 
+process.on('unhandledRejection', error => {
+    Logger.error("unhandledRejection", error.message);
+});
+
 // events
 
 WebhookHandler.on('error', (err) => {

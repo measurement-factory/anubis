@@ -219,6 +219,12 @@ function getReference(ref) {
                 reject(new ErrorContext(err, getReference.name, params));
                 return;
             }
+            // If the ref does not exist, but  but existing refs start with ref,
+            // an array is returned.
+            if (res.data === undefined || res.data.object === undefined) {
+                reject(new ErrorContext("Could not find " + params.ref + " reference", getReference.name, params));
+                return;
+            }
             const result = {ref: res.data.ref, sha: res.data.object.sha};
             logApiResult(getReference.name, params, result);
             resolve(res.data.object.sha);
