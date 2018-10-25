@@ -219,9 +219,9 @@ function getReference(ref) {
                 reject(new ErrorContext(err, getReference.name, params));
                 return;
             }
-            // If the ref does not exist, but  but existing refs start with ref,
-            // an array is returned.
-            if (res.data === undefined || res.data.object === undefined) {
+            // If the requested ref does not exist in the repository, but some
+            // existing refs start with it, they will be returned as an array.
+            if (Array.isArray(res.data)) {
                 reject(new ErrorContext("Could not find " + params.ref + " reference", getReference.name, params));
                 return;
             }
