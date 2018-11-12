@@ -219,6 +219,12 @@ function getReference(ref) {
                 reject(new ErrorContext(err, getReference.name, params));
                 return;
             }
+            // If the requested ref does not exist in the repository, but some
+            // existing refs start with it, they will be returned as an array.
+            if (Array.isArray(res.data)) {
+                reject(new ErrorContext("Could not find " + params.ref + " reference", getReference.name, params));
+                return;
+            }
             const result = {ref: res.data.ref, sha: res.data.object.sha};
             logApiResult(getReference.name, params, result);
             resolve(res.data.object.sha);
