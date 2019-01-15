@@ -94,11 +94,11 @@ class RepoMerger {
         this._server = null;
     }
 
-    _plan(ms) {
-        assert(ms > 0);
+    _plan(requestedMs) {
+        assert(requestedMs > 0);
         // obey node.js setTimeout() limits
         const maxMs = Math.pow(2, 31) - 1;
-        ms = ms < maxMs ? ms : maxMs;
+        const ms = Math.min(requestedMs, maxMs);
 
         assert(this._timer === null);
         let date = new Date();

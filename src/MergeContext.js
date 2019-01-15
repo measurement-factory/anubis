@@ -5,7 +5,7 @@ const GH = require('./GitHubUtil.js');
 const Util = require('./Util.js');
 
 // Action outcome, with support for paused and snoozed actions.
-// For example, is returned by PullRequest.process() (at higher level) or
+// For example, returned by PullRequest.process() (at higher level) or
 // various checks (at low level).
 class StepResult
 {
@@ -294,7 +294,7 @@ class Labels
     }
 }
 
-// manage pull request states, one of:
+// A state of a pull request (with regard to merging progress). One of:
 // pre-staged: prior to staged commit creation
 // staged: prior to staged commit merging into base
 // post-staged: prior to merged PR closure
@@ -663,6 +663,7 @@ class PullRequest {
             return StepResult.Suspend();
 
         assert(this._prState.postStaged());
+        this._labelMerged();
         await this._applyLabels();
         await GH.updatePR(this._prNumber(), 'closed');
         await GH.deleteReference(this._stagingTag());
@@ -1080,7 +1081,7 @@ class PullRequest {
         let result = await this.update();
         if (anotherPrWasStaged) {
             assert(!result.suspended());
-            return result.delayed() ? result : StepResult.Fail();
+            return result;
         }
 
         if (this._prState.preStaged()) {
@@ -1099,7 +1100,9 @@ class PullRequest {
 
         if (this._prState.postStaged()) {
             this._role = "finalizer";
-            this._labelMerged();
+            result = await this._finalize();
+            if (!result.succeeded())
+                return result;
         }
 
         return StepResult.Succeed();
@@ -1109,14 +1112,11 @@ class PullRequest {
         let result = null;
         try {
             result = await this._doProcess(anotherPrWasStaged);
+            await this._applyLabels();
         } catch (e) {
             await this._applyLabels();
             throw e;
         }
-        if (!this._prState.postStaged())
-            this._applyLabels();
-        else
-            result = await this._finalize();
         return result;
     }
 }
