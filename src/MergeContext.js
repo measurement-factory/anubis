@@ -570,13 +570,11 @@ class PullRequest {
     async _checkActive() {
         await this._refreshPr();
 
+        if (this._labels.has(Config.mergedLabel(), this._prNumber()))
+            this._warn("already marked with " + Config.mergedLabel);
+
         if (!this._prOpen()) {
             this._logFailedCondition("opened");
-            return false;
-        }
-
-        if (this._labels.has(Config.mergedLabel(), this._prNumber())) {
-            this._logFailedCondition("already marked with " + Config.mergedLabel);
             return false;
         }
 
@@ -659,24 +657,17 @@ class PullRequest {
             await this._labels.apply();
     }
 
-    // Atomize PR post-merge cleanup: suspend this PR
-    // until all required operations are complete.
+    // Cleans up and closes a post-staged PR, removing it from our radar for good.
     async _finalize() {
         if (this._dryRun("finalize"))
             return StepResult.Suspend();
 
-        try {
-            assert(this._prState.postStaged());
-            await this._applyLabels();
-            await GH.updatePR(this._prNumber(), 'closed');
-            if (this._prState.postStaged())
-                await GH.deleteReference(this._stagingTag());
-            this._log("finalize completed");
-            return StepResult.Succeed();
-        } catch (e) {
-            Log.LogException(e, this._toString() + " unexpected error while finalizing.");
-            return StepResult.Suspend();
-        }
+        assert(this._prState.postStaged());
+        await this._applyLabels();
+        await GH.updatePR(this._prNumber(), 'closed');
+        await GH.deleteReference(this._stagingTag());
+        this._log("finalize completed");
+        return StepResult.Succeed();
     }
 
     _labelFailedDescription() {

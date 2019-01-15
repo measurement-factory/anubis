@@ -15,6 +15,8 @@ class PrMerger {
         // stores the the number of milliseconds to be re-run
         // for the oldest 'slow burner'
         this.rerunIn = null;
+        this._prList = null;
+        this._tags = null;
     }
 
     async _clearedForMerge(prNum) {
@@ -26,30 +28,22 @@ class PrMerger {
     /// (labels, approvals, etc.)
     /// Returns a sorted list of PRs ready-for-processing.
     async _preparePRList(stagingPr) {
-        let prList = await GH.getPRList();
-        for (let pr of prList)
+        for (let pr of this._prList)
             pr.clearedForMerge = await this._clearedForMerge(pr.number);
-        this._logPRList(prList, "PRs got from GitHub: ");
 
-        // Include a not-fully-cleanupped staging PR (if it is missing),
-        // since the list contains only opened PRs
-        if (stagingPr && !prList.some(pr => pr.number === stagingPr.number))
-            prList.push(stagingPr);
-
-        prList.sort((pr1, pr2) => { return (Config.guardedRun() && (pr2.clearedForMerge - pr1.clearedForMerge)) ||
+        this._prList.sort((pr1, pr2) => { return (Config.guardedRun() && (pr2.clearedForMerge - pr1.clearedForMerge)) ||
                 (stagingPr && ((pr2.number === stagingPr.number) - (pr1.number === stagingPr.number))) ||
                 pr1.number - pr2.number;
         });
-        this._logPRList(prList, "PRs selected for processing: ");
-        return prList;
+        this._logPRList("PRs selected for processing: ");
     }
 
-    _logPRList(prList, description) {
+    _logPRList(description) {
         let prStr = description;
-        if (prList.length === 0)
+        if (this._prList.length === 0)
             prStr += "empty list";
         else {
-            for (let pr of prList)
+            for (let pr of this._prList)
                 prStr += pr.number + " ";
         }
         Logger.info(prStr);
@@ -60,14 +54,21 @@ class PrMerger {
     // there is a PR still-in-merge.
     async runStep() {
         Logger.info("runStep running");
+        // all repository tags
+        this._tags = await GH.getTags();
+        this._prList = await GH.getPRList();
+        this._logPRList("PRs got from GitHub: ");
+
+        await this._cleanTags();
+
         const stagingPr = await this._current();
-        const prList = await this._preparePRList(stagingPr);
+        await this._preparePRList(stagingPr);
 
         this.total = 0;
         let suspendedEarlier = false;
-        while (prList.length) {
+        while (this._prList.length) {
             try {
-                const rawPr = prList.shift();
+                const rawPr = this._prList.shift();
                 this.total++;
                 let pr = new PullRequest(rawPr);
                 const result = await pr.process(suspendedEarlier);
@@ -76,7 +77,7 @@ class PrMerger {
                     this.rerunIn = result.delay();
             } catch (e) {
                 this.errors++;
-                if (prList.length)
+                if (this._prList.length)
                     Log.LogError(e, "PrMerger.runStep");
                 else
                     throw e;
@@ -85,16 +86,36 @@ class PrMerger {
         return false;
     }
 
+    /// removes PR tags which do not have corresponding opened PRs
+    async _cleanTags() {
+        let cleanedTags = [];
+        for (let tag of this._tags) {
+            let prNum = Util.ParseTag(tag.ref);
+            if (prNum) {
+                for (let pr of this._prList) {
+                    if (prNum === pr.number) {
+                        prNum = null;
+                        break;
+                    }
+                }
+            }
+
+            if (prNum)
+                await GH.deleteReference(Util.StagingTag(prNum));
+            else
+                cleanedTags.push(tag);
+        }
+        this._tags = cleanedTags;
+    }
+
     // returns raw PR having staging commit at the tip of the staging branch (or null)
     // if that PR exists, it is either "staged" or "post-staged"
     async _current() {
         Logger.info("Looking for the current PR...");
         const stagingSha = await GH.getReference(Config.stagingBranchPath());
-        // request all repository tags
-        let tags = await GH.getTags();
         // search for a tag, the staging_branch points to,
         // and parse out PR number from the tag name
-        const tag = tags.find((t) => { return (t.object.sha === stagingSha) && Util.MatchTag(t.ref); });
+        const tag = this._tags.find((t) => { return (t.object.sha === stagingSha) && Util.MatchTag(t.ref); });
         if (tag === undefined) {
             Logger.info("No current PR found.");
             return null;
