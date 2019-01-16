@@ -7,6 +7,11 @@ const Logger = Log.Logger;
 
 const WebhookHandler = createHandler({ path: Config.githubWebhookPath(), secret: Config.githubWebhookSecret() });
 
+process.on('unhandledRejection', error => {
+    Logger.error("unhandledRejection", error.message, error.stack);
+    throw error;
+});
+
 // events
 
 WebhookHandler.on('error', (err) => {
@@ -39,6 +44,11 @@ WebhookHandler.on('push', (ev) => {
     const e = ev.payload;
     Logger.info("push event:", e.ref);
     Merger.run();
+});
+
+WebhookHandler.on('ping', (ev) => {
+    const e = ev.payload;
+    Logger.info("ping event, hook_id:", e.hook_id);
 });
 
 Merger.run(WebhookHandler);

@@ -763,7 +763,11 @@ class PullRequest {
 
     _prOpen() { return this._rawPr.state === 'open'; }
 
-    _prBody() { return this._rawPr.body.replace(/\r+\n/g, '\n'); }
+    _prBody() {
+        if (this._rawPr.body === undefined || this._rawPr.body === null)
+            return "";
+        return this._rawPr.body.replace(/\r+\n/g, '\n');
+    }
 
     _stagingTag() { return Util.StagingTag(this._rawPr.number); }
 
