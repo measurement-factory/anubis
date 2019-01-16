@@ -29,6 +29,8 @@ function protectedBranchAppender(protectedBranchPages, aPage) {
 }
 
 async function pager(firstPage, appender) {
+    assert(firstPage);
+
     let allPages = null;
     if (appender === undefined)
         appender = defaultAppender;
@@ -243,8 +245,12 @@ function getTags() {
                 reject(new ErrorContext(err, getTags.name, params));
                 return;
             }
-            res = await pager(res);
-            const result = notFound ? [] : res.data;
+            let result = [];
+            const gotSomeTags = !notFound;
+            if (gotSomeTags) {
+                res = await pager(res);
+                result = res.data;
+            }
             logApiResult(getTags.name, params, {tags: result.length});
             resolve(result);
         });
