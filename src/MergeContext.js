@@ -636,8 +636,12 @@ class PullRequest {
         this._approval = await this._checkApproval();
         this._log("checkApproval: " + this._approval);
         await this._setApprovalStatus(this._prHeadSha());
+
         if (this._prState.staged())
             await this._setApprovalStatus(this._tagSha);
+
+        if (this._prState.postStaged())
+            await this._finalize();
 
         if (this._approval.grantedTimeout())
             return StepResult.Delay(this._approval.delayMs);

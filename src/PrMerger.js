@@ -1,3 +1,4 @@
+const assert = require('assert');
 const Config = require('./Config.js');
 const Log = require('./Logger.js');
 const Logger = Log.Logger;
@@ -24,8 +25,6 @@ class PrMerger {
         return labels.find(lbl => lbl.name === Config.clearedForMergeLabel()) !== undefined;
     }
 
-    /// Obtains PR list from GitHub, updates GitHub PR state
-    /// (labels, approvals, etc.)
     /// Returns a sorted list of PRs ready-for-processing.
     async _preparePRList(stagingPr) {
         for (let pr of this._prList)
@@ -86,26 +85,29 @@ class PrMerger {
         return false;
     }
 
-    /// removes PR tags which do not have corresponding opened PRs
+    /// removes PR-unrelated tags from the list and deletes PR tags
+    /// from GitHub which do not have corresponding opened PRs
     async _cleanTags() {
-        let cleanedTags = [];
+        if (Config.dryRun())
+            return;
+        assert(this._tags);
+
+        let filteredTags = [];
         for (let tag of this._tags) {
             let prNum = Util.ParseTag(tag.ref);
-            if (prNum) {
-                for (let pr of this._prList) {
-                    if (prNum === pr.number) {
-                        prNum = null;
-                        break;
-                    }
+            if (prNum === null)
+                continue;
+            for (let pr of this._prList) {
+                if (prNum === pr.number.toString()) {
+                    prNum = null;
+                    filteredTags.push(tag);
+                    break;
                 }
             }
-
-            if (prNum)
+            if (prNum !== null)
                 await GH.deleteReference(Util.StagingTag(prNum));
-            else
-                cleanedTags.push(tag);
         }
-        this._tags = cleanedTags;
+        this._tags = filteredTags;
     }
 
     // returns raw PR having staging commit at the tip of the staging branch (or null)
