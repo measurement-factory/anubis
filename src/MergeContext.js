@@ -627,7 +627,7 @@ class PullRequest {
     }
 
     // returns filled StepResult object
-    async update() {
+    async update(anotherPrWasStaged) {
         this._role = "updater";
         this._messageValid = this._prMessageValid();
         this._log("messageValid: " + this._messageValid);
@@ -637,14 +637,14 @@ class PullRequest {
         this._log("checkApproval: " + this._approval);
         await this._setApprovalStatus(this._prHeadSha());
 
-        if (this._prState.staged())
+        if (this._prState.staged()) {
             await this._setApprovalStatus(this._tagSha);
-
-        if (this._prState.postStaged())
-            await this._finalize();
-
-        if (this._approval.grantedTimeout())
-            return StepResult.Delay(this._approval.delayMs);
+            if (this._approval.grantedTimeout())
+                return StepResult.Delay(this._approval.delayMs);
+        } else if (this._prState.postStaged()) {
+            if (anotherPrWasStaged)
+                await this._finalize();
+        }
 
         return StepResult.Succeed();
     }
@@ -1086,7 +1086,7 @@ class PullRequest {
         await this._loadLabels();
         await this._loadPrState();
         this._log("PR state calculated: " + this._prState.toString());
-        let result = await this.update();
+        let result = await this.update(anotherPrWasStaged);
         if (anotherPrWasStaged) {
             assert(!result.suspended());
             return result;
