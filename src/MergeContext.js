@@ -627,7 +627,7 @@ class PullRequest {
     }
 
     // returns filled StepResult object
-    async update(anotherPrWasStaged) {
+    async update() {
         this._role = "updater";
         this._messageValid = this._prMessageValid();
         this._log("messageValid: " + this._messageValid);
@@ -636,14 +636,6 @@ class PullRequest {
         this._approval = await this._checkApproval();
         this._log("checkApproval: " + this._approval);
         await this._setApprovalStatus(this._prHeadSha());
-
-        if (this._prState.staged()) {
-            await this._setApprovalStatus(this._tagSha);
-        } else if (this._prState.postStaged()) {
-            if (anotherPrWasStaged)
-                await this._finalize();
-            return StepResult.Succeed();
-        }
 
         if (this._approval.grantedTimeout())
             return StepResult.Delay(this._approval.delayMs);
@@ -1073,6 +1065,7 @@ class PullRequest {
     async _mergeStaged() {
         this._role = "merger";
 
+        await this._setApprovalStatus(this._tagSha);
         let result = await this._checkPostconditions();
         if (result.succeeded())
             result = await this._mergeToBase();
@@ -1088,13 +1081,11 @@ class PullRequest {
         await this._loadLabels();
         await this._loadPrState();
         this._log("PR state calculated: " + this._prState.toString());
-        let result = await this.update(anotherPrWasStaged);
-        if (anotherPrWasStaged) {
-            assert(!result.suspended());
+        let result = await this.update();
+        if (anotherPrWasStaged && result.delayed())
             return result;
-        }
 
-        if (this._prState.preStaged()) {
+        if (!anotherPrWasStaged && this._prState.preStaged()) {
             result = await this._stage();
             if (!result.succeeded())
                 return result;
@@ -1102,6 +1093,7 @@ class PullRequest {
         }
 
         if (this._prState.staged()) {
+            assert(!anotherPrWasStaged);
             result = await this._mergeStaged();
             if (!result.succeeded())
                 return result;
