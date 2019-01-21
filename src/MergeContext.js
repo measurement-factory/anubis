@@ -639,12 +639,14 @@ class PullRequest {
 
         if (this._prState.staged()) {
             await this._setApprovalStatus(this._tagSha);
-            if (this._approval.grantedTimeout())
-                return StepResult.Delay(this._approval.delayMs);
         } else if (this._prState.postStaged()) {
             if (anotherPrWasStaged)
                 await this._finalize();
+            return StepResult.Succeed();
         }
+
+        if (this._approval.grantedTimeout())
+            return StepResult.Delay(this._approval.delayMs);
 
         return StepResult.Succeed();
     }
