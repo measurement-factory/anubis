@@ -570,11 +570,13 @@ class PullRequest {
     async _checkActive() {
         await this._refreshPr();
 
-        if (this._labels.has(Config.mergedLabel(), this._prNumber()))
-            this._warn("already marked with " + Config.mergedLabel);
-
         if (!this._prOpen()) {
             this._logFailedCondition("opened");
+            return false;
+        }
+
+        if (this._labels.has(Config.mergedLabel(), this._prNumber())) {
+            this._logFailedCondition("already marked with " + Config.mergedLabel);
             return false;
         }
 
