@@ -325,7 +325,7 @@ class PrState
 
 class PullRequest {
 
-    constructor(pr) {
+    constructor(pr, anotherPrWasStaged) {
         // may lack pr.mergeable, see _refreshPr()
         this._rawPr = pr;
         this._shaLimit = 6;
@@ -350,6 +350,7 @@ class PullRequest {
         this._prState = null; // calculated PrState
 
         this._labels = null;
+        this._anotherPrWasStaged = anotherPrWasStaged;
     }
 
     // creates and returns filled Approval object
@@ -625,6 +626,11 @@ class PullRequest {
         if (!statusChecks.final())
             return StepResult.Suspend();
 
+        if (this._anotherPrWasStaged) {
+            this._logFailedCondition("no PR is being staged");
+            return StepResult.Fail();
+        }
+
         return StepResult.Succeed();
     }
 
@@ -844,6 +850,7 @@ class PullRequest {
             return;
         }
 
+        assert(!this._anotherPrWasStaged);
         this._prState = PrState.Staged();
     }
 
@@ -1045,7 +1052,9 @@ class PullRequest {
         this._role = "stager";
 
         this._unlabelPreconditionsChecking();
+
         const conditions = await this._checkPreconditions();
+
         if (!conditions.succeeded()) {
             if (conditions.delayed())
                 return conditions;
@@ -1076,7 +1085,7 @@ class PullRequest {
     // Maintain Anubis-controlled PR metadata.
     // If possible, also merge or advance the PR towards merging.
     // The caller is responsible for setting PR labels computed here.
-    async _doProcess(anotherPrWasStaged) {
+    async _doProcess() {
         await this._loadTag();
         await this._loadLabels();
         await this._loadPrState();
@@ -1084,12 +1093,6 @@ class PullRequest {
 
         if (this._prState.preStaged()) {
             await this.update();
-            if (anotherPrWasStaged) {
-                return this._approval.grantedTimeout() ?
-                       StepResult.Delay(this._approval.delayMs) :
-                       StepResult.Succeed();
-            }
-
             const result = await this._stage();
             if (!result.succeeded())
                 return result;
@@ -1097,7 +1100,6 @@ class PullRequest {
         }
 
         if (this._prState.staged()) {
-            assert(!anotherPrWasStaged);
             await this.update();
             let result = await this._mergeStaged();
             if (!result.succeeded())
@@ -1115,10 +1117,10 @@ class PullRequest {
         return StepResult.Succeed();
     }
 
-    async process(anotherPrWasStaged) {
+    async process() {
         let result = null;
         try {
-            result = await this._doProcess(anotherPrWasStaged);
+            result = await this._doProcess();
             await this._applyLabels();
         } catch (e) {
             await this._applyLabels();
