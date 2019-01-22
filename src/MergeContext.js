@@ -628,6 +628,9 @@ class PullRequest {
 
     // returns filled StepResult object
     async update() {
+        if (this._role !== "initiator")
+            return;
+
         this._role = "updater";
         this._messageValid = this._prMessageValid();
         this._log("messageValid: " + this._messageValid);
@@ -636,11 +639,6 @@ class PullRequest {
         this._approval = await this._checkApproval();
         this._log("checkApproval: " + this._approval);
         await this._setApprovalStatus(this._prHeadSha());
-
-        if (this._approval.grantedTimeout())
-            return StepResult.Delay(this._approval.delayMs);
-
-        return StepResult.Succeed();
     }
 
     // Label manipulation methods
@@ -1081,12 +1079,16 @@ class PullRequest {
         await this._loadLabels();
         await this._loadPrState();
         this._log("PR state calculated: " + this._prState.toString());
-        let result = await this.update();
-        if (anotherPrWasStaged && result.delayed())
-            return result;
 
-        if (!anotherPrWasStaged && this._prState.preStaged()) {
-            result = await this._stage();
+        if (this._prState.preStaged()) {
+            await this.update();
+            if (anotherPrWasStaged) {
+                return this._approval.grantedTimeout() ?
+                       StepResult.Delay(this._approval.delayMs) :
+                       StepResult.Succeed();
+            }
+
+            const result = await this._stage();
             if (!result.succeeded())
                 return result;
             assert(this._prState.staged());
@@ -1094,7 +1096,8 @@ class PullRequest {
 
         if (this._prState.staged()) {
             assert(!anotherPrWasStaged);
-            result = await this._mergeStaged();
+            await this.update();
+            let result = await this._mergeStaged();
             if (!result.succeeded())
                 return result;
             assert(this._prState.postStaged());
@@ -1102,7 +1105,7 @@ class PullRequest {
 
         if (this._prState.postStaged()) {
             this._role = "finalizer";
-            result = await this._finalize();
+            const result = await this._finalize();
             if (!result.succeeded())
                 return result;
         }
