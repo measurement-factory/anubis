@@ -25,11 +25,15 @@ class PrMerger {
         return labels.find(lbl => lbl.name === Config.clearedForMergeLabel()) !== undefined;
     }
 
-    /// Returns a sorted list of PRs ready-for-processing.
+    /// Establishes correct PRs processing order.
     async _preparePRList(stagingPr) {
         for (let pr of this._prList)
             pr.clearedForMerge = await this._clearedForMerge(pr.number);
 
+        // Processing staged PR Y in its natural PR number order X,Y,Z would result
+        // in aborting staging for Y and becoming X staged.
+        // Processing non-cleared-for-merge PR X in its natural PR number order X,Y
+        // would make Y waiting for X until it is cleared for merge.
         this._prList.sort((pr1, pr2) => { return (Config.guardedRun() && (pr2.clearedForMerge - pr1.clearedForMerge)) ||
                 (stagingPr && ((pr2.number === stagingPr.number) - (pr1.number === stagingPr.number))) ||
                 pr1.number - pr2.number;
@@ -56,7 +60,7 @@ class PrMerger {
         // all repository tags
         this._tags = await GH.getTags();
         this._prList = await GH.getPRList();
-        this._logPRList("PRs got from GitHub: ");
+        this._logPRList("PRs received from GitHub: ");
 
         await this._cleanTags();
 
@@ -88,8 +92,6 @@ class PrMerger {
     /// removes PR-unrelated tags from the list and deletes PR tags
     /// from GitHub which do not have corresponding opened PRs
     async _cleanTags() {
-        if (Config.dryRun())
-            return;
         assert(this._tags);
 
         let filteredTags = [];
@@ -104,8 +106,10 @@ class PrMerger {
                     break;
                 }
             }
-            if (prNum !== null)
-                await GH.deleteReference(Util.StagingTag(prNum));
+            if (prNum !== null) {
+                if (!Config.dryRun())
+                    await GH.deleteReference(Util.StagingTag(prNum));
+            }
         }
         this._tags = filteredTags;
     }
@@ -125,8 +129,7 @@ class PrMerger {
         const prNum = Util.ParseTag(tag.ref);
         Logger.info("PR" + prNum + " is the current");
         const stagingPr = await GH.getPR(prNum, false);
-        if (stagingPr.state !== "open")
-            Logger.warn("PR" + stagingPr.number + " was closed but needs cleanup");
+        assert(stagingPr.state === "open");
         return stagingPr;
     }
 

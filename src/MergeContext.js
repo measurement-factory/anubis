@@ -200,59 +200,71 @@ class StatusChecks
     }
 }
 
-// Cached label state
+// pull request label (e.g., M-cleared-for-merge)
 class Label
 {
-    constructor(name, on, old) {
+    constructor(name, presentHere, presentOnGitHub) {
         this.name = name;
-        this.on = on; // current state
-        // whether this label was received from GitHub or created by the bot
-        this.old = old;
+        // we keep some unset labels to delay their removal from GitHub
+        this._presentHere = presentHere; // set from Anubis high-level code point of view
+        this._presentOnGitHub = presentOnGitHub; // set from GitHub point of view
     }
+    // whether the label should be considered "set" from Anubis high-level code point of view
+    present() { return this.presentHere_; }
 
-    toString() {
-        return this.name + "(on: " + this.on + "; old: " + this.old + ")";
-    }
+    needsRemovalFromGitHub() { return this._presentOnGitHub && !this._presentHere; }
+
+    needsAdditionToGitHub() { return !this._presentOnGitHub && this._presentHere; }
+
+    markForRemoval() { this.presentHere_ = false; }
+
+    markForAddition() { this.presentHere_ = true; }
 }
 
-// Keeps labels state (received from GitHub), caches labels modifications
-// and applies them back to GitHub
+// Pull request labels. Hides the fact that some labels may be kept internally
+// while appearing to be unset for high-level code. Delays synchronization
+// with GitHub to help GitHub aggregate human-readable label change reports.
 class Labels
 {
-    // labels parameter keeps label array received from GitHub
+    // the labels parameter is the label array received from GitHub
     constructor(labels, prNum) {
         this._prNum = prNum;
         this._labels = [];
         for (let label of labels)
-            this._doCache(label.name, true, true);
+            this._labels.push(new Label(label.name, true, true));
     }
 
-    _doCache(name, on, old) {
+    _modify(name, mustBeSet) {
         const label = this._labels.find(lbl => lbl.name === name);
-        if (label)
-            label.on = on;
-        else {
-            if (on)
-                this._labels.push(new Label(name, on, old));
+        if (label) {
+            if (mustBeSet)
+                label.markForAddition();
+            else
+                label.markForRemoval();
+        } else {
+            if (!mustBeSet)
+                return;
+            this._labels.push(new Label(name, true, false));
         }
     }
 
-    // changes the cached label state (or adds it to the cache)
-    cache(name, on) { this._doCache(name, on, false); }
+    add(name) { this._modify(name, true); }
 
-    // whether the label is cached and 'on'
+    remove(name) { this._modify(name, false); }
+
+    // whether the label is present (from high-level Anubis code point of view)
     has(name) {
         const label = this._labels.find(lbl => lbl.name === name);
         return label && label.on;
     }
 
     // removes a single label from GitHub
-    async _remove(name) {
+    async _removeFromGitHub(name) {
         try {
             await GH.removeLabel(name, this._prNum);
         } catch (e) {
             if (e.name === 'ErrorContext' && e.notFound()) {
-                Log.LogException(e, "_remove: " + name + " not found");
+                Log.LogException(e, "_removeFromGitHub: " + name + " not found");
                 return;
             }
             throw e;
@@ -260,7 +272,7 @@ class Labels
     }
 
     // adds a single label to GitHub
-    async _add(name) {
+    async _addToGitHub(name) {
         let params = Util.commonParams();
         params.number = this._prNum;
         params.labels = [];
@@ -269,28 +281,34 @@ class Labels
         await GH.addLabels(params);
     }
 
-    // applies all cached labels to GitHub
+    // brings GitHub labels in sync with ours
     async apply() {
+        let appliedLabels = [];
         for (let label of this._labels) {
-            if (label.old && !label.on)
-                await this._remove(label.name);
-            if (!label.old && label.on)
-                await this._add(label.name);
+            if (label.needsRemovalFromGitHub()) {
+                await this._removeFromGitHub(label.name);
+                continue;
+            }
+
+            if (label.needsAdditionToGitHub())
+                await this._addToGitHub(label.name); // TODO: Optimize to add all labels at once
+            appliedLabels.push(label);
         }
+        this._labels = appliedLabels;
     }
 
-    toString() {
+    // The string summary of changed labels (used for debugging).
+    diff() {
         let str = "";
         for (let label of this._labels) {
-            if ( (label.old && !label.on) || (!label.old && label.on)) {
+            if (label.needsRemovalFromGitHub() || label.needsAdditionToGitHub()) {
                 if (str.length)
                     str += ", ";
-                str += label.toString();
+                const prefix = label.present() ? '+' : '-';
+                str += prefix + label.name;
             }
         }
-        if (!str.length)
-            return "no pending labels";
-        return "pending labels: " + str;
+        return '[' + str + ']';
     }
 }
 
@@ -343,14 +361,15 @@ class PullRequest {
         // optimization: cached _tagCommit() result
         this._tagCommitCache = null;
 
-        // "initiator", "updater", "stager", "merger" or "finalizer" (for debugging only)
-        this._role = "initiator";
+        // major methods we have called, in the call order (for debugging only)
+        this._breadcrumbs = [];
         this._messageValid = null;
 
         this._prState = null; // calculated PrState
 
         this._labels = null;
         this._anotherPrWasStaged = anotherPrWasStaged;
+        this._updated = false; // update() has been called
     }
 
     // creates and returns filled Approval object
@@ -564,8 +583,8 @@ class PullRequest {
         return false;
     }
 
-    // Checks whether this PR is still opened and ready for processing (i.e.,
-    // not marked with 'wip' or other similar markers).
+    // Refreshes PR metadata.
+    // Returns whether this PR is still open and still wants to be merged.
     // Is used for both merging and staging actions.
     // Do not use for post-staged.
     async _checkActive() {
@@ -590,7 +609,7 @@ class PullRequest {
     }
 
     // whether the PR should be staged (including re-staged)
-    async _checkPreconditions() {
+    async _checkStagingPreconditions() {
         this._log("checking preconditions");
 
         if (!(await this._checkActive()))
@@ -606,10 +625,6 @@ class PullRequest {
             return StepResult.Fail();
         }
 
-        const statusChecks = await this._getPrStatuses();
-        if (statusChecks.failed())
-            return StepResult.Fail();
-
         if (!this._messageValid) {
             this._logFailedCondition("valid commit message");
             return StepResult.Fail();
@@ -620,6 +635,10 @@ class PullRequest {
             return StepResult.Fail();
         }
 
+        const statusChecks = await this._getPrStatuses();
+        if (statusChecks.failed())
+            return StepResult.Fail();
+
         if (this._approval.grantedTimeout())
             return StepResult.Delay(this._approval.delayMs);
 
@@ -627,19 +646,21 @@ class PullRequest {
             return StepResult.Suspend();
 
         if (this._anotherPrWasStaged) {
-            this._logFailedCondition("no PR is being staged");
+            this._logFailedCondition("no PR is staged");
             return StepResult.Fail();
         }
 
         return StepResult.Succeed();
     }
 
-    // returns filled StepResult object
+    // Refreshes PR GitHub state.
+    // Can be used safely for any opened PR.
+    // Do not use for post-staged PRs.
     async update() {
-        if (this._role !== "initiator")
+        if (this._updated)
             return;
 
-        this._role = "updater";
+        this._breadcrumbs.push("update");
         this._messageValid = this._prMessageValid();
         this._log("messageValid: " + this._messageValid);
         this._labelFailedDescription();
@@ -647,6 +668,8 @@ class PullRequest {
         this._approval = await this._checkApproval();
         this._log("checkApproval: " + this._approval);
         await this._setApprovalStatus(this._prHeadSha());
+
+        this._updated = true;
     }
 
     // Label manipulation methods
@@ -656,17 +679,18 @@ class PullRequest {
         if (this._dryRun("apply labels"))
             return;
 
-        this._log(this._labels.toString());
+        this._log("applying label changes:", this._labels.diff());
         if (this._labels)
             await this._labels.apply();
     }
 
     // Cleans up and closes a post-staged PR, removing it from our radar for good.
     async _finalize() {
+        assert(this._prState.postStaged());
+        this._breadcrumbs.push("finalize");
         if (this._dryRun("finalize"))
             return StepResult.Suspend();
 
-        assert(this._prState.postStaged());
         this._labelMerged();
         await this._applyLabels();
         await GH.updatePR(this._prNumber(), 'closed');
@@ -676,51 +700,54 @@ class PullRequest {
     }
 
     _labelFailedDescription() {
-        this._labels.cache(Config.failedDescriptionLabel(), !this._messageValid);
+        if (this._messageValid)
+            this._labels.remove(Config.failedDescriptionLabel());
+        else
+            this._labels.add(Config.failedDescriptionLabel());
     }
 
     _unlabelPreconditionsChecking() {
-        this._labels.cache(Config.passedStagingChecksLabel(), false);
-        this._labels.cache(Config.waitingStagingChecksLabel(), false);
+        this._labels.remove(Config.passedStagingChecksLabel());
+        this._labels.remove(Config.waitingStagingChecksLabel());
     }
 
     _unlabelPreconditionsChecked() {
-        this._labels.cache(Config.failedOtherLabel(), false);
-        this._labels.cache(Config.failedStagingChecksLabel(), false);
-        this._labels.cache(Config.failedDescriptionLabel(), false);
+        this._labels.remove(Config.failedOtherLabel());
+        this._labels.remove(Config.failedStagingChecksLabel());
+        this._labels.remove(Config.failedDescriptionLabel());
     }
 
     _labelWaitingStagingChecks() {
-        this._labels.cache(Config.passedStagingChecksLabel(), false);
-        this._labels.cache(Config.waitingStagingChecksLabel(), true);
+        this._labels.remove(Config.passedStagingChecksLabel());
+        this._labels.add(Config.waitingStagingChecksLabel());
     }
 
     _labelMerged() {
-        this._labels.cache(Config.waitingStagingChecksLabel(), false);
-        this._labels.cache(Config.passedStagingChecksLabel(), false);
-        this._labels.cache(Config.clearedForMergeLabel(), false);
-        this._labels.cache(Config.mergedLabel(), true);
+        this._labels.remove(Config.waitingStagingChecksLabel());
+        this._labels.remove(Config.passedStagingChecksLabel());
+        this._labels.remove(Config.clearedForMergeLabel());
+        this._labels.add(Config.mergedLabel());
     }
 
     _labelFailedOther() {
-        this._labels.cache(Config.waitingStagingChecksLabel(), false);
-        this._labels.cache(Config.passedStagingChecksLabel(), false);
-        this._labels.cache(Config.failedOtherLabel(), true);
+        this._labels.remove(Config.waitingStagingChecksLabel());
+        this._labels.remove(Config.passedStagingChecksLabel());
+        this._labels.add(Config.failedOtherLabel());
     }
 
     _labelCleanStaged() {
-        this._labels.cache(Config.waitingStagingChecksLabel());
-        this._labels.cache(Config.passedStagingChecksLabel());
+        this._labels.remove(Config.waitingStagingChecksLabel());
+        this._labels.remove(Config.passedStagingChecksLabel());
     }
 
     _labelFailedStagingChecks() {
-        this._labels.cache(Config.waitingStagingChecksLabel(), false);
-        this._labels.cache(Config.failedStagingChecksLabel(), true);
+        this._labels.remove(Config.waitingStagingChecksLabel());
+        this._labels.add(Config.failedStagingChecksLabel());
     }
 
     _labelPassedStagingChecks() {
-        this._labels.cache(Config.waitingStagingChecksLabel(), false);
-        this._labels.cache(Config.passedStagingChecksLabel(), true);
+        this._labels.remove(Config.waitingStagingChecksLabel());
+        this._labels.add(Config.passedStagingChecksLabel());
     }
 
     // Getters
@@ -776,7 +803,10 @@ class PullRequest {
     _mergePath() { return "pull/" + this._rawPr.number + "/merge"; }
 
     _debugString() {
-        return "PR" + this._rawPr.number + "(" + this._role + ", " + "head: " + this._rawPr.head.sha.substr(0, this._shaLimit);
+        const detail =
+            "head: " + this._rawPr.head.sha.substr(0, this._shaLimit) + ' ' +
+            "history: " + this._breadcrumbs.join();
+        return "PR" + this._rawPr.number + ` (${detail})`;
     }
 
     _log(msg) {
@@ -963,7 +993,7 @@ class PullRequest {
     }
 
     // checks whether this staged PR can be merged
-    async _checkPostconditions() {
+    async _checkMergePreconditions() {
         this._log("checking postconditions");
 
         if (!(await this._checkActive()))
@@ -972,16 +1002,16 @@ class PullRequest {
         if (!(await this._messageIsFresh()))
             return await this._cleanupStagingFailed();
 
-        const statusChecks = await this._getPrStatuses();
-        if (statusChecks.failed())
-            return await this._cleanupStagingFailed();
-
         if (!this._approval.granted()) {
             this._logFailedCondition("approved");
             return await this._cleanupStagingFailed();
         }
 
         if (this._approval.grantedTimeout())
+            return await this._cleanupStagingFailed();
+
+        const statusChecks = await this._getPrStatuses();
+        if (statusChecks.failed())
             return await this._cleanupStagingFailed();
 
         if (!statusChecks.final())
@@ -1047,13 +1077,16 @@ class PullRequest {
         await GH.updateReference(Config.stagingBranchPath(), this._tagSha, true);
     }
 
-    // returns filled StepResult object
+    // Updates the PR GitHub attributes and stages it
+    // for CI tests, if possible.
     async _stage() {
-        this._role = "stager";
+        await this.update();
+
+        this._breadcrumbs.push("stage");
 
         this._unlabelPreconditionsChecking();
 
-        const conditions = await this._checkPreconditions();
+        const conditions = await this._checkStagingPreconditions();
 
         if (!conditions.succeeded()) {
             if (conditions.delayed())
@@ -1070,12 +1103,15 @@ class PullRequest {
         return StepResult.Succeed();
     }
 
-    // returns filled StepResult object
+    // Updates PR GitHub attributes and merges it into base
+    // in case of successfully passed CI checks.
     async _mergeStaged() {
-        this._role = "merger";
+        await this.update();
+
+        this._breadcrumbs.push("merge");
 
         await this._setApprovalStatus(this._tagSha);
-        let result = await this._checkPostconditions();
+        let result = await this._checkMergePreconditions();
         if (result.succeeded())
             result = await this._mergeToBase();
         assert(!result.delayed());
@@ -1084,15 +1120,14 @@ class PullRequest {
 
     // Maintain Anubis-controlled PR metadata.
     // If possible, also merge or advance the PR towards merging.
-    // The caller is responsible for setting PR labels computed here.
+    // The caller must follow up with _applyLabels()!
     async _doProcess() {
         await this._loadTag();
         await this._loadLabels();
         await this._loadPrState();
-        this._log("PR state calculated: " + this._prState.toString());
+        this._log("PR state: " + this._prState);
 
         if (this._prState.preStaged()) {
-            await this.update();
             const result = await this._stage();
             if (!result.succeeded())
                 return result;
@@ -1100,33 +1135,23 @@ class PullRequest {
         }
 
         if (this._prState.staged()) {
-            await this.update();
             let result = await this._mergeStaged();
             if (!result.succeeded())
                 return result;
-            assert(this._prState.postStaged());
         }
 
-        if (this._prState.postStaged()) {
-            this._role = "finalizer";
-            const result = await this._finalize();
-            if (!result.succeeded())
-                return result;
-        }
-
-        return StepResult.Succeed();
+        assert(this._prState.postStaged());
+        return await this._finalize();
     }
 
     async process() {
-        let result = null;
         try {
-            result = await this._doProcess();
+            const result = await this._doProcess();
+            assert(result);
+            return result;
+        } finally {
             await this._applyLabels();
-        } catch (e) {
-            await this._applyLabels();
-            throw e;
         }
-        return result;
     }
 }
 
