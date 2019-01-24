@@ -283,18 +283,19 @@ class Labels
 
     // brings GitHub labels in sync with ours
     async apply() {
-        let appliedLabels = [];
+        let syncedLabels = [];
         for (let label of this._labels) {
             if (label.needsRemovalFromGitHub()) {
                 await this._removeFromGitHub(label.name);
-                continue;
-            }
+            } else {
+                if (label.needsAdditionToGitHub())
+                    await this._addToGitHub(label.name); // TODO: Optimize to add all labels at once
+                // else still unchanged
 
-            if (label.needsAdditionToGitHub())
-                await this._addToGitHub(label.name); // TODO: Optimize to add all labels at once
-            appliedLabels.push(label);
+                syncedLabels.push(label);
+            }
         }
-        this._labels = appliedLabels;
+        this._labels = syncedLabels;
     }
 
     // The string summary of changed labels (used for debugging).
@@ -689,7 +690,7 @@ class PullRequest {
         assert(this._prState.postStaged());
         this._breadcrumbs.push("finalize");
         if (this._dryRun("finalize"))
-            return StepResult.Suspend();
+            return StepResult.Succeed();
 
         this._labelMerged();
         await this._applyLabels();
