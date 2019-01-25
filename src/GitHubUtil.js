@@ -49,18 +49,18 @@ async function pager(firstPage, appender) {
     return await doPager(firstPage);
 }
 
-function getPRList() {
+function getOpenPrs() {
     const params = commonParams();
     return new Promise( (resolve, reject) => {
         GitHub.authenticate(GitHubAuthentication);
         GitHub.pullRequests.getAll(params, async (err, res) => {
             if (err) {
-                reject(new ErrorContext(err, getPRList.name, params));
+                reject(new ErrorContext(err, getOpenPrs.name, params));
                 return;
             }
             res = await pager(res);
             const result = res.data.length;
-            logApiResult(getPRList.name, params, result);
+            logApiResult(getOpenPrs.name, params, result);
             for (let pr of res.data)
                 pr.anubisProcessor = null;
             resolve(res.data);
@@ -484,7 +484,7 @@ function getUserEmails() {
 }
 
 module.exports = {
-    getPRList: getPRList,
+    getOpenPrs: getOpenPrs,
     getLabels: getLabels,
     getPR: getPR,
     getReviews: getReviews,

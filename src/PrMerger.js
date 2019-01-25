@@ -17,10 +17,10 @@ class PrMerger {
         // for the oldest 'slow burner'
         this.rerunIn = null;
         this._todo = null; // raw PRs to be processed
-        this._tags = null;
+        this._tags = null; // tags pointing to staged commits of _todo PRs
     }
 
-    // returns a string enumerating PR numbers of _todo PRs
+    // a string enumerating PR numbers of _todo PRs
     _prNumbers() {
         const numbers = this._todo.map(pr => pr.number);
         return '[' + numbers.join() + ']';
@@ -31,7 +31,7 @@ class PrMerger {
         return labels.find(lbl => lbl.name === Config.clearedForMergeLabel()) !== undefined;
     }
 
-    /// Establishes correct PRs processing order.
+    // establishes correct PRs processing order
     async _determineProcessingOrder(stagingPr) {
         // temporary add a field used for sorting below
         for (let pr of this._todo)
@@ -59,17 +59,16 @@ class PrMerger {
         Logger.info("PR processing order:", this._prNumbers());
     }
 
-    // Gets PR list from GitHub and processes them one by one.
+    // Gets all PRs from GitHub and processes PRs one by one.
     // Returns if either all PRs have been processed(merged or skipped), or
     // there is a PR still-in-merge.
     async runStep() {
         Logger.info("runStep running");
-        // all repository tags
-        this._tags = await GH.getTags();
-        this._todo = await GH.getPRList();
+
+        this._todo = await GH.getOpenPrs();
         Logger.info("PRs received from GitHub:", this._prNumbers());
 
-        await this._cleanTags();
+        await this._importTags(await GH.getTags()); // needs this._todo
 
         await this._determineProcessingOrder(await this._current());
 
@@ -95,20 +94,22 @@ class PrMerger {
         return false;
     }
 
-    /// removes PR-unrelated tags from the list and deletes PR tags
-    /// from GitHub which do not have corresponding opened PRs
-    async _cleanTags() {
-        assert(this._tags);
+    // forgets PR-unrelated tags and
+    // deletes (from GitHub) PR tags which do not have a corresponding open PR
+    async _cleanTags(rawTags) {
+        assert(rawTags);
 
-        let filteredTags = [];
-        for (let tag of this._tags) {
+        assert(!this._tags);
+        this._tags = [];
+
+        for (let tag of rawTags) {
             let prNum = Util.ParseTag(tag.ref);
             if (prNum === null)
                 continue;
             for (let pr of this._todo) {
                 if (prNum === pr.number.toString()) {
                     prNum = null;
-                    filteredTags.push(tag);
+                    this._tags.push(tag);
                     break;
                 }
             }
@@ -117,7 +118,6 @@ class PrMerger {
                     await GH.deleteReference(Util.StagingTag(prNum));
             }
         }
-        this._tags = filteredTags;
     }
 
     // returns raw PR having staging commit at the tip of the staging branch (or null)
