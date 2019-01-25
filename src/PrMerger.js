@@ -27,17 +27,25 @@ class PrMerger {
 
     /// Establishes correct PRs processing order.
     async _preparePRList(stagingPr) {
+        // temporary add a field used for sorting below
         for (let pr of this._prList)
             pr.clearedForMerge = await this._clearedForMerge(pr.number);
 
         // Processing staged PR Y in its natural PR number order X,Y,Z would result
         // in aborting staging for Y and becoming X staged.
         // Processing non-cleared-for-merge PR X in its natural PR number order X,Y
-        // would make Y waiting for X until it is cleared for merge.
+        // would make Y waiting for X until it becomes cleared for merge.
+        // 'cleared-for-merge' sorting criteria is applied before 'staged' to avoid
+        // getting stuck on a staged PR lacking 'cleared-for-merge' label.
         this._prList.sort((pr1, pr2) => { return (Config.guardedRun() && (pr2.clearedForMerge - pr1.clearedForMerge)) ||
                 (stagingPr && ((pr2.number === stagingPr.number) - (pr1.number === stagingPr.number))) ||
                 pr1.number - pr2.number;
         });
+
+        // remove the temporary field
+        for (let pr of this._prList)
+            delete pr.clearedForMerge;
+
         this._logPRList("PRs selected for processing: ");
     }
 
