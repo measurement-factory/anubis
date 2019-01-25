@@ -71,8 +71,7 @@ class PrMerger {
 
         await this._cleanTags();
 
-        const stagingPr = await this._current();
-        await this._preparePRList(stagingPr);
+        await this._preparePRList(await this._current());
 
         this.total = 0;
         let somePrWasStaged = false;
