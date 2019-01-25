@@ -4,6 +4,7 @@ const Log = require('./Logger.js');
 const GH = require('./GitHubUtil.js');
 const Util = require('./Util.js');
 
+
 // Action outcome, with support for paused and snoozed actions.
 // For example, returned by PullRequest.process() (at higher level) or
 // various checks (at low level).
@@ -55,6 +56,33 @@ class StepResult
     delay() {
         assert(this.delayed());
         return this._delayMs;
+    }
+}
+
+class PrSuspend extends Error {
+    constructor() {
+        super("suspend");
+        this.name = this.constructor.name;
+        this.result = StepResult.Suspend();
+        Error.captureStackTrace(this, this.constructor);
+    }
+}
+
+class PrDelay extends Error {
+    constructor(delayMs) {
+        super("delay");
+        this.name = this.constructor.name;
+        this.result = StepResult.Delay(delayMs);
+        Error.captureStackTrace(this, this.constructor);
+    }
+}
+
+class PrFail extends Error {
+    constructor() {
+        super("fail");
+        this.name = this.constructor.name;
+        this.result = StepResult.Fail();
+        Error.captureStackTrace(this, this.constructor);
     }
 }
 
@@ -371,8 +399,6 @@ class PullRequest {
         this._labels = null;
         this._anotherPrWasStaged = anotherPrWasStaged;
         this._updated = false; // update() has been called
-
-        this.result = null; // the current PR StepResult object
     }
 
     // creates and returns filled Approval object
@@ -615,58 +641,43 @@ class PullRequest {
     async _checkStagingPreconditions() {
         this._log("checking preconditions");
 
-        if (!(await this._checkActive())) {
-            this._fail();
-            return;
-        }
+        if (!(await this._checkActive()))
+            throw new PrFail();
 
         if (!this._prMergeable()) {
             this._logFailedCondition("mergeable");
-            this._fail();
-            return;
+            throw new PrFail();
         }
 
         if (await this._previousStagingFailed()) {
             this._logFailedCondition("lack of fresh staging commit with failed checks");
-            this._fail();
-            return;
+            throw new PrFail();
         }
 
         if (!this._messageValid) {
             this._logFailedCondition("valid commit message");
-            this._fail();
-            return;
+            throw new PrFail();
         }
 
         if (!this._approval.granted()) {
             this._logFailedCondition("approved");
-            this._fail();
-            return;
+            throw new PrFail();
         }
 
         const statusChecks = await this._getPrStatuses();
-        if (statusChecks.failed()) {
-            this._fail();
-            return;
-        }
+        if (statusChecks.failed())
+            throw new PrFail();
 
-        if (this._approval.grantedTimeout()) {
-            this._delay(this._approval.delayMs);
-            return;
-        }
+        if (this._approval.grantedTimeout())
+            throw new PrDelay(this._approval.delayMs);
 
-        if (!statusChecks.final()) {
-            this._suspend();
-            return;
-        }
+        if (!statusChecks.final())
+            throw new PrSuspend();
 
         if (this._anotherPrWasStaged) {
             this._logFailedCondition("no PR is staged");
-            this._fail();
-            return;
+            throw new PrFail();
         }
-
-        this._succeed();
     }
 
     // Refreshes PR GitHub state.
@@ -704,17 +715,14 @@ class PullRequest {
     async _finalize() {
         assert(this._prState.postStaged());
         this._breadcrumbs.push("finalize");
-        if (this._dryRun("finalize")) {
-            this._succeed();
+        if (this._dryRun("finalize"))
             return;
-        }
 
         this._labelMerged();
         await this._applyLabels();
         await GH.updatePR(this._prNumber(), 'closed');
         await GH.deleteReference(this._stagingTag());
         this._log("finalize completed");
-        this._succeed();
     }
 
     _labelFailedDescription() {
@@ -822,14 +830,6 @@ class PullRequest {
 
     staged() { return this._prState.staged(); }
 
-    _succeed() { this.result = StepResult.Succeed(); }
-
-    _suspend() { this.result = StepResult.Suspend(); }
-
-    _fail() { this.result = StepResult.Fail(); }
-
-    _delay(delayMs) { this.result = StepResult.Delay(delayMs); }
-
     _debugString() {
         const detail =
             "head: " + this._rawPr.head.sha.substr(0, this._shaLimit) + ' ' +
@@ -929,11 +929,11 @@ class PullRequest {
         return result;
     }
 
+    // always throws
     async _cleanupFailed(deleteTag, labelsCleanup) {
-        if (this._dryRun("cleanup failed merge")) {
-            this._suspend();
-            return;
-        }
+        if (this._dryRun("cleanup failed merge"))
+            throw new PrSuspend();
+
         this._log("cleanup on failure...");
         if (labelsCleanup === undefined)
             labelsCleanup = this._labelFailedOther;
@@ -941,7 +941,7 @@ class PullRequest {
         labelsCleanup();
         if (deleteTag)
             await GH.deleteReference(this._stagingTag());
-        this._fail();
+        throw new PrFail();
     }
 
     async _cleanupStagingFailed() {
@@ -962,22 +962,18 @@ class PullRequest {
         if (stagingStatus.failed()) {
             this._log("staging checks failed");
             await this._cleanupStagingChecksFailed();
-            return;
         }
         if (!stagingStatus.final()) {
             this._labelWaitingStagingChecks();
             this._log("waiting for more staging checks completing");
-            this._suspend();
-            return;
+            throw new PrSuspend();
         }
         assert(stagingStatus.succeeded());
         this._log("staging checks succeeded");
-        if (this._dryRun("applying required PR statues to staged")) {
-            this._suspend();
-            return;
-        }
+        if (this._dryRun("applying required PR statues to staged"))
+            throw new PrSuspend();
+
         await this._supplyStagingWithPrRequired(stagingStatus);
-        this._succeed();
     }
 
     // Creates PR-required status checks for staged commit (if possible).
@@ -1032,43 +1028,30 @@ class PullRequest {
         if (!(await this._checkActive()))
             await this._cleanupStagingFailed();
 
-        if (!(await this._messageIsFresh())) {
+        if (!(await this._messageIsFresh()))
             await this._cleanupStagingFailed();
-            return;
-        }
 
         if (!this._approval.granted()) {
             this._logFailedCondition("approved");
             await this._cleanupStagingFailed();
-            return;
         }
 
-        if (this._approval.grantedTimeout()) {
+        if (this._approval.grantedTimeout())
             await this._cleanupStagingFailed();
-            return;
-        }
 
         const statusChecks = await this._getPrStatuses();
-        if (statusChecks.failed()) {
+        if (statusChecks.failed())
             await this._cleanupStagingFailed();
-            return;
-        }
 
-        if (!statusChecks.final()) {
-            this._suspend();
-            return;
-        }
+        if (!statusChecks.final())
+            throw new PrSuspend();
 
         await this._processStagingStatuses();
-        if (!this.result.succeeded())
-            return;
 
         if (await this._stagingOnly()) {
             this._labelPassedStagingChecks();
-            this._suspend();
-            return;
+            throw new PrSuspend();
         }
-        this._succeed();
     }
 
     async _mergeToBase() {
@@ -1078,8 +1061,6 @@ class PullRequest {
         try {
             await GH.updateReference(this._prBaseBranchPath(), this._tagSha, false);
             this._prState = PrState.PostStaged();
-            this._succeed();
-            return;
         } catch (e) {
             if (e.name === 'ErrorContext' && e.unprocessable()) {
                 if (await this._tagDiverged()) {
@@ -1133,19 +1114,13 @@ class PullRequest {
 
         await this._checkStagingPreconditions();
 
-        if (!this.result.succeeded())
-            return;
-
         this._unlabelPreconditionsChecked();
-        if (this._dryRun("create staged")) {
-            this._suspend();
-            return;
-        }
+        if (this._dryRun("create staged"))
+            throw new PrSuspend();
+
         await this._createStaged();
         this._prState = PrState.Staged();
         this._labelWaitingStagingChecks();
-        this._succeed();
-        return;
     }
 
     // Updates PR GitHub attributes and merges it into base
@@ -1157,9 +1132,7 @@ class PullRequest {
 
         await this._setApprovalStatus(this._tagSha);
         await this._checkMergePreconditions();
-        if (this.result.succeeded())
-            await this._mergeToBase();
-        assert(!this.result.delayed());
+        await this._mergeToBase();
     }
 
     // Maintain Anubis-controlled PR metadata.
@@ -1173,16 +1146,11 @@ class PullRequest {
 
         if (this._prState.preStaged()) {
             await this._stage();
-            if (!this.result.succeeded())
-                return;
             assert(this._prState.staged());
         }
 
-        if (this._prState.staged()) {
+        if (this._prState.staged())
             await this._mergeStaged();
-            if (!this.result.succeeded())
-                return;
-        }
 
         assert(this._prState.postStaged());
         await this._finalize();
@@ -1191,11 +1159,15 @@ class PullRequest {
     async process() {
         try {
             await this._doProcess();
+            return StepResult.Succeed();
+        } catch (e) {
+            if (e instanceof PrDelay || e instanceof PrFail || e instanceof PrSuspend)
+                return e.result;
+            throw e;
         } finally {
             await this._applyLabels();
         }
     }
-
 }
 
 module.exports = {
