@@ -713,8 +713,10 @@ class PullRequest {
 
     // Cleans up and closes a post-staged PR, removing it from our radar for good.
     async _finalize() {
-        assert(this._prState.postStaged());
         this._breadcrumbs.push("finalize");
+
+        assert(this._prState.postStaged());
+
         if (this._dryRun("finalize"))
             return;
 
@@ -1106,9 +1108,11 @@ class PullRequest {
     // Updates the PR GitHub attributes and stages it
     // for CI tests, if possible.
     async _stage() {
-        await this.update();
-
         this._breadcrumbs.push("stage");
+
+        assert(this._prState.preStaged());
+
+        await this.update();
 
         this._unlabelPreconditionsChecking();
 
@@ -1126,9 +1130,11 @@ class PullRequest {
     // Updates PR GitHub attributes and merges it into base
     // in case of successfully passed CI checks.
     async _mergeStaged() {
-        await this.update();
-
         this._breadcrumbs.push("merge");
+
+        assert(this._prState.staged());
+
+        await this.update();
 
         await this._setApprovalStatus(this._tagSha);
         await this._checkMergePreconditions();
