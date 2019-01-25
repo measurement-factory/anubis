@@ -262,28 +262,26 @@ class Labels
             this._labels.push(new Label(label.name, true, true));
     }
 
-    _modify(name, mustBeSet) {
-        const label = this._labels.find(lbl => lbl.name === name);
-        if (label) {
-            if (mustBeSet)
-                label.markForAddition();
-            else
-                label.markForRemoval();
-        } else {
-            if (!mustBeSet)
-                return;
+    add(name) {
+        const label = this._find(name);
+        if (label)
+            label.markForAddition();
+        else
             this._labels.push(new Label(name, true, false));
-        }
     }
 
-    add(name) { this._modify(name, true); }
+    remove(name) {
+        const label = this._find(name);
+        if (label)
+            label.markForRemoval();
+    }
 
-    remove(name) { this._modify(name, false); }
+    _find(name) { return this._labels.find(lbl => lbl.name === name); }
 
     // whether the label is present (from high-level Anubis code point of view)
     has(name) {
-        const label = this._labels.find(lbl => lbl.name === name);
-        return label && label.on;
+        const label = this._find(name);
+        return label && label.present();
     }
 
     // removes a single label from GitHub
