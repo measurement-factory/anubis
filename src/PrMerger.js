@@ -16,13 +16,13 @@ class PrMerger {
         // stores the the number of milliseconds to be re-run
         // for the oldest 'slow burner'
         this.rerunIn = null;
-        this._prList = null;
+        this._todo = null; // raw PRs to be processed
         this._tags = null;
     }
 
-    // returns a string enumerating PR numbers of _prList PRs
+    // returns a string enumerating PR numbers of _todo PRs
     _prNumbers() {
-        const numbers = this._prList.map(pr => pr.number);
+        const numbers = this._todo.map(pr => pr.number);
         return '[' + numbers.join() + ']';
     }
 
@@ -34,10 +34,10 @@ class PrMerger {
     /// Establishes correct PRs processing order.
     async _determineProcessingOrder(stagingPr) {
         // temporary add a field used for sorting below
-        for (let pr of this._prList)
+        for (let pr of this._todo)
             pr.clearedForMerge = await this._clearedForMerge(pr.number);
 
-        this._prList.sort((pr1, pr2) => {
+        this._todo.sort((pr1, pr2) => {
             // In all of the comments below, PR X' number is less than PR Y's.
             return (
                 // Process cleared-for-merge Y before any uncleared X (even a
@@ -53,7 +53,7 @@ class PrMerger {
         });
 
         // remove the temporary field
-        for (let pr of this._prList)
+        for (let pr of this._todo)
             delete pr.clearedForMerge;
 
         Logger.info("PR processing order:", this._prNumbers());
@@ -66,7 +66,7 @@ class PrMerger {
         Logger.info("runStep running");
         // all repository tags
         this._tags = await GH.getTags();
-        this._prList = await GH.getPRList();
+        this._todo = await GH.getPRList();
         Logger.info("PRs received from GitHub:", this._prNumbers());
 
         await this._cleanTags();
@@ -75,9 +75,9 @@ class PrMerger {
 
         this.total = 0;
         let somePrWasStaged = false;
-        while (this._prList.length) {
+        while (this._todo.length) {
             try {
-                const rawPr = this._prList.shift();
+                const rawPr = this._todo.shift();
                 this.total++;
                 let pr = new PullRequest(rawPr, somePrWasStaged);
                 const result = await pr.process();
@@ -86,7 +86,7 @@ class PrMerger {
                     this.rerunIn = result.delay();
             } catch (e) {
                 this.errors++;
-                if (this._prList.length)
+                if (this._todo.length)
                     Log.LogError(e, "PrMerger.runStep");
                 else
                     throw e;
@@ -105,7 +105,7 @@ class PrMerger {
             let prNum = Util.ParseTag(tag.ref);
             if (prNum === null)
                 continue;
-            for (let pr of this._prList) {
+            for (let pr of this._todo) {
                 if (prNum === pr.number.toString()) {
                     prNum = null;
                     filteredTags.push(tag);
