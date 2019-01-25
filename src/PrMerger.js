@@ -31,15 +31,19 @@ class PrMerger {
         for (let pr of this._prList)
             pr.clearedForMerge = await this._clearedForMerge(pr.number);
 
-        // Processing staged PR Y in its natural PR number order X,Y,Z would result
-        // in aborting staging for Y and becoming X staged.
-        // Processing non-cleared-for-merge PR X in its natural PR number order X,Y
-        // would make Y waiting for X until it becomes cleared for merge.
-        // 'cleared-for-merge' sorting criteria is applied before 'staged' to avoid
-        // getting stuck on a staged PR lacking 'cleared-for-merge' label.
-        this._prList.sort((pr1, pr2) => { return (Config.guardedRun() && (pr2.clearedForMerge - pr1.clearedForMerge)) ||
+        this._prList.sort((pr1, pr2) => {
+            // In all of the comments below, PR X' number is less than PR Y's.
+            return (
+                // Process cleared-for-merge Y before any uncleared X (even a
+                // staged X!) to be able to merge Y without X getting cleared.
+                (Config.guardedRun() && (pr2.clearedForMerge - pr1.clearedForMerge)) ||
+                // Process staged Y before unstaged X to keep testing commit Y
+                // when X suddenly becomes stage-able.
                 (stagingPr && ((pr2.number === stagingPr.number) - (pr1.number === stagingPr.number))) ||
-                pr1.number - pr2.number;
+                // Merge in ascending PR number order because that is what
+                // most humans find natural and can easily rely on.
+                (pr1.number - pr2.number)
+            );
         });
 
         // remove the temporary field
