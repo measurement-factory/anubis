@@ -721,7 +721,6 @@ class PullRequest {
             return;
 
         this._labelMerged();
-        await this._applyLabels();
         await GH.updatePR(this._prNumber(), 'closed');
         await GH.deleteReference(this._stagingTag());
         this._log("finalize completed");
