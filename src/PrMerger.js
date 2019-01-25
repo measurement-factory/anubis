@@ -32,7 +32,7 @@ class PrMerger {
     }
 
     /// Establishes correct PRs processing order.
-    async _preparePRList(stagingPr) {
+    async _determineProcessingOrder(stagingPr) {
         // temporary add a field used for sorting below
         for (let pr of this._prList)
             pr.clearedForMerge = await this._clearedForMerge(pr.number);
@@ -71,7 +71,7 @@ class PrMerger {
 
         await this._cleanTags();
 
-        await this._preparePRList(await this._current());
+        await this._determineProcessingOrder(await this._current());
 
         this.total = 0;
         let somePrWasStaged = false;
