@@ -803,6 +803,8 @@ class PullRequest {
 
     _mergePath() { return "pull/" + this._rawPr.number + "/merge"; }
 
+    staged() { return this._prState.staged(); }
+
     _debugString() {
         const detail =
             "head: " + this._rawPr.head.sha.substr(0, this._shaLimit) + ' ' +
@@ -1089,12 +1091,9 @@ class PullRequest {
 
         const conditions = await this._checkStagingPreconditions();
 
-        if (!conditions.succeeded()) {
-            if (conditions.delayed())
-                return conditions;
-            // for failed() or suspended()
-            return StepResult.Fail();
-        }
+        if (!conditions.succeeded())
+            return conditions;
+
         this._unlabelPreconditionsChecked();
         if (this._dryRun("create staged"))
             return StepResult.Suspend();

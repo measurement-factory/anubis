@@ -68,14 +68,14 @@ class PrMerger {
         await this._preparePRList(stagingPr);
 
         this.total = 0;
-        let suspendedEarlier = false;
+        let somePrWasStaged = false;
         while (this._prList.length) {
             try {
                 const rawPr = this._prList.shift();
                 this.total++;
-                let pr = new PullRequest(rawPr, suspendedEarlier);
+                let pr = new PullRequest(rawPr, somePrWasStaged);
                 const result = await pr.process();
-                suspendedEarlier = suspendedEarlier || result.suspended();
+                somePrWasStaged = somePrWasStaged || pr.staged();
                 if (result.delayed() && (this.rerunIn === null || this.rerunIn > result.delay()))
                     this.rerunIn = result.delay();
             } catch (e) {
