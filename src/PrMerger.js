@@ -20,6 +20,12 @@ class PrMerger {
         this._tags = null;
     }
 
+    // returns a string enumerating PR numbers of _prList PRs
+    _prNumbers() {
+        const numbers = this._prList.map(pr => pr.number);
+        return '[' + numbers.join() + ']';
+    }
+
     async _clearedForMerge(prNum) {
         const labels = await GH.getLabels(prNum);
         return labels.find(lbl => lbl.name === Config.clearedForMergeLabel()) !== undefined;
@@ -50,18 +56,7 @@ class PrMerger {
         for (let pr of this._prList)
             delete pr.clearedForMerge;
 
-        this._logPRList("PRs selected for processing: ");
-    }
-
-    _logPRList(description) {
-        let prStr = description;
-        if (this._prList.length === 0)
-            prStr += "empty list";
-        else {
-            for (let pr of this._prList)
-                prStr += pr.number + " ";
-        }
-        Logger.info(prStr);
+        Logger.info("PR processing order:", this._prNumbers());
     }
 
     // Gets PR list from GitHub and processes them one by one.
@@ -72,7 +67,7 @@ class PrMerger {
         // all repository tags
         this._tags = await GH.getTags();
         this._prList = await GH.getPRList();
-        this._logPRList("PRs received from GitHub: ");
+        Logger.info("PRs received from GitHub:", this._prNumbers());
 
         await this._cleanTags();
 
