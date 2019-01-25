@@ -837,11 +837,11 @@ class PullRequest {
     }
 
     _log(msg) {
-        Log.Logger.info(this._debugString() + "):", msg);
+        Log.Logger.info(this._debugString(), msg);
     }
 
     _warn(msg) {
-        Log.Logger.warn(this._debugString() + "):", msg);
+        Log.Logger.warn(this._debugString(), msg);
     }
 
     _logFailedCondition(cond) {
@@ -1142,6 +1142,7 @@ class PullRequest {
     // If possible, also merge or advance the PR towards merging.
     // The caller must follow up with _applyLabels()!
     async _doProcess() {
+        this._breadcrumbs.push("load");
         await this._loadTag();
         await this._loadLabels();
         await this._loadPrState();
