@@ -616,7 +616,7 @@ class PullRequest {
     }
 
     // Refreshes PR metadata.
-    // Returns whether this PR is still open and still wants to be merged.
+    // Checks whether this PR is still open and still wants to be merged.
     // Is used for both merging and staging actions.
     // Do not use for post-staged.
     async _checkActive() {
@@ -624,28 +624,25 @@ class PullRequest {
 
         if (!this._prOpen()) {
             this._logFailedCondition("opened");
-            return false;
+            throw new PrFail();
         }
 
         if (this._labels.has(Config.mergedLabel(), this._prNumber())) {
             this._logFailedCondition("already marked with " + Config.mergedLabel);
-            return false;
+            throw new PrFail();
         }
 
         if (this._wipPr()) {
             this._logFailedCondition("work-in-progress");
-            return false;
+            throw new PrFail();
         }
-
-        return true;
     }
 
     // whether the PR should be staged (including re-staged)
     async _checkStagingPreconditions() {
         this._log("checking preconditions");
 
-        if (!(await this._checkActive()))
-            throw new PrFail();
+        await this._checkActive();
 
         if (!this._prMergeable()) {
             this._logFailedCondition("mergeable");
@@ -1026,8 +1023,11 @@ class PullRequest {
     async _checkMergePreconditions() {
         this._log("checking postconditions");
 
-        if (!(await this._checkActive()))
+        try {
+            await this._checkActive();
+        } catch (ex /* XXX: unused */) {
             await this._cleanupStagingFailed();
+        }
 
         if (!(await this._messageIsFresh()))
             await this._cleanupStagingFailed();
