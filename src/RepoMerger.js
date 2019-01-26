@@ -3,7 +3,7 @@ const http = require('http');
 const Config = require('./Config.js');
 const Log = require('./Logger.js');
 const Util = require('./Util.js');
-const PrMerger = require('./PrMerger.js');
+const Step = require('./PrMerger.js');
 
 const Logger = Log.Logger;
 
@@ -60,13 +60,11 @@ class RepoMerger {
         this._running = true;
         let rerunIn = null;
         do {
-            let prMerger = null;
             try {
                 this._rerun = false;
                 if (!this._server)
                     await this._createServer();
-                prMerger = new PrMerger();
-                rerunIn = await prMerger.runStep();
+                rerunIn = await Step();
             } catch (e) {
                 Log.LogError(e, "RepoMerger.run");
                 this._rerun = true;

@@ -7,7 +7,8 @@ const Util = require('./Util.js');
 const MergeContext = require('./MergeContext.js');
 const PullRequest = MergeContext.PullRequest;
 
-// Gets PR list from GitHub and processes some/all PRs from this list.
+// A single Anubis processing step:
+// Updates and, to the extent possible, advances each open PR. Once.
 class PrMerger {
 
     constructor() {
@@ -56,9 +57,9 @@ class PrMerger {
         Logger.info("PR processing order:", this._prNumbers());
     }
 
-    // Gets open PRs from GitHub and processes them one by one.
+    // Implements a single Anubis processing step.
     // Returns suggested wait time until the next step (in milliseconds).
-    async runStep() {
+    async execute() {
         Logger.info("runStep running");
 
         this._todo = await GH.getOpenPrs();
@@ -139,5 +140,13 @@ class PrMerger {
     }
 } // PrMerger
 
-module.exports = PrMerger;
+// PrMerger's create and execute() wrapper.
+async function Step() {
+    let mergerer = new PrMerger();
+    return mergerer.execute();
+}
+
+module.exports = {
+    Step: Step,
+};
 
