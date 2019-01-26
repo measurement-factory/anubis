@@ -275,8 +275,6 @@ class Labels
             label.markForRemoval();
     }
 
-    _find(name) { return this._labels.find(lbl => lbl.name === name); }
-
     // whether the label is present (from high-level Anubis code point of view)
     has(name) {
         const label = this._find(name);
@@ -336,6 +334,8 @@ class Labels
         }
         return '[' + str + ']';
     }
+
+    _find(name) { return this._labels.find(label => label.name === name); }
 }
 
 // A state of a pull request (with regard to merging progress). One of:
