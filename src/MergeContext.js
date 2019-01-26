@@ -281,29 +281,6 @@ class Labels
         return label && label.present();
     }
 
-    // removes a single label from GitHub
-    async _removeFromGitHub(name) {
-        try {
-            await GH.removeLabel(name, this._prNum);
-        } catch (e) {
-            if (e.name === 'ErrorContext' && e.notFound()) {
-                Log.LogException(e, "_removeFromGitHub: " + name + " not found");
-                return;
-            }
-            throw e;
-        }
-    }
-
-    // adds a single label to GitHub
-    async _addToGitHub(name) {
-        let params = Util.commonParams();
-        params.number = this._prNum;
-        params.labels = [];
-        params.labels.push(name);
-
-        await GH.addLabels(params);
-    }
-
     // brings GitHub labels in sync with ours
     async pushToGitHub() {
         let syncedLabels = [];
@@ -333,6 +310,29 @@ class Labels
             }
         }
         return '[' + str + ']';
+    }
+
+    // removes a single label from GitHub
+    async _removeFromGitHub(name) {
+        try {
+            await GH.removeLabel(name, this._prNum);
+        } catch (e) {
+            if (e.name === 'ErrorContext' && e.notFound()) {
+                Log.LogException(e, "_removeFromGitHub: " + name + " not found");
+                return;
+            }
+            throw e;
+        }
+    }
+
+    // adds a single label to GitHub
+    async _addToGitHub(name) {
+        let params = Util.commonParams();
+        params.number = this._prNum;
+        params.labels = [];
+        params.labels.push(name);
+
+        await GH.addLabels(params);
     }
 
     _find(name) { return this._labels.find(label => label.name === name); }
