@@ -81,13 +81,13 @@ class PrMerger {
                 if (result.delayed() && (this.rerunIn === null || this.rerunIn > result.delay()))
                     this.rerunIn = result.delay();
             } catch (e) {
+                Log.LogError(e, "PrMerger.runStep");
                 this.errors++;
-                if (this._todo.length)
-                    Log.LogError(e, "PrMerger.runStep");
-                else
-                    throw e;
             }
         }
+
+        if (this.errors)
+            throw new Error(`failed to process ${this.errors} PR(s).`);
     }
 
     // forgets PR-unrelated tags and
