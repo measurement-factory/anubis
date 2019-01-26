@@ -11,8 +11,8 @@ const PullRequest = MergeContext.PullRequest;
 class PrMerger {
 
     constructor() {
-        this.total = 0;
-        this.errors = 0;
+        this._total = 0; // the number of open PRs received from GitHub
+        this._errors = 0; // the number of PRs with processing failures
         // stores the the number of milliseconds to be re-run
         // for the oldest 'slow burner'
         this.rerunIn = null;
@@ -64,7 +64,8 @@ class PrMerger {
         Logger.info("runStep running");
 
         this._todo = await GH.getOpenPrs();
-        Logger.info("PRs received from GitHub:", this._prNumbers());
+        this._total = this._todo.length;
+        Logger.info("Received ${this._total} PRs from GitHub:", this._prNumbers());
 
         await this._importTags(await GH.getTags()); // needs this._todo
 
@@ -74,7 +75,6 @@ class PrMerger {
         while (this._todo.length) {
             try {
                 const rawPr = this._todo.shift();
-                this.total++;
                 let pr = new PullRequest(rawPr, somePrWasStaged);
                 const result = await pr.process();
                 somePrWasStaged = somePrWasStaged || pr.staged();
@@ -82,12 +82,12 @@ class PrMerger {
                     this.rerunIn = result.delay();
             } catch (e) {
                 Log.LogError(e, "PrMerger.runStep");
-                this.errors++;
+                this._errors++;
             }
         }
 
-        if (this.errors)
-            throw new Error(`failed to process ${this.errors} PR(s).`);
+        if (this._errors)
+            throw new Error(`Failed to process ${this._errors} out of ${this._total} PRs.`);
     }
 
     // forgets PR-unrelated tags and
@@ -136,7 +136,7 @@ class PrMerger {
     }
 
     logStatistics() {
-        Logger.info("Merge step finished. Total PRs processed: " + this.total + ", skipped due to errors: " + this.errors);
+        Logger.info("Handled " + this._total + " PRs. Errors: " + this._errors);
     }
 } // PrMerger
 
