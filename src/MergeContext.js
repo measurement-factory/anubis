@@ -231,10 +231,11 @@ class StatusChecks
 // pull request label (e.g., M-cleared-for-merge)
 class Label
 {
-    constructor(name, presentHere, presentOnGitHub) {
+    constructor(name, presentOnGitHub) {
+        assert(arguments.length === 2);
         this.name = name;
         // we keep some unset labels to delay their removal from GitHub
-        this._presentHere = presentHere; // set from Anubis high-level code point of view
+        this._presentHere = true; // set from Anubis high-level code point of view
         this._presentOnGitHub = presentOnGitHub; // set from GitHub point of view
     }
     // whether the label should be considered "set" from Anubis high-level code point of view
@@ -257,9 +258,7 @@ class Labels
     // the labels parameter is the label array received from GitHub
     constructor(labels, prNum) {
         this._prNum = prNum;
-        this._labels = [];
-        for (let label of labels)
-            this._labels.push(new Label(label.name, true, true));
+        this._labels = labels.map(label => new Label(label.name, true));
     }
 
     add(name) {
@@ -267,7 +266,7 @@ class Labels
         if (label)
             label.markForAddition();
         else
-            this._labels.push(new Label(name, true, false));
+            this._labels.push(new Label(name, false));
     }
 
     remove(name) {
