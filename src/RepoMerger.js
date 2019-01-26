@@ -63,13 +63,10 @@ class RepoMerger {
             let prMerger = null;
             try {
                 this._rerun = false;
-                rerunIn = null;
                 if (!this._server)
                     await this._createServer();
                 prMerger = new PrMerger();
-                await prMerger.runStep();
-                if (prMerger.rerunIn !== null)
-                    rerunIn = prMerger.rerunIn;
+                rerunIn = await prMerger.runStep();
             } catch (e) {
                 Log.LogError(e, "RepoMerger.run");
                 this._rerun = true;

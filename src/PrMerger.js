@@ -13,9 +13,6 @@ class PrMerger {
     constructor() {
         this._total = 0; // the number of open PRs received from GitHub
         this._errors = 0; // the number of PRs with processing failures
-        // stores the the number of milliseconds to be re-run
-        // for the oldest 'slow burner'
-        this.rerunIn = null;
         this._todo = null; // raw PRs to be processed
         this._tags = null; // tags pointing to staged commits of _todo PRs
     }
@@ -59,7 +56,8 @@ class PrMerger {
         Logger.info("PR processing order:", this._prNumbers());
     }
 
-    // gets open PRs from GitHub and processes them one by one
+    // Gets open PRs from GitHub and processes them one by one.
+    // Returns suggested wait time until the next step (in milliseconds).
     async runStep() {
         Logger.info("runStep running");
 
@@ -71,6 +69,8 @@ class PrMerger {
 
         await this._determineProcessingOrder(await this._current());
 
+        let minDelay = null;
+
         let somePrWasStaged = false;
         while (this._todo.length) {
             try {
@@ -78,8 +78,8 @@ class PrMerger {
                 let pr = new PullRequest(rawPr, somePrWasStaged);
                 const result = await pr.process();
                 somePrWasStaged = somePrWasStaged || pr.staged();
-                if (result.delayed() && (this.rerunIn === null || this.rerunIn > result.delay()))
-                    this.rerunIn = result.delay();
+                if (result.delayed() && (minDelay === null || minDelay > result.delay()))
+                    minDelay = result.delay();
             } catch (e) {
                 Log.LogError(e, "PrMerger.runStep");
                 this._errors++;
@@ -90,6 +90,7 @@ class PrMerger {
             throw new Error(`Failed to process ${this._errors} out of ${this._total} PRs.`);
 
         Logger.info("Successfully processed all " + this._total + " PRs.");
+        return minDelay;
     }
 
     // forgets PR-unrelated tags and
