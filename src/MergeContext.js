@@ -152,7 +152,7 @@ class StatusCheck
     }
 }
 
-// aggregates (required) status checks for a PR or commit
+// aggregates status checks for a PR or commit
 class StatusChecks
 {
     // expectedStatusCount:
@@ -367,14 +367,16 @@ class PrState
     }
 }
 
+// a single GitHub pull request
 class PullRequest {
 
     constructor(pr, anotherPrWasStaged) {
-        // may lack pr.mergeable, see _refreshPr()
-        this._rawPr = pr;
-        this._shaLimit = 6;
-        // information used for approval test status creation/updating
-        this._approval = null;
+
+        this._rawPr = pr; // may lack pr.mergeable, see _refreshPr()
+
+        this._shaLimit = 6; // how many SHA chars to show in debug messages
+
+        this._approval = null; // future Approval object
 
         // optimization: cached _getRequiredContexts() result
         this._requiredContextsCache = null;
@@ -562,11 +564,13 @@ class PullRequest {
         return result;
     }
 
-    // Tries to load 'staging tag' (and related information) for the PR.
+    // loads info about "staging tag" (if any); M-staged-PRnnn tag is a
+    // PR-specific git tag pointing to the previously created staged commit
     async _loadTag() {
+       if (this._tagSha)
+           return;
+
        try {
-           if (this._tagSha)
-               return;
            this._tagSha = await GH.getReference(this._stagingTag());
            if (this._tagSha) {
                this._compareStatus = await GH.compareCommits(this._prBaseBranch(), this._stagingTag());
@@ -587,26 +591,28 @@ class PullRequest {
         this._labels = new Labels(labels, this._prNumber());
     }
 
-    // Checks 'staging tag' state as merge precondition.
-    // Returns true if there is a fresh merge commit with failed status checks.
-    async _previousStagingFailed() {
+    // Whether there is a fresh staged commit with failed status checks.
+    // Side effect: removes stale staging tag (TODO: Why?)
+    // Side effect: removes fresh staging tag if tests have not failed (XXX: Why?)
+    async _stagedCommitFailedTests() {
         await this._loadTag();
         if (!this._tagSha)
-            return false;
+            return false; // no staged commit
 
         if (this._tagFresh) {
             const commitStatus = await this._getStagingStatuses();
             this._log("staging status details: " + commitStatus);
             if (commitStatus.failed()) {
                 this._log("staging checks failed some time ago");
-                if (this._prMergeable() !== true)
+                if (!this._prMergeable())
                     this._log("merge commit did not change due to conflicts with " + this._prBaseBranch());
-                return true;
+                return true; // fresh staged commit with failed status checks
             }
+            // fresh staged commit with successful (or ongoing) status checks
         }
-        if (!this._dryRun("deleting staging commit"))
+        if (!this._dryRun("deleting staging tag"))
             await GH.deleteReference(this._stagingTag());
-        return false;
+        return false; // stale staged commit or fresh one with successful (or ongoing) status checks
     }
 
     // Refreshes PR metadata.
@@ -646,8 +652,8 @@ class PullRequest {
             throw new PrFail();
         }
 
-        if (await this._previousStagingFailed()) {
-            this._logFailedCondition("lack of fresh staging commit with failed checks");
+        if (await this._stagedCommitFailedTests()) {
+            this._logFailedCondition("(re-)testing may succeed");
             throw new PrFail();
         }
 
