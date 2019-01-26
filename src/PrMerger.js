@@ -70,7 +70,6 @@ class PrMerger {
 
         await this._determineProcessingOrder(await this._current());
 
-        this.total = 0;
         let somePrWasStaged = false;
         while (this._todo.length) {
             try {
