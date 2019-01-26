@@ -79,9 +79,6 @@ class RepoMerger {
                 const period = 10; // 10 min
                 Logger.info("next re-try in " + period + " minutes.");
                 await Util.sleep(period * 60 * 1000); // 10 min
-            } finally {
-                if (prMerger)
-                    prMerger.logStatistics();
             }
         } while (this._rerun);
         if (rerunIn)

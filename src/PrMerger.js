@@ -88,6 +88,8 @@ class PrMerger {
 
         if (this._errors)
             throw new Error(`Failed to process ${this._errors} out of ${this._total} PRs.`);
+
+        Logger.info("Successfully processed all " + this._total + " PRs.");
     }
 
     // forgets PR-unrelated tags and
@@ -133,10 +135,6 @@ class PrMerger {
         const stagingPr = await GH.getPR(prNum, false);
         assert(stagingPr.state === "open");
         return stagingPr;
-    }
-
-    logStatistics() {
-        Logger.info("Handled " + this._total + " PRs. Errors: " + this._errors);
     }
 } // PrMerger
 
