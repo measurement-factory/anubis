@@ -305,7 +305,7 @@ class Labels
     }
 
     // brings GitHub labels in sync with ours
-    async apply() {
+    async pushToGitHub() {
         let syncedLabels = [];
         for (let label of this._labels) {
             if (label.needsRemovalFromGitHub()) {
@@ -321,7 +321,7 @@ class Labels
         this._labels = syncedLabels;
     }
 
-    // The string summary of changed labels (used for debugging).
+    // a summary of changed labels (used for debugging)
     diff() {
         let str = "";
         for (let label of this._labels) {
@@ -696,16 +696,13 @@ class PullRequest {
         this._updated = true;
     }
 
-    // Label manipulation methods
-
-    // applies the cached label state to GitHub
-    async _applyLabels() {
-        if (this._dryRun("apply labels"))
-            return;
-
-        this._log("applying label changes:", this._labels.diff());
-        if (this._labels)
-            await this._labels.apply();
+    // brings GitHub labels in sync with ours
+    async _pushLabelsToGitHub() {
+        if (this._labels) {
+            this._log("pushing changed labels:", this._labels.diff());
+            if (!this._dryRun("pushing labels"))
+                await this._labels.pushToGitHub();
+        }
     }
 
     // Cleans up and closes a post-staged PR, removing it from our radar for good.
@@ -1139,7 +1136,7 @@ class PullRequest {
 
     // Maintain Anubis-controlled PR metadata.
     // If possible, also merge or advance the PR towards merging.
-    // The caller must follow up with _applyLabels()!
+    // The caller must follow up with _pushLabelsToGitHub()!
     async _doProcess() {
         this._breadcrumbs.push("load");
         await this._loadTag();
@@ -1168,7 +1165,7 @@ class PullRequest {
                 return e.result;
             throw e;
         } finally {
-            await this._applyLabels();
+            await this._pushLabelsToGitHub();
         }
     }
 }
