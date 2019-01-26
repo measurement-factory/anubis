@@ -18,6 +18,43 @@ class PrMerger {
         this._tags = null; // tags pointing to staged commits of _todo PRs
     }
 
+    // Implements a single Anubis processing step.
+    // Returns suggested wait time until the next step (in milliseconds).
+    async execute() {
+        Logger.info("runStep running");
+
+        this._todo = await GH.getOpenPrs();
+        this._total = this._todo.length;
+        Logger.info("Received ${this._total} PRs from GitHub:", this._prNumbers());
+
+        await this._importTags(await GH.getTags()); // needs this._todo
+
+        await this._determineProcessingOrder(await this._current());
+
+        let minDelay = null;
+
+        let somePrWasStaged = false;
+        while (this._todo.length) {
+            try {
+                const rawPr = this._todo.shift();
+                let pr = new PullRequest(rawPr, somePrWasStaged);
+                const result = await pr.process();
+                somePrWasStaged = somePrWasStaged || pr.staged();
+                if (result.delayed() && (minDelay === null || minDelay > result.delay()))
+                    minDelay = result.delay();
+            } catch (e) {
+                Log.LogError(e, "PrMerger.runStep");
+                this._errors++;
+            }
+        }
+
+        if (this._errors)
+            throw new Error(`Failed to process ${this._errors} out of ${this._total} PRs.`);
+
+        Logger.info("Successfully processed all " + this._total + " PRs.");
+        return minDelay;
+    }
+
     // a string enumerating PR numbers of _todo PRs
     _prNumbers() {
         const numbers = this._todo.map(pr => pr.number);
@@ -55,43 +92,6 @@ class PrMerger {
             delete pr.clearedForMerge;
 
         Logger.info("PR processing order:", this._prNumbers());
-    }
-
-    // Implements a single Anubis processing step.
-    // Returns suggested wait time until the next step (in milliseconds).
-    async execute() {
-        Logger.info("runStep running");
-
-        this._todo = await GH.getOpenPrs();
-        this._total = this._todo.length;
-        Logger.info("Received ${this._total} PRs from GitHub:", this._prNumbers());
-
-        await this._importTags(await GH.getTags()); // needs this._todo
-
-        await this._determineProcessingOrder(await this._current());
-
-        let minDelay = null;
-
-        let somePrWasStaged = false;
-        while (this._todo.length) {
-            try {
-                const rawPr = this._todo.shift();
-                let pr = new PullRequest(rawPr, somePrWasStaged);
-                const result = await pr.process();
-                somePrWasStaged = somePrWasStaged || pr.staged();
-                if (result.delayed() && (minDelay === null || minDelay > result.delay()))
-                    minDelay = result.delay();
-            } catch (e) {
-                Log.LogError(e, "PrMerger.runStep");
-                this._errors++;
-            }
-        }
-
-        if (this._errors)
-            throw new Error(`Failed to process ${this._errors} out of ${this._total} PRs.`);
-
-        Logger.info("Successfully processed all " + this._total + " PRs.");
-        return minDelay;
     }
 
     // forgets PR-unrelated tags and
