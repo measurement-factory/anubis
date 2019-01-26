@@ -59,9 +59,7 @@ class PrMerger {
         Logger.info("PR processing order:", this._prNumbers());
     }
 
-    // Gets all PRs from GitHub and processes PRs one by one.
-    // Returns if either all PRs have been processed(merged or skipped), or
-    // there is a PR still-in-merge.
+    // gets open PRs from GitHub and processes them one by one
     async runStep() {
         Logger.info("runStep running");
 
@@ -91,7 +89,6 @@ class PrMerger {
                     throw e;
             }
         }
-        return false;
     }
 
     // forgets PR-unrelated tags and
