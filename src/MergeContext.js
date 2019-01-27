@@ -997,7 +997,7 @@ class PullRequest {
     }
 
     // whether target branch changes are prohibited
-    async _stagingOnly() {
+    _stagingOnly() {
         // TODO: The caller should not have to remember to call _dryRun() first
         assert(!this._dryRun("_stagingOnly"));
         const msg = "merge staged";
@@ -1049,7 +1049,7 @@ class PullRequest {
 
         await this._processStagingStatuses();
 
-        if (await this._stagingOnly()) {
+        if (this._stagingOnly()) {
             this._labelPassedStagingChecks();
             throw new PrSuspend();
         }
