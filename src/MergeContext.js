@@ -1097,6 +1097,10 @@ class PullRequest {
             await this._acquireUserProperties();
         let now = new Date();
         const committer = {name: Config.githubUserName(), email: Config.githubUserEmail(), date: now.toISOString()};
+
+        if (this._dryRun("create staged"))
+            throw new PrSuspend();
+
         const tempCommitSha = await GH.createCommit(mergeCommit.tree.sha, this._prMessage(), [baseSha], mergeCommit.author, committer);
         this._tagSha = await GH.createReference(tempCommitSha, "refs/" + this._stagingTag());
         this._compareStatus = "ahead";
@@ -1118,8 +1122,6 @@ class PullRequest {
         await this._checkStagingPreconditions();
 
         this._unlabelPreconditionsChecked();
-        if (this._dryRun("create staged"))
-            throw new PrSuspend();
 
         await this._createStaged();
         this._prState = PrState.Staged();
