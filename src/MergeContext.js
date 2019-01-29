@@ -708,6 +708,8 @@ class PullRequest {
         this._approval = await this._checkApproval();
         this._log("checkApproval: " + this._approval);
         await this._setApprovalStatus(this._prHeadSha());
+        if (this._tagSha !== null)
+            await this._setApprovalStatus(this._tagSha);
 
         this._updated = true;
     }
@@ -1057,7 +1059,6 @@ class PullRequest {
         const tempCommitSha = await GH.createCommit(mergeCommit.tree.sha, this._prMessage(), [baseSha], mergeCommit.author, committer);
         this._tagSha = await GH.createReference(tempCommitSha, "refs/" + this._stagingTag());
         this._compareStatus = "ahead";
-        await this._setApprovalStatus(this._tagSha);
         await GH.updateReference(Config.stagingBranchPath(), this._tagSha, true);
     }
 
@@ -1088,7 +1089,6 @@ class PullRequest {
         this._removeTemporaryLabelsSetByAnubis();
 
         await this.update();
-        await this._setApprovalStatus(this._tagSha);
         await this._checkMergePreconditions();
         await this._mergeToBase();
     }
