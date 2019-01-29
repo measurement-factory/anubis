@@ -496,9 +496,6 @@ class PullRequest {
     async _setApprovalStatus(sha) {
         assert(sha);
 
-        // TODO: Move lower
-        if (this._dryRun("setting approval status"))
-            return;
         if (!Config.manageApprovalStatus())
             return;
 
@@ -510,6 +507,10 @@ class PullRequest {
             this._log("Approval status already exists: " + Config.approvalContext() + ", " + this._approval);
             return;
         }
+
+        if (this._dryRun("setting approval status"))
+            return;
+
         await GH.createStatus(sha, this._approval.state, Config.approvalUrl(), this._approval.description, Config.approvalContext());
     }
 
@@ -738,12 +739,11 @@ class PullRequest {
         this._labels.remove(Config.clearedForMergeLabel());
         this._labels.add(Config.mergedLabel());
 
-        // TODO: Throw _exSuspend() here, for consistency sake
-        if (this._dryRun("finalize"))
-            return;
+        if (!this._dryRun("closing PR")) {
+            await GH.updatePR(this._prNumber(), 'closed');
+            await GH.deleteReference(this._stagingTag());
+        }
 
-        await GH.updatePR(this._prNumber(), 'closed');
-        await GH.deleteReference(this._stagingTag());
         this._log("finalize completed");
     }
 
@@ -910,9 +910,6 @@ class PullRequest {
 
         assert(stagingStatus.succeeded());
         this._log("staging checks succeeded");
-        // TODO: Spellcheck and move into _supplyStagingWithPrRequired().
-        if (this._dryRun("applying required PR statues to staged"))
-            throw this._exSuspend("dryRun");
 
         await this._supplyStagingWithPrRequired(stagingStatus);
     }
@@ -934,6 +931,10 @@ class PullRequest {
             const requiredPrStatus = prStatuses.requiredStatuses.find(el => el.context.trim() === requiredContext.trim());
             assert(requiredPrStatus);
             assert(!requiredPrStatus.description.endsWith(Config.copiedDescriptionSuffix()));
+
+            if (this._dryRun("applying required PR statuses to staged"))
+                continue;
+
             await GH.createStatus(this._tagSha, "success", requiredPrStatus.targetUrl,
                     requiredPrStatus.description + Config.copiedDescriptionSuffix(), requiredPrStatus.context);
         }
@@ -997,18 +998,22 @@ class PullRequest {
         assert(statusChecks.succeeded());
 
         await this._processStagingStatuses();
-
-        if (this._stagingOnly()) {
-            // TODO: Consider adding this label unconditionally.
-            this._labels.add(Config.passedStagingChecksLabel());
-            throw this._exSuspend("waiting for staging-only mode to end");
-        }
     }
 
     async _mergeToBase() {
         assert(this._tagSha);
         assert(this._compareStatus === "ahead");
         this._log("merging to base...");
+
+        if (this._dryRun("merging to base"))
+            throw this._exSuspend("dryRun");
+
+        if (this._stagingOnly()) {
+            // TODO: Consider adding this label unconditionally.
+            this._labels.add(Config.passedStagingChecksLabel());
+            throw this._exSuspend("waiting for staging-only mode to end");
+        }
+
         try {
             await GH.updateReference(this._prBaseBranchPath(), this._tagSha, false);
             // TODO: Move lower
