@@ -38,7 +38,20 @@ class PrMerger {
             try {
                 const rawPr = this._todo.shift();
                 let pr = new PullRequest(rawPr, somePrWasStaged);
-                const result = await pr.process();
+                let result = await pr.process();
+
+                // Treating retries specially preserves this PR's processing
+                // slot. We speculate that not giving a staged PR a second
+                // chance would create more unpleasant surprises for humans.
+                // Also, giving this chance follows our overall "processing
+                // should do as much as instantly possible for each PR"
+                // principle -- this PR is not stuck and _can_ do more.
+                // TODO: Move new() and this logic into MergeContext?
+                if (!result) {
+                    pr = new PullRequest(rawPr, somePrWasStaged);
+                    result = await pr.process();
+                }
+
                 somePrWasStaged = somePrWasStaged || pr.staged();
                 if (result.delayed() && (minDelay === null || minDelay > result.delay()))
                     minDelay = result.delay();
