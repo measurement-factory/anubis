@@ -133,8 +133,9 @@ class PrMerger {
         }
     }
 
-    // returns raw PR having staging commit at the tip of the staging branch (or null)
-    // if that PR exists, it is either "staged" or "post-staged"
+    // Returns a raw PR with a staged commit (or null).
+    // If that PR exists, it is in either a "staged" or "merged" state.
+    // XXX: Or in a (dirty) "closed" state?
     async _current() {
         Logger.info("Looking for the current PR...");
         const stagingSha = await GH.getReference(Config.stagingBranchPath());
@@ -148,7 +149,7 @@ class PrMerger {
         const prNum = Util.ParseTag(tag.ref);
         Logger.info("PR" + prNum + " is the current");
         const stagingPr = await GH.getPR(prNum, false);
-        assert(stagingPr.state === "open");
+        assert(stagingPr.state === "open"); // XXX: No guarantee? Return null instead?
         return stagingPr;
     }
 } // PrMerger

@@ -355,10 +355,13 @@ class Labels
     _find(name) { return this._labels.find(label => label.name === name); }
 }
 
-// A state of a pull request (with regard to merging progress). One of:
-// pre-staged: prior to staged commit creation
-// staged: prior to staged commit merging into base
-// post-staged: prior to merged PR closure
+// A state of an open pull request (with regard to merging progress). One of:
+// brewing: without a staged commit; PRs are created in this state
+// staged: with a staged commit that has not been merged into the base branch
+// merged: with a staged commit that has been merged into the base branch
+// Here, PR "staged commit" is a commit at the tip of the staging branch
+// pointed to by the PR tag. If a PR tag does not exist or does not point to
+// the tip of the staging branch, then the PR does not have a staged commit.
 class PrState
 {
     // treat as private; use static methods below instead
@@ -366,21 +369,21 @@ class PrState
         this._state = state;
     }
 
-    static PreStaged() { return new PrState(-1); }
+    static Brewing() { return new PrState(-1); }
     static Staged() { return new PrState(0); }
-    static PostStaged() { return new PrState(1); }
+    static Merged() { return new PrState(1); }
 
-    preStaged() { return this._state < 0; }
+    brewing() { return this._state < 0; }
     staged() { return this._state === 0; }
-    postStaged() { return this._state > 0; }
+    merged() { return this._state > 0; }
 
     toString() {
-        if (this.preStaged())
-            return "pre-staged";
+        if (this.brewing())
+            return "brewing";
         if (this.staged())
             return "staged";
-        assert(this.postStaged());
-        return "post-staged";
+        assert(this.merged());
+        return "merged";
     }
 }
 
@@ -694,7 +697,7 @@ class PullRequest {
 
         this._breadcrumbs.push("update");
 
-        assert(!this._prState.postStaged());
+        assert(!this._prState.merged());
 
         this._messageValid = this._prMessageValid();
         this._log("messageValid: " + this._messageValid);
@@ -721,11 +724,11 @@ class PullRequest {
         }
     }
 
-    // Cleans up and closes a post-staged PR, removing it from our radar for good.
+    // cleans up and closes a merged PR, removing it from our radar for good
     async _finalize() {
         this._breadcrumbs.push("finalize");
 
-        assert(this._prState.postStaged());
+        assert(this._prState.merged());
 
         // Clear any positive labels (there should be no negatives here)
         // because Config.mergedLabel() set below already implies that all
@@ -842,19 +845,19 @@ class PullRequest {
 
     async _loadPrState() {
         if (!this._tagSha) {
-            this._prState = PrState.PreStaged();
+            this._prState = PrState.Brewing();
             return;
         }
 
         if (!this._compareStatus) {
             this._warn("missing compare status");
-            this._prState = PrState.PreStaged();
+            this._prState = PrState.Brewing();
             return;
         }
 
         if (this._compareStatus === "identical" || this._compareStatus === "behind") {
             this._log("already merged into base some time ago");
-            this._prState = PrState.PostStaged();
+            this._prState = PrState.Merged();
             return;
         }
 
@@ -862,12 +865,12 @@ class PullRequest {
             this._stagingSha = await GH.getReference(Config.stagingBranchPath());
 
         if (this._stagingSha !== this._tagSha) {
-            this._prState = PrState.PreStaged();
+            this._prState = PrState.Brewing();
             return;
         }
 
         if (!this._tagFresh) {
-            this._prState = PrState.PreStaged();
+            this._prState = PrState.Brewing();
             return;
         }
 
@@ -880,7 +883,7 @@ class PullRequest {
         // GH.getPR() may become slow (and even fail) on merged PRs because
         // GitHub may take its time (or even fail) to calculate pr.mergeable.
         // Fortunately, we do not need that field for merged PRs.
-        const waitForMergeable = !this._prState.postStaged();
+        const waitForMergeable = !this._prState.merged();
         const pr = await GH.getPR(this._prNumber(), waitForMergeable);
         assert(pr.number === this._prNumber());
         this._rawPr = pr;
@@ -1015,7 +1018,7 @@ class PullRequest {
         try {
             await GH.updateReference(this._prBaseBranchPath(), this._tagSha, false);
             // TODO: Move lower
-            this._prState = PrState.PostStaged();
+            this._prState = PrState.Merged();
         } catch (e) {
             if (e.name === 'ErrorContext' && e.unprocessable()) {
                 if (await this._tagDiverged())
@@ -1059,11 +1062,11 @@ class PullRequest {
         this._prState = PrState.Staged();
     }
 
-    // updates and, if possible, advances (i.e. stages) a pre-staged GitHub PR
+    // updates and, if possible, advances (i.e. stages) a brewing GitHub PR
     async _stage() {
         this._breadcrumbs.push("stage");
 
-        assert(this._prState.preStaged());
+        assert(this._prState.brewing());
 
         // methods below compute fresh labels from scratch
         this._removeTemporaryLabelsSetByAnubis();
@@ -1103,7 +1106,7 @@ class PullRequest {
         await this._loadRawPr(); // requires this._loadPrState()
         await this._loadLabels();
 
-        if (this._prState.preStaged()) {
+        if (this._prState.brewing()) {
             await this._stage();
             assert(this._prState.staged());
         }
@@ -1111,7 +1114,7 @@ class PullRequest {
         if (this._prState.staged())
             await this._mergeStaged();
 
-        assert(this._prState.postStaged());
+        assert(this._prState.merged());
         await this._finalize();
     }
 
@@ -1129,7 +1132,7 @@ class PullRequest {
 
             // (by default) get rid of the failed staging tag (if any)
             if (!(knownProblem && e.keepStagedRequested()) &&
-                !this._prState.preStaged() &&
+                !this._prState.brewing() &&
                 !this._dryRun("cleanup failed staging tag")) {
                 await GH.deleteReference(this._stagingTag())
                     .catch(deleteReferenceError => {
