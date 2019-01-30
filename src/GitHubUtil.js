@@ -85,18 +85,20 @@ function getLabels(prNum) {
     });
 }
 
-// Gets a PR from GitHub, waiting for a period until GitHub calculates
-// it's 'mergeable' flag. Afther the period, returns the PR as is.
+// Gets PR metadata from GitHub
+// If requested and needed, retries until GitHub calculates PR mergeable flag.
+// Those retries, if any, are limited to a few minutes.
 async function getPR(prNum, awaitMergeable) {
     const max = 64 * 1000 + 1; // ~2 min. overall
     for (let d = 1000; d < max; d *= 2) {
         const pr = await getRawPR(prNum);
-        if (!awaitMergeable || pr.mergeable !== null)
+        // pr.mergeable is useless (and not calculated?) for a closed PR
+        if (pr.mergeable !== null || pr.state === 'closed' || !awaitMergeable)
             return pr;
-        Log.Logger.info("PR" + prNum + ": GitHub still caluclates mergeable status. Will retry in " + (d/1000) + " seconds");
+        Log.Logger.info("PR" + prNum + ": GitHub still calculates mergeable attribute. Will retry in " + (d/1000) + " seconds");
         await Util.sleep(d);
     }
-    return Promise.reject(new ErrorContext("GitHub could not calculate mergeable status",
+    return Promise.reject(new ErrorContext("Timed out waiting for GitHub to calculate mergeable attribute",
                 getPR.name, {pr: prNum}));
 }
 
