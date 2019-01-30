@@ -650,11 +650,6 @@ class PullRequest {
 
         if (this._labels.has(Config.mergedLabel()))
             throw this._exLostControl("premature " + Config.mergedLabel());
-
-        // XXX: Move (as _exSuspend) to checkStagingPreconditions because our
-        // commit-message checks already handle WIP addition to a _staged_ PR.
-        if (this._wipPr())
-            throw this._exObviousFailure("work-in-progress");
     }
 
     // whether the PR should be staged (including re-staged)
@@ -671,6 +666,9 @@ class PullRequest {
 
         if (!this._messageValid)
             throw this._exLabeledFailure("invalid commit message", Config.failedDescriptionLabel());
+
+        if (this._wipPr())
+            throw this._exSuspend("work-in-progress");
 
         if (!this._approval.granted())
             throw this._exSuspend("waiting for approval"); // or _exObviousFailure("lack of approval") -- same effect on unstaged PRs
@@ -979,6 +977,8 @@ class PullRequest {
         // already, but our _criteria_ might have changed since that check
         if (!this._messageValid)
             throw this._exLabeledFailure("commit message is now considered invalid", Config.failedDescriptionLabel());
+
+        assert(!this._wipPr());
 
         // TODO: unstage only if there is competition for being staged
 
