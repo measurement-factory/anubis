@@ -389,7 +389,7 @@ class PullRequest {
 
     constructor(pr, anotherPrWasStaged) {
 
-        this._rawPr = pr; // may lack pr.mergeable, see _refreshPr()
+        this._rawPr = pr; // may be rather old and lack pr.mergeable; see _loadRawPr()
 
         this._shaLimit = 6; // how many SHA chars to show in debug messages
 
@@ -601,6 +601,7 @@ class PullRequest {
                this._tagFresh = this._tagIsFresh();
            }
        } catch (e) {
+           // XXX: This handling applies to GH.getReference() only.
            if (e.name === 'ErrorContext' && e.notFound())
                Log.LogException(e, this._toString() + " " + this._stagingTag() + " not found");
            else
@@ -686,8 +687,7 @@ class PullRequest {
             throw this._exSuspend("waiting for another staged PR");
     }
 
-    // Refreshes PR GitHub state.
-    // Do not use for post-staged PRs because _refreshPr() may get stuck.
+    // refreshes Anubis-managed part of the GitHub PR state
     async update() {
         if (this._updated)
             return;
@@ -695,8 +695,6 @@ class PullRequest {
         this._breadcrumbs.push("update");
 
         assert(!this._prState.postStaged());
-
-        await this._refreshPr();
 
         this._messageValid = this._prMessageValid();
         this._log("messageValid: " + this._messageValid);
@@ -877,11 +875,13 @@ class PullRequest {
         this._prState = PrState.Staged();
     }
 
-    // Loads the raw PR from GitHub, including 'mergeable' flag.
-    // May get stuck for 'post-staged' (when the PR is probably already merged/closed)
-    // waiting for rawPr.mergeable.
-    async _refreshPr() {
-        const pr = await GH.getPR(this._prNumber(), true);
+    // loads raw PR metadata from GitHub
+    async _loadRawPr() {
+        // GH.getPR() may become slow (and even fail) on merged PRs because
+        // GitHub may take its time (or even fail) to calculate pr.mergeable.
+        // Fortunately, we do not need that field for merged PRs.
+        const waitForMergeable = !this._prState.postStaged();
+        const pr = await GH.getPR(this._prNumber(), waitForMergeable);
         assert(pr.number === this._prNumber());
         this._rawPr = pr;
     }
@@ -1094,10 +1094,16 @@ class PullRequest {
     // The caller must follow up with _pushLabelsToGitHub()!
     async _doProcess() {
         this._breadcrumbs.push("load");
-        await this._loadTag();
-        await this._loadLabels();
-        await this._loadPrState();
+
+        /*
+         * Until _loadRawPr(), we must avoid this._rawPr fields except .number.
+         * TODO: Refactor to eliminate the risk of too-early this._rawPr use.
+         */
+        await this._loadTag(); // requires this._rawPr.number
+        await this._loadPrState(); // requires this._loadTag()
         this._log("PR state: " + this._prState);
+        await this._loadRawPr(); // requires this._loadPrState()
+        await this._loadLabels();
 
         if (this._prState.preStaged()) {
             await this._stage();
