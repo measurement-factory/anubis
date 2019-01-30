@@ -1056,10 +1056,10 @@ class PullRequest {
         this._tagSha = await GH.createReference(tempCommitSha, "refs/" + this._stagingTag());
         this._compareStatus = "ahead";
         await GH.updateReference(Config.stagingBranchPath(), this._tagSha, true);
+        this._prState = PrState.Staged();
     }
 
-    // Updates the PR GitHub attributes and stages it
-    // for CI tests, if possible.
+    // updates and, if possible, advances (i.e. stages) a pre-staged GitHub PR
     async _stage() {
         this._breadcrumbs.push("stage");
 
@@ -1071,11 +1071,9 @@ class PullRequest {
         await this._update();
         await this._checkStagingPreconditions();
         await this._createStaged();
-        this._prState = PrState.Staged();
     }
 
-    // Updates PR GitHub attributes and merges it into base
-    // in case of successfully passed CI checks.
+    // updates and, if possible, advances (i.e. merges) a staged GitHub PR
     async _mergeStaged() {
         this._breadcrumbs.push("merge");
 
