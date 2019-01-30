@@ -638,17 +638,9 @@ class PullRequest {
         return false; // stale staged commit or fresh one with successful (or ongoing) status checks
     }
 
-    // Refreshes PR metadata.
     // Checks whether this PR is still open and still wants to be merged.
-    // Is used for both merging and staging actions.
-    // Do not use for post-staged.
+    // This is a common part of staging and merging precondition checks.
     async _checkActive() {
-        assert(!this._prState.postStaged());
-
-        await this._refreshPr();
-
-        // TODO: Move update() here and remove its caching protection
-
         if (!this._prOpen())
             throw this._exLostControl("unexpected closure");
 
@@ -695,13 +687,17 @@ class PullRequest {
     }
 
     // Refreshes PR GitHub state.
-    // Can be used safely for any opened PR.
-    // Do not use for post-staged PRs.
+    // Do not use for post-staged PRs because _refreshPr() may get stuck.
     async update() {
         if (this._updated)
             return;
 
         this._breadcrumbs.push("update");
+
+        assert(!this._prState.postStaged());
+
+        await this._refreshPr();
+
         this._messageValid = this._prMessageValid();
         this._log("messageValid: " + this._messageValid);
 
