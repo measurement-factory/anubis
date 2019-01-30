@@ -1146,8 +1146,8 @@ class PullRequest {
                 return e.result; // may be null
 
             // report this unknown but probably PR-specific problem to GitHub
-            // XXX: We may redo this PR every run() step forever.
-            // TODO: Process Config.failedOtherLabel() PRs last.
+            // XXX: We may keep redoing this PR every run() step forever, without any GitHub events.
+            // TODO: Process Config.failedOtherLabel() PRs last and ignore their failures.
             if (!knownProblem)
                 this._labels.add(Config.failedOtherLabel());
 

@@ -45,7 +45,7 @@ class PrMerger {
                 // chance would create more unpleasant surprises for humans.
                 // Also, giving this chance follows our overall "processing
                 // should do as much as instantly possible for each PR"
-                // principle -- this PR is not stuck and _can_ do more.
+                // principle -- this PR is not stuck and _can_ do more now.
                 // TODO: Move new() and this logic into MergeContext?
                 if (!result) {
                     pr = new PullRequest(rawPr, somePrWasStaged);
