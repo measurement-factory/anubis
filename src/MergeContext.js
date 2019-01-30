@@ -415,7 +415,7 @@ class PullRequest {
 
         this._labels = null;
         this._anotherPrWasStaged = anotherPrWasStaged;
-        this._updated = false; // update() has been called
+        this._updated = false; // _update() has been called
 
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
         this._labelPushBan = false;
@@ -688,7 +688,7 @@ class PullRequest {
     }
 
     // refreshes Anubis-managed part of the GitHub PR state
-    async update() {
+    async _update() {
         if (this._updated)
             return;
 
@@ -1068,7 +1068,7 @@ class PullRequest {
         // methods below compute fresh labels from scratch
         this._removeTemporaryLabelsSetByAnubis();
 
-        await this.update();
+        await this._update();
         await this._checkStagingPreconditions();
         await this._createStaged();
         this._prState = PrState.Staged();
@@ -1084,7 +1084,7 @@ class PullRequest {
         // methods below compute fresh labels from scratch
         this._removeTemporaryLabelsSetByAnubis();
 
-        await this.update();
+        await this._update();
         await this._checkMergePreconditions();
         await this._mergeToBase();
     }
