@@ -928,6 +928,7 @@ class PullRequest {
         }
 
         assert(stagingStatus.succeeded());
+        this._labels.add(Config.passedStagingChecksLabel());
         this._log("staging checks succeeded");
 
         await this._supplyStagingWithPrRequired(stagingStatus);
@@ -1024,7 +1025,6 @@ class PullRequest {
             throw this._exSuspend("waiting for PR branch tests that appeared after staging");
 
         assert(statusChecks.succeeded());
-        this._labels.add(Config.passedStagingChecksLabel());
 
         await this._processStagingStatuses();
     }
