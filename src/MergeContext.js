@@ -227,15 +227,15 @@ class Label
         this._presentOnGitHub = presentOnGitHub; // set from GitHub point of view
     }
     // whether the label should be considered "set" from Anubis high-level code point of view
-    present() { return this.presentHere_; }
+    present() { return this._presentHere; }
 
     needsRemovalFromGitHub() { return this._presentOnGitHub && !this._presentHere; }
 
     needsAdditionToGitHub() { return !this._presentOnGitHub && this._presentHere; }
 
-    markForRemoval() { this.presentHere_ = false; }
+    markForRemoval() { this._presentHere = false; }
 
-    markForAddition() { this.presentHere_ = true; }
+    markForAddition() { this._presentHere = true; }
 }
 
 // Pull request labels. Hides the fact that some labels may be kept internally
