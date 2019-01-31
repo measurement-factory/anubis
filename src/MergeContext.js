@@ -733,10 +733,10 @@ class PullRequest {
     async _pushLabelsToGitHub() {
         if (this._labels) {
             if (this._labelPushBan) {
-                this._log("will not push changed labels:", this._labelPushBan);
+                this._log("will not push changed labels: " + this._labelPushBan);
                 return;
             }
-            this._log("pushing changed labels:", this._labels.diff());
+            this._log("pushing changed labels: " + this._labels.diff());
             if (!this._dryRun("pushing labels"))
                 await this._labels.pushToGitHub();
         }
@@ -825,10 +825,12 @@ class PullRequest {
         return "PR" + this._rawPr.number + ` (${detail})`;
     }
 
+    // TODO: support variable number of arguments
     _log(msg) {
         Log.Logger.info(this._debugString(), msg);
     }
 
+    // TODO: support variable number of arguments
     _warn(msg) {
         Log.Logger.warn(this._debugString(), msg);
     }
