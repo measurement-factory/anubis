@@ -5,40 +5,30 @@ const GH = require('./GitHubUtil.js');
 const Util = require('./Util.js');
 
 
-// PullRequest::process() outcome
-class StepResult
+// Process() outcome
+class ProcessResult
 {
-    // treat as private; use static methods below instead
-    constructor(delayMs) {
-        assert(delayMs !== undefined);
-        assert(delayMs !== null);
-        this._delayMs = delayMs;
-        this._prStaged = null;
-    }
-
-    // the step is successfully finished
-    static Succeed() {
-        return new StepResult(0);
-    }
-
-    // the step is postponed (and will be resumed some time later)
-    static Suspend() {
-        return new StepResult(-1);
-    }
-
-    // the step is postponed (and will be resumed in delayMs)
-    static Delay(delayMs) {
-        assert(delayMs !== null && delayMs > 0);
-        return new StepResult(delayMs);
+    constructor() {
+        this._delayMs = null; // reprocess in that many milliseconds
+        this._prStaged = null; // this PR holds the lock on the staging branch
     }
 
     delayed() {
-        return this._delayMs > 0;
+        return this._delayMs !== null;
     }
 
-    delay() {
+    delayMs() {
         assert(this.delayed());
         return this._delayMs;
+    }
+
+    setDelayMsIfAny(msOrNull) {
+        assert(this._delayMs === null);
+        if (msOrNull !== null) {
+            const ms = msOrNull;
+            assert(ms > 0);
+            this._delayMs = ms;
+        }
     }
 
     setPrStaged(bool) {
@@ -55,14 +45,13 @@ class StepResult
 // Relaying process() outcome to the caller via doProcess() exceptions:
 //
 // Exception          Unstage  Push-Labels  Result-of-process()
-// _exLostControl()     yes      no           exception
-// _exObviousFailure()  yes      yes          exception
-// _exLabeledFailure()  yes      yes          exception
-// any-unlisted-here    yes      yes          exception
-// _exRetry()           yes      yes          null
-// _exSuspend()         no       yes          StepResult.Suspend()
-// _exDelay()           no       yes          StepResult.Delay()
-// no-exception         no       yes          StepResult.Succeed()
+// _exLostControl()     yes      no           approval delay (if any)
+// _exObviousFailure()  yes      yes          approval delay (if any)
+// _exLabeledFailure()  yes      yes          approval delay (if any)
+// _exSuspend()         no       yes          approval delay (if any)
+// _exRetry()           yes      yes          retry or approval delay
+// any-unlisted-above   yes      yes          exception + M-failed-other
+// no-exception         no       yes          null delay
 
 // A PR-specific process()ing error.
 // A PrProblem thrower must set any appropriate labels.
@@ -74,19 +63,10 @@ class PrProblem extends Error {
         this.name = this.constructor.name;
         Error.captureStackTrace(this, this.constructor);
 
-        this.result_ = undefined; // may be set to null later
         this.keepStaged_ = false; // catcher should preserve the staged commit
     }
 
-    hasResult() { return this.result_ !== undefined; }
-
     keepStagedRequested() { return this.keepStaged_; }
-
-    setResult(result) {
-        assert(!this.hasResult());
-        assert(result !== undefined);
-        this.result_ = result;
-    }
 
     requestToKeepStaged() {
         assert(!this.keepStagedRequested());
@@ -385,15 +365,15 @@ class PrRestrictions
 {
     constructor() {
         this._banStaging = false; // do not stage; only valid for brewing PRs
-        this._banRetries = false; // do not ask the caller to re-process()
+        this._banInstantRetries = false; // do not ask the caller to re-process() immediately
     }
 
     stagingBanned() {
         return this._banStaging;
     }
 
-    retriesBanned() {
-        return this._banRetries;
+    instantRetriesBanned() {
+        return this._banInstantRetries;
     }
 
     banStaging(bool) {
@@ -401,8 +381,8 @@ class PrRestrictions
         return this;
     }
 
-    banRetries(bool) {
-        this._banRetries = bool;
+    banInstantRetries(bool) {
+        this._banInstantRetries = bool;
         return this;
     }
 }
@@ -441,8 +421,22 @@ class PullRequest {
         this._restrictions = restrictions;
         this._updated = false; // _update() has been called
 
+        this._reprocessingDelayMs = null; // reprocess this PR after this delay
+
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
         this._labelPushBan = false;
+    }
+
+    // this PR will need to be reprocessed in this many milliseconds
+    // returns null if this PR does not need to be reprocessed on a timer
+    delayMs() {
+        if (this._approval && this._approval.grantedTimeout()) {
+            if (this._reprocessingDelayMs === null)
+                return this._approval.delayMs; // always positive
+            // the minimum may be zero, triggering instant reprocessing
+            return Math.min(this._reprocessingDelayMs, this._approval.delayMs);
+        }
+        return null;
     }
 
     // creates and returns filled Approval object
@@ -691,19 +685,20 @@ class PullRequest {
         if (this._wipPr())
             throw this._exSuspend("work-in-progress");
 
-        if (!this._approval.granted())
-            throw this._exSuspend("waiting for approval"); // or _exObviousFailure("lack of approval") -- same effect on unstaged PRs
-
         const statusChecks = await this._getPrStatuses();
         if (statusChecks.failed())
             throw this._exObviousFailure("failed PR tests");
 
-        // TODO: Reorder this._approval/statusChecks if-statements for clarity
-        if (this._approval.grantedTimeout())
-            throw this._exDelay("waiting for objections", this._approval.delayMs);
-
         if (!statusChecks.final())
             throw this._exSuspend("waiting for PR checks");
+
+        assert(statusChecks.succeeded());
+
+        if (!this._approval.granted())
+            throw this._exSuspend("waiting for approval");
+
+        if (this._approval.grantedTimeout())
+            throw this._exSuspend("waiting for objections");
 
         if (this._restrictions.stagingBanned())
             throw this._exSuspend("waiting for another staged PR");
@@ -857,7 +852,7 @@ class PullRequest {
             const compareStatus = await GH.compareCommits(this._prBaseBranch(), this._stagingTag());
             return compareStatus === "diverged";
         } catch (e) {
-            Log.LogError(e, this._toString() + " compare commits failed");
+            Log.LogException(e, this._toString() + " compare commits failed");
             return false;
         }
     }
@@ -992,13 +987,13 @@ class PullRequest {
         // yes, _checkStagingPreconditions() has checked the message already,
         // but humans may have changed the original message since that check
         if (!(await this._messageIsFresh()))
-            throw this._restrictions.retriesBanned() ?
+            throw this._restrictions.instantRetriesBanned() ?
                 // The reason for this delay may not be obvious to GitHub
                 // users, but we do not want to dedicate a new label for this
                 // rare and short-lived case that we can handle on our own.
                 // TODO: Support making GitHub comments.
-                this._exDelay("waiting for humans to stop changing commit message", 30*60*1000 /* 30 minutes */):
-                this._exRetry("humans changed commit message");
+                this._exRetry("waiting for humans to stop changing commit message", 30*60*1000 /* 30 minutes */):
+                this._exRetry("humans changed commit message", 0);
 
         // yes, _checkStagingPreconditions() has checked the same message
         // already, but our _criteria_ might have changed since that check
@@ -1145,17 +1140,20 @@ class PullRequest {
         await this._finalize();
     }
 
+    // Updates and, if possible, advances PR towards (and including) merging.
+    // If reprocessing is needed in X milliseconds, returns X.
+    // Otherwise, returns null.
     async process() {
         try {
             await this._doProcess();
-            return StepResult.Succeed();
+            return null;
         } catch (e) {
             const knownProblem = e instanceof PrProblem;
 
-            if (knownProblem && e.hasResult())
-                this._log(e.result); // may be null
+            if (knownProblem)
+                this._log("did not merge: " + e);
             else
-                Log.LogError(e, this._toString() + " process() failure"); // TODO: Convert into a method
+                Log.LogException(e, this._toString() + " process() failure"); // TODO: Convert into a method
 
             // (by default) get rid of the failed staging tag (if any)
             if (!(knownProblem && e.keepStagedRequested()) &&
@@ -1169,15 +1167,13 @@ class PullRequest {
                     });
             }
 
-            if (knownProblem && e.hasResult())
-                return e.result; // may be null
+            if (knownProblem)
+                return this.delayMs(); // may be null
 
-            // report this unknown but probably PR-specific problem to GitHub
+            // report this unknown but probably PR-specific problem on GitHub
             // XXX: We may keep redoing this PR every run() step forever, without any GitHub events.
             // TODO: Process Config.failedOtherLabel() PRs last and ignore their failures.
-            if (!knownProblem)
-                this._labels.add(Config.failedOtherLabel());
-
+            this._labels.add(Config.failedOtherLabel());
             throw e;
         } finally {
             await this._pushLabelsToGitHub();
@@ -1197,33 +1193,24 @@ class PullRequest {
 
     /* _ex*() methods below are mutually exclusive: first match wins */
 
-    // an obstacle that we are likely to overcome by reprocessing from scratch
-    _exRetry(why) {
-        assert(arguments.length === 1);
-        let problem = new PrProblem(why);
-        problem.setResult(null);
-        return problem;
+    // a problem that we are likely to resolve by reprocessing from scratch
+    _exRetry(why, delayMs) {
+        assert(arguments.length === 2);
+        assert(delayMs >= 0);
+        this._reprocessingDelayMs = delayMs;
+        return new PrProblem(why);
     }
 
-    // an obstacle that should eventually disappear; GitHub will inform us
+    // a problem that, once resolved, does not require reprocessing from scratch
     _exSuspend(why) {
         assert(arguments.length === 1);
         let problem = new PrProblem(why);
-        problem.setResult(StepResult.Suspend());
-        problem.requestToKeepStaged();
-        return problem;
-    }
-
-    // an obstacle that should disappear in delayMs; GitHub will not inform us
-    _exDelay(why, delayMs) {
-        assert(arguments.length === 2);
-        let problem = new PrProblem(why);
-        problem.setResult(StepResult.Delay(delayMs));
         problem.requestToKeepStaged();
         return problem;
     }
 
     // somebody else appears to perform Anubis-only PR manipulations
+    // minimize changes to avoid conflicts (but do not block other PRs)
     _exLostControl(why) {
         assert(arguments.length === 1);
         this._labelPushBan = why;
@@ -1232,12 +1219,14 @@ class PullRequest {
     }
 
     // a problem that humans can discern via GitHub-maintained PR state
+    // reprocessing will be required after the problem is fixed
     _exObviousFailure(why) {
         assert(arguments.length === 1);
         return new PrProblem(why);
     }
 
     // a problem that humans cannot easily detect without an Anubis-set label
+    // reprocessing will be required after the problem is fixed
     _exLabeledFailure(why, label) {
         assert(arguments.length === 2);
         assert(!this._labelPushBan);
@@ -1246,24 +1235,27 @@ class PullRequest {
     }
 }
 
+// PullRequest::process() wrapper that adds support for instant retries
 async function Process(rawPr, banStaging) {
 
     let restrictions = new PrRestrictions().banStaging(banStaging);
 
     let pr = new PullRequest(rawPr, restrictions);
-    let result = await pr.process();
+    let delayMs = await pr.process();
 
     // Instant retries preserve this PR's processing slot. We speculate that
     // not giving a staged PR a second chance would create even more
     // unpleasant surprises for humans. Also, giving this chance follows our
     // overall "processing should do as much as instantly possible for each
     // PR" principle -- this PR is not stuck and _can_ do more now.
-    if (!result) {
-        restrictions.banRetries(true); // the alternative is a scary loop
+    if (delayMs === 0) {
+        restrictions.banInstantRetries(true); // the alternative is a loop
         pr = new PullRequest(rawPr, restrictions);
-        result = await pr.process();
+        delayMs = await pr.process();
     }
 
+    let result = new ProcessResult();
+    result.setDelayMsIfAny(delayMs);
     result.setPrStaged(pr.staged());
     return result;
 }

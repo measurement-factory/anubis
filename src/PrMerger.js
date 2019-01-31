@@ -39,8 +39,8 @@ class PrMerger {
                 const result = await MergeContext.Process(rawPr, somePrWasStaged);
                 assert(!somePrWasStaged || !result.prStaged());
                 somePrWasStaged = somePrWasStaged || result.prStaged();
-                if (result.delayed() && (minDelay === null || minDelay > result.delay()))
-                    minDelay = result.delay();
+                if (result.delayed() && (minDelay === null || minDelay > result.delayMs()))
+                    minDelay = result.delayMs();
             } catch (e) {
                 Log.LogError(e, "PrMerger.runStep");
                 this._errors++;
