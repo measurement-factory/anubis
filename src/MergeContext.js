@@ -1037,8 +1037,6 @@ class PullRequest {
 
         try {
             await GH.updateReference(this._prBaseBranchPath(), this._tagSha, false);
-            // TODO: Move lower
-            this._prState = PrState.Merged();
         } catch (e) {
             if (e.name === 'ErrorContext' && e.unprocessable()) {
                 if (await this._tagDiverged())
@@ -1046,6 +1044,8 @@ class PullRequest {
             }
             throw e;
         }
+
+        this._prState = PrState.Merged();
     }
 
     async _acquireUserProperties() {
