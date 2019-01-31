@@ -5,15 +5,15 @@ const GH = require('./GitHubUtil.js');
 const Util = require('./Util.js');
 
 
-// Action outcome, with support for paused and snoozed actions.
-// For example, returned by PullRequest.process() (at higher level) or
-// various checks (at low level).
+// PullRequest::process() outcome
 class StepResult
 {
     // treat as private; use static methods below instead
     constructor(delayMs) {
         assert(delayMs !== undefined);
+        assert(delayMs !== null);
         this._delayMs = delayMs;
+        this._prStaged = null;
     }
 
     // the step is successfully finished
@@ -26,36 +26,29 @@ class StepResult
         return new StepResult(-1);
     }
 
-    // the step is finished with failure
-    static Fail() {
-        return new StepResult(null);
-    }
-
     // the step is postponed (and will be resumed in delayMs)
     static Delay(delayMs) {
         assert(delayMs !== null && delayMs > 0);
         return new StepResult(delayMs);
     }
 
-    succeeded() {
-        return this._delayMs !== null && this._delayMs === 0;
-    }
-
-    failed() {
-        return this._delayMs === null;
-    }
-
-    suspended() {
-        return this._delayMs !== null && this._delayMs < 0;
-    }
-
     delayed() {
-        return this._delayMs !== null && this._delayMs > 0;
+        return this._delayMs > 0;
     }
 
     delay() {
         assert(this.delayed());
         return this._delayMs;
+    }
+
+    setPrStaged(bool) {
+        assert(this._prStaged === null);
+        this._prStaged = bool;
+    }
+
+    prStaged() {
+        assert(this._prStaged !== null);
+        return this._prStaged;
     }
 }
 
@@ -387,10 +380,38 @@ class PrState
     }
 }
 
+// external limits for PullRequest::process() freedoms
+class PrRestrictions
+{
+    constructor() {
+        this._banStaging = false; // do not stage; only valid for brewing PRs
+        this._banRetries = false; // do not ask the caller to re-process()
+    }
+
+    stagingBanned() {
+        return this._banStaging;
+    }
+
+    retriesBanned() {
+        return this._banRetries;
+    }
+
+    banStaging(bool) {
+        this._banStaging = bool;
+        return this;
+    }
+
+    banRetries(bool) {
+        this._banRetries = bool;
+        return this;
+    }
+}
+
 // a single GitHub pull request
 class PullRequest {
 
-    constructor(pr, anotherPrWasStaged) {
+    constructor(pr, restrictions) {
+        assert(restrictions instanceof PrRestrictions);
 
         this._rawPr = pr; // may be rather old and lack pr.mergeable; see _loadRawPr()
 
@@ -417,7 +438,7 @@ class PullRequest {
         this._prState = null; // calculated PrState
 
         this._labels = null;
-        this._anotherPrWasStaged = anotherPrWasStaged;
+        this._restrictions = restrictions;
         this._updated = false; // _update() has been called
 
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
@@ -684,7 +705,7 @@ class PullRequest {
         if (!statusChecks.final())
             throw this._exSuspend("waiting for PR checks");
 
-        if (this._anotherPrWasStaged)
+        if (this._restrictions.stagingBanned())
             throw this._exSuspend("waiting for another staged PR");
     }
 
@@ -872,7 +893,7 @@ class PullRequest {
             return;
         }
 
-        assert(!this._anotherPrWasStaged);
+        assert(!this._restrictions.stagingBanned());
         this._prState = PrState.Staged();
     }
 
@@ -971,7 +992,13 @@ class PullRequest {
         // yes, _checkStagingPreconditions() has checked the message already,
         // but humans may have changed the original message since that check
         if (!(await this._messageIsFresh()))
-            throw this._exRetry("fresh commit message");
+            throw this._restrictions.retriesBanned() ?
+                // The reason for this delay may not be obvious to GitHub
+                // users, but we do not want to dedicate a new label for this
+                // rare and short-lived case that we can handle on our own.
+                // TODO: Support making GitHub comments.
+                this._exDelay("waiting for humans to stop changing commit message", 30*60*1000 /* 30 minutes */):
+                this._exRetry("humans changed commit message");
 
         // yes, _checkStagingPreconditions() has checked the same message
         // already, but our _criteria_ might have changed since that check
@@ -1168,27 +1195,7 @@ class PullRequest {
         // final (set after the PR is merged): Config.mergedLabel()
     }
 
-    // somebody else appears to perform Anubis-only PR manipulations
-    _exLostControl(why) {
-        assert(arguments.length === 1);
-        this._labelPushBan = why;
-        assert(this._labelPushBan); // paranoid: `why` is truthy
-        return new PrProblem(why);
-    }
-
-    // a problem that humans can discern via GitHub-maintained PR state
-    _exObviousFailure(why) {
-        assert(arguments.length === 1);
-        return new PrProblem(why);
-    }
-
-    // a problem that humans cannot easily detect without an Anubis-set label
-    _exLabeledFailure(why, label) {
-        assert(arguments.length === 2);
-        assert(!this._labelPushBan);
-        this._labels.add(label);
-        return new PrProblem(why);
-    }
+    /* _ex*() methods below are mutually exclusive: first match wins */
 
     // an obstacle that we are likely to overcome by reprocessing from scratch
     _exRetry(why) {
@@ -1215,9 +1222,54 @@ class PullRequest {
         problem.requestToKeepStaged();
         return problem;
     }
+
+    // somebody else appears to perform Anubis-only PR manipulations
+    _exLostControl(why) {
+        assert(arguments.length === 1);
+        this._labelPushBan = why;
+        assert(this._labelPushBan); // paranoid: `why` is truthy
+        return new PrProblem(why);
+    }
+
+    // a problem that humans can discern via GitHub-maintained PR state
+    _exObviousFailure(why) {
+        assert(arguments.length === 1);
+        return new PrProblem(why);
+    }
+
+    // a problem that humans cannot easily detect without an Anubis-set label
+    _exLabeledFailure(why, label) {
+        assert(arguments.length === 2);
+        assert(!this._labelPushBan);
+        this._labels.add(label);
+        return new PrProblem(why);
+    }
 }
 
+async function Process(rawPr, banStaging) {
+
+    let restrictions = new PrRestrictions().banStaging(banStaging);
+
+    let pr = new PullRequest(rawPr, restrictions);
+    let result = await pr.process();
+
+    // Instant retries preserve this PR's processing slot. We speculate that
+    // not giving a staged PR a second chance would create even more
+    // unpleasant surprises for humans. Also, giving this chance follows our
+    // overall "processing should do as much as instantly possible for each
+    // PR" principle -- this PR is not stuck and _can_ do more now.
+    if (!result) {
+        restrictions.banRetries(true); // the alternative is a scary loop
+        pr = new PullRequest(rawPr, restrictions);
+        result = await pr.process();
+    }
+
+    result.setPrStaged(pr.staged());
+    return result;
+}
+
+
 module.exports = {
-    PullRequest: PullRequest
+    Process: Process
 };
 

@@ -5,7 +5,6 @@ const Logger = Log.Logger;
 const GH = require('./GitHubUtil.js');
 const Util = require('./Util.js');
 const MergeContext = require('./MergeContext.js');
-const PullRequest = MergeContext.PullRequest;
 
 // A single Anubis processing step:
 // Updates and, to the extent possible, advances each open PR. Once.
@@ -37,22 +36,9 @@ class PrMerger {
         while (this._todo.length) {
             try {
                 const rawPr = this._todo.shift();
-                let pr = new PullRequest(rawPr, somePrWasStaged);
-                let result = await pr.process();
-
-                // Treating retries specially preserves this PR's processing
-                // slot. We speculate that not giving a staged PR a second
-                // chance would create more unpleasant surprises for humans.
-                // Also, giving this chance follows our overall "processing
-                // should do as much as instantly possible for each PR"
-                // principle -- this PR is not stuck and _can_ do more now.
-                // TODO: Move new() and this logic into MergeContext?
-                if (!result) {
-                    pr = new PullRequest(rawPr, somePrWasStaged);
-                    result = await pr.process();
-                }
-
-                somePrWasStaged = somePrWasStaged || pr.staged();
+                const result = await MergeContext.Process(rawPr, somePrWasStaged);
+                assert(!somePrWasStaged || !result.prStaged());
+                somePrWasStaged = somePrWasStaged || result.prStaged();
                 if (result.delayed() && (minDelay === null || minDelay > result.delay()))
                     minDelay = result.delay();
             } catch (e) {
