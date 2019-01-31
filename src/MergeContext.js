@@ -990,7 +990,7 @@ class PullRequest {
 
         // yes, _checkStagingPreconditions() has checked the message already,
         // but humans may have changed the original message since that check
-        if (!(await this._messageIsFresh()))
+        if (!(await this._messageIsFresh())) {
             throw this._restrictions.instantRetriesBanned() ?
                 // The reason for this delay may not be obvious to GitHub
                 // users, but we do not want to dedicate a new label for this
@@ -998,6 +998,7 @@ class PullRequest {
                 // TODO: Support making GitHub comments.
                 this._exRetry("waiting for humans to stop changing commit message", 30*60*1000 /* 30 minutes */):
                 this._exRetry("humans changed commit message", 0);
+        }
 
         // yes, _checkStagingPreconditions() has checked the same message
         // already, but our _criteria_ might have changed since that check
