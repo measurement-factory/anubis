@@ -95,7 +95,7 @@ class PrMerger {
 
     // forgets PR-unrelated tags and
     // deletes (from GitHub) PR tags which do not have a corresponding open PR
-    async _cleanTags(rawTags) {
+    async _importTags(rawTags) {
         assert(rawTags);
 
         assert(!this._tags);
