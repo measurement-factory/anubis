@@ -675,11 +675,11 @@ class PullRequest {
 
         // TODO: If multiple failures need labeling, label all of them.
 
-        if (!this._messageValid)
-            throw this._exLabeledFailure("invalid commit message", Config.failedDescriptionLabel());
-
         if (this._wipPr())
             throw this._exSuspend("work-in-progress");
+
+        if (!this._messageValid)
+            throw this._exLabeledFailure("invalid commit message", Config.failedDescriptionLabel());
 
         if (!this._prMergeable())
             throw this._exObviousFailure("GitHub will not be able to merge");
