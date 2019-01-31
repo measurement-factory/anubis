@@ -1019,6 +1019,7 @@ class PullRequest {
             throw this._exSuspend("waiting for PR branch tests that appeared after staging");
 
         assert(statusChecks.succeeded());
+        this._labels.add(Config.passedStagingChecksLabel());
 
         await this._processStagingStatuses();
     }
@@ -1031,11 +1032,8 @@ class PullRequest {
         if (this._dryRun("merging to base"))
             throw this._exSuspend("dryRun");
 
-        if (this._stagingOnly()) {
-            // TODO: Consider adding this label unconditionally.
-            this._labels.add(Config.passedStagingChecksLabel());
+        if (this._stagingOnly())
             throw this._exSuspend("waiting for staging-only mode to end");
-        }
 
         try {
             await GH.updateReference(this._prBaseBranchPath(), this._tagSha, false);
