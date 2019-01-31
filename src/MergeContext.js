@@ -685,15 +685,6 @@ class PullRequest {
         if (this._wipPr())
             throw this._exSuspend("work-in-progress");
 
-        const statusChecks = await this._getPrStatuses();
-        if (statusChecks.failed())
-            throw this._exObviousFailure("failed PR tests");
-
-        if (!statusChecks.final())
-            throw this._exSuspend("waiting for PR checks");
-
-        assert(statusChecks.succeeded());
-
         if (!this._approval.granted())
             throw this._exSuspend("waiting for approval");
 
@@ -702,6 +693,16 @@ class PullRequest {
 
         if (this._restrictions.stagingBanned())
             throw this._exSuspend("waiting for another staged PR");
+
+        // optimization: delay GitHub communication as much as possible
+        const statusChecks = await this._getPrStatuses();
+        if (statusChecks.failed())
+            throw this._exObviousFailure("failed PR tests");
+
+        if (!statusChecks.final())
+            throw this._exSuspend("waiting for PR checks");
+
+        assert(statusChecks.succeeded());
     }
 
     // refreshes Anubis-managed part of the GitHub PR state
