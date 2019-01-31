@@ -1156,7 +1156,7 @@ class PullRequest {
             const knownProblem = e instanceof PrProblem;
 
             if (knownProblem)
-                this._log("did not merge: " + e);
+                this._log("did not merge: " + e.message);
             else
                 Log.LogException(e, this._toString() + " process() failure"); // TODO: Convert into a method
 
