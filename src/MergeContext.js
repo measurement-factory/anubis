@@ -673,14 +673,16 @@ class PullRequest {
 
         await this._checkActive();
 
+        // TODO: If multiple failures need labeling, label all of them.
+
+        if (!this._messageValid)
+            throw this._exLabeledFailure("invalid commit message", Config.failedDescriptionLabel());
+
         if (!this._prMergeable())
             throw this._exObviousFailure("GitHub will not be able to merge");
 
         if (await this._stagedCommitFailedTests())
             throw this._exLabeledFailure("staged commit tests will fail", Config.failedStagingChecksLabel());
-
-        if (!this._messageValid)
-            throw this._exLabeledFailure("invalid commit message", Config.failedDescriptionLabel());
 
         if (this._wipPr())
             throw this._exSuspend("work-in-progress");
