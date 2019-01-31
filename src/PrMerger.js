@@ -24,7 +24,7 @@ class PrMerger {
 
         this._todo = await GH.getOpenPrs();
         this._total = this._todo.length;
-        Logger.info("Received ${this._total} PRs from GitHub:", this._prNumbers());
+        Logger.info(`Received ${this._total} PRs from GitHub:`, this._prNumbers());
 
         await this._importTags(await GH.getTags()); // needs this._todo
 
