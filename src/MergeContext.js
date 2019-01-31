@@ -681,9 +681,6 @@ class PullRequest {
         if (!this._prMergeable())
             throw this._exObviousFailure("GitHub will not be able to merge");
 
-        if (await this._stagedCommitFailedTests())
-            throw this._exLabeledFailure("staged commit tests will fail", Config.failedStagingChecksLabel());
-
         if (this._wipPr())
             throw this._exSuspend("work-in-progress");
 
@@ -705,6 +702,10 @@ class PullRequest {
             throw this._exSuspend("waiting for PR checks");
 
         assert(statusChecks.succeeded());
+
+        // optimization: delay GitHub communication as much as possible
+        if (await this._stagedCommitFailedTests())
+            throw this._exLabeledFailure("staged commit tests will fail", Config.failedStagingChecksLabel());
     }
 
     // refreshes Anubis-managed part of the GitHub PR state
