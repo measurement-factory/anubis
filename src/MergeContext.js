@@ -1172,6 +1172,10 @@ class PullRequest {
                     });
             }
 
+            // drop staged state and give way to others
+            if (this._prState.staged())
+                this._prState = PrState.Brewing();
+
             if (knownProblem)
                 return this.delayMs(); // may be null
 
@@ -1242,7 +1246,6 @@ class PullRequest {
 
 // PullRequest::process() wrapper that adds support for instant retries
 async function Process(rawPr, banStaging) {
-
     let restrictions = new PrRestrictions().banStaging(banStaging);
 
     let pr = new PullRequest(rawPr, restrictions);
