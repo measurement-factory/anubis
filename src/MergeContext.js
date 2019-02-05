@@ -522,7 +522,7 @@ class PullRequest {
             combinedStatus.statuses.find(el => el.context.trim() === Config.approvalContext()) : null;
 
         if (approvalStatus && this._approval.matchesGitHubStatusCheck(approvalStatus)) {
-            this._log("Approval status already exists: " + Config.approvalContext() + ", " + this._approval);
+            this._log("approval status already exists: " + Config.approvalContext() + ", " + this._approval);
             return;
         }
 
