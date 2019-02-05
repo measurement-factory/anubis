@@ -921,8 +921,10 @@ class PullRequest {
         const stagingStatus = await this._getStagingStatuses();
         this._log("staging status details: " + stagingStatus);
 
-        if (stagingStatus.failed())
-            throw this._exLabeledFailure("staging tests failed", Config.failedStagingChecksLabel());
+        if (stagingStatus.failed()) {
+            this._labels.add(Config.failedStagingChecksLabel());
+            throw this._exSuspend("staging tests failed");
+        }
 
         if (!stagingStatus.final()) {
             this._labels.add(Config.waitingStagingChecksLabel());
