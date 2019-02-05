@@ -616,7 +616,7 @@ class PullRequest {
            if (this._tagSha) {
                this._compareStatus = await GH.compareCommits(this._prBaseBranch(), this._stagingTag());
                this._log("compareStatus: " + this._compareStatus);
-               this._tagFresh = this._tagIsFresh();
+               this._tagFresh = await this._tagIsFresh();
            }
        } catch (e) {
            // XXX: This handling applies to GH.getReference() only.
