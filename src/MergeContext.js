@@ -1164,7 +1164,7 @@ class PullRequest {
 
             // (by default) get rid of the failed staging tag (if any)
             if (!(knownProblem && e.keepStagedRequested()) &&
-                !this._prState.brewing() &&
+                this._prState.staged() &&
                 !this._dryRun("cleanup failed staging tag")) {
                 await GH.deleteReference(this._stagingTag())
                     .catch(deleteReferenceError => {
