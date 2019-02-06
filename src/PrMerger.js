@@ -135,9 +135,7 @@ class PrMerger {
         }
         const prNum = Util.ParseTag(tag.ref);
         Logger.info("PR" + prNum + " is the current");
-        const stagingPr = await GH.getPR(prNum, false);
-        assert(stagingPr.state === "open"); // XXX: No guarantee? Return null instead?
-        return stagingPr;
+        await GH.getPR(prNum, false);
     }
 } // PrMerger
 
