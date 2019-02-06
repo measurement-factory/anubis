@@ -1173,7 +1173,6 @@ class PullRequest {
                 if (!this._dryRun("cleanup failed staging tag"))
                     await GH.deleteReference(this._stagingTag())
                         .catch(deleteReferenceError => {
-                                // TODO: Test that this catch indeed catches deleteReference exceptions
                                 Log.LogError(deleteReferenceError, this._toString() +
                                         " ignoring deleteReference() error while handling a higher-level error");
                                 });
