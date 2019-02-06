@@ -121,9 +121,10 @@ class PrMerger {
 
     // Returns a raw PR with a staged commit (or null).
     // If that PR exists, it is in either a "staged" or "merged" state.
-    // XXX: Or in a (dirty) "closed" state?
+    // Requires _importTags() being run first.
     async _current() {
         Logger.info("Looking for the current PR...");
+        assert(this._tags);
         const stagingSha = await GH.getReference(Config.stagingBranchPath());
         // search for a tag, the staging_branch points to,
         // and parse out PR number from the tag name
