@@ -1162,16 +1162,21 @@ class PullRequest {
             else
                 Log.LogException(e, this._toString() + " process() failure"); // TODO: Convert into a method
 
-            // (by default) get rid of the failed staging tag (if any)
-            if (!(knownProblem && e.keepStagedRequested()) &&
-                this._prState.staged() &&
-                !this._dryRun("cleanup failed staging tag")) {
-                await GH.deleteReference(this._stagingTag())
-                    .catch(deleteReferenceError => {
-                        // TODO: Test that this catch indeed catches deleteReference exceptions
-                        Log.LogError(deleteReferenceError, this._toString() +
-                            " ignoring deleteReference() error while handling a higher-level error");
-                    });
+            const suspended = knownProblem && e.keepStagedRequested(); // whether _exSuspend() occured
+            const unstageRequested = !suspended; // see exception table description
+            // Do we need to delete the staging tag?
+            // brewing: staging tag does not exist
+            // staged: get rid of the failed staging tag (if was requested)
+            // merged: keep the staging tag for pending cleanup
+            if (this._prState.staged() && unstageRequested) {
+
+                if (!this._dryRun("cleanup failed staging tag"))
+                    await GH.deleteReference(this._stagingTag())
+                        .catch(deleteReferenceError => {
+                                // TODO: Test that this catch indeed catches deleteReference exceptions
+                                Log.LogError(deleteReferenceError, this._toString() +
+                                        " ignoring deleteReference() error while handling a higher-level error");
+                                });
             }
 
             // drop staged state and give way to others
