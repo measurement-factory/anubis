@@ -613,18 +613,18 @@ class PullRequest {
 
        try {
            this._tagSha = await GH.getReference(this._stagingTag());
-           if (this._tagSha) {
-               this._compareStatus = await GH.compareCommits(this._prBaseBranch(), this._stagingTag());
-               this._log("compareStatus: " + this._compareStatus);
-               this._tagFresh = await this._tagIsFresh();
-           }
        } catch (e) {
-           // XXX: This handling applies to GH.getReference() only.
-           if (e.name === 'ErrorContext' && e.notFound())
+           if (e.name === 'ErrorContext' && e.notFound()) {
                Log.LogException(e, this._toString() + " " + this._stagingTag() + " not found");
-           else
-               throw e;
+               return;
+           }
+           throw e;
        }
+
+       assert(this._tagSha);
+       this._compareStatus = await GH.compareCommits(this._prBaseBranch(), this._stagingTag());
+       this._log("compareStatus: " + this._compareStatus);
+       this._tagFresh = await this._tagIsFresh();
     }
 
     async _loadLabels() {
