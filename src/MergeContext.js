@@ -1169,7 +1169,7 @@ class PullRequest {
             // staged: get rid of the failed staging tag (if was requested)
             // merged: keep the staging tag for pending cleanup
             if (this._prState.staged() && unstageRequested) {
-
+                this._removeStagingLabels();
                 if (!this._dryRun("cleanup failed staging tag"))
                     await GH.deleteReference(this._stagingTag())
                         .catch(deleteReferenceError => {
@@ -1205,6 +1205,13 @@ class PullRequest {
         this._labels.remove(Config.passedStagingChecksLabel());
         this._labels.remove(Config.waitingStagingChecksLabel());
         // final (set after the PR is merged): Config.mergedLabel()
+    }
+
+    // remove staging-related labels
+    _removeStagingLabels() {
+        this._labels.remove(Config.failedStagingChecksLabel());
+        this._labels.remove(Config.passedStagingChecksLabel());
+        this._labels.remove(Config.waitingStagingChecksLabel());
     }
 
     /* _ex*() methods below are mutually exclusive: first match wins */
