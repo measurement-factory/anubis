@@ -403,7 +403,7 @@ class PullRequest {
         this._requiredContextsCache = null;
 
         this._tagSha = null;
-        this._tagFresh = null;
+        this._tagInSyncWithPrBranch = null;
         this._compareStatus = null;
         this._stagingSha = null;
 
@@ -592,17 +592,17 @@ class PullRequest {
         return this._tagCommitCache;
     }
 
-    // Whether the PR merge commit has not changed since the PR staged commit creation.
+    // Calculates whether the PR staged commit is in sync with the PR branch.
+    // (no new branch commits since PR staged commit creation).
     // Note that it does not track possible conflicts between PR base branch and the
     // PR branch (the PR merge commit is recreated only when there are no conflicts).
     // Conflicts are tracked separately, by checking _prMergeable() flag.
-    async _tagIsFresh() {
+    async _evaluateTagSynchronizationWithPrBranch() {
         const tagCommit = await this._tagCommit();
         const prMergeSha = await GH.getReference(this._mergePath());
         const prCommit = await GH.getCommit(prMergeSha);
-        const result = tagCommit.tree.sha === prCommit.tree.sha;
-        this._log("tag freshness: " + result);
-        return result;
+        this._tagInSyncWithPrBranch = tagCommit.tree.sha === prCommit.tree.sha;
+        this._log("Merge commit and PR branch synchronization: " + this._tagInSyncWithPrBranch);
     }
 
     // loads info about "staging tag" (if any); M-staged-PRnnn tag is a
@@ -624,7 +624,7 @@ class PullRequest {
        assert(this._tagSha);
        this._compareStatus = await GH.compareCommits(this._prBaseBranch(), this._stagingTag());
        this._log("compareStatus: " + this._compareStatus);
-       this._tagFresh = await this._tagIsFresh();
+       await this._evaluateTagSynchronizationWithPrBranch();
     }
 
     async _loadLabels() {
@@ -633,28 +633,15 @@ class PullRequest {
         this._labels = new Labels(labels, this._prNumber());
     }
 
-    // Whether there is a fresh staged commit with failed status checks.
-    // Side effect: removes stale staging tag (TODO: Why?)
-    // Side effect: removes fresh staging tag if tests have not failed (XXX: Why?)
-    async _stagedCommitFailedTests() {
+    async _evaluateStagedCommitFailedTests() {
         await this._loadTag();
         if (!this._tagSha)
-            return false; // no staged commit
-
-        if (this._tagFresh) {
-            const commitStatus = await this._getStagingStatuses();
-            this._log("staging status details: " + commitStatus);
-            if (commitStatus.failed()) {
-                this._log("staging tests failed some time ago");
-                if (!this._prMergeable())
-                    this._log("merge commit did not change due to conflicts with " + this._prBaseBranch());
-                return true; // fresh staged commit with failed status checks
-            }
-            // fresh staged commit with successful (or ongoing) status checks
-        }
-        if (!this._dryRun("deleting staging tag"))
-            await GH.deleteReference(this._stagingTag());
-        return false; // stale staged commit or fresh one with successful (or ongoing) status checks
+            return; // no staged commit
+        const commitStatus = await this._getStagingStatuses();
+        this._log("staging status details: " + commitStatus);
+        this._stagedCommitFailedTests = commitStatus.failed();
+        if (this._stagedCommitFailedTests)
+            this._log("staging tests failed some time ago ");
     }
 
     // Checks whether this PR is still open and still wants to be merged.
@@ -693,6 +680,9 @@ class PullRequest {
         if (this._restrictions.stagingBanned())
             throw this._exSuspend("waiting for another staged PR");
 
+        if (this._stagedCommitFailedTests)
+            throw this._exLabeledFailure("staged commit tests will fail", Config.failedStagingChecksLabel());
+
         // optimization: delay GitHub communication as much as possible
         const statusChecks = await this._getPrStatuses();
         if (statusChecks.failed())
@@ -702,10 +692,6 @@ class PullRequest {
             throw this._exSuspend("waiting for PR checks");
 
         assert(statusChecks.succeeded());
-
-        // optimization: delay GitHub communication as much as possible
-        if (await this._stagedCommitFailedTests())
-            throw this._exLabeledFailure("staged commit tests will fail", Config.failedStagingChecksLabel());
     }
 
     // refreshes Anubis-managed part of the GitHub PR state
@@ -796,7 +782,11 @@ class PullRequest {
 
     _prAuthor() { return this._rawPr.user.login; }
 
-    _prMergeable() { return this._rawPr.mergeable; }
+    _prMergeable() {
+        // requires GH.getPR() call
+        assert(this._rawPr.mergeable !== undefined);
+        return this._rawPr.mergeable;
+    }
 
     _prBaseBranch() { return this._rawPr.base.ref; }
 
@@ -869,11 +859,7 @@ class PullRequest {
             return;
         }
 
-        if (!this._compareStatus) {
-            this._warn("missing compare status");
-            this._prState = PrState.Brewing();
-            return;
-        }
+        assert(this._compareStatus);
 
         if (this._compareStatus === "identical" || this._compareStatus === "behind") {
             this._log("already merged into base some time ago");
@@ -881,20 +867,56 @@ class PullRequest {
             return;
         }
 
+        // The PR branch has changed, delete the stale staged commit to try again.
+        if (!this._tagInSyncWithPrBranch) {
+            this._log("the staged commit became stale due to PR branch changes");
+            if (!this._dryRun("deleting staging tag"))
+                await GH.deleteReference(this._stagingTag());
+            this._prState = PrState.Brewing();
+            return;
+        }
+
+        await this._evaluateStagedCommitFailedTests();
+        // TODO: there is no sense to recreate staged commit which will definitely
+        // fail again (since the PR branch is yet unchanged and the existing errors
+        // such as branch conflicts or PR branch bugs still persist).
+        // However in one (rare?) situation it could be handy, when the failure
+        // was caused by the base branch, which has changed (probably fixing those problems).
+        if (this._stagedCommitFailedTests) {
+            // We could stop processing this PR right here. However we postpone it until
+            // _checkStagingPreconditions(), to let update() and other routines do their work.
+            this._prState = PrState.Brewing();
+            return;
+        }
+
+        const tagInSyncWithBaseBranch = this._compareStatus === "ahead";
+        // Tests were OK, but the base have changed. Delete the stale staged commit to try again.
+        if (!tagInSyncWithBaseBranch) {
+            assert(this._compareStatus === "diverged");
+            this._log("the staged commit became stale due to the base branch changes");
+            if (!this._dryRun("deleting staging tag"))
+                await GH.deleteReference(this._stagingTag());
+            this._prState = PrState.Brewing();
+            return;
+        }
+
+        if (this._restrictions.stagingBanned()) {
+            this._prState = PrState.Brewing();
+            return;
+        }
+
+        // the staging commit is fresh here regarding to both PR branch and base branch
+
         if (!this._stagingSha)
             this._stagingSha = await GH.getReference(Config.stagingBranchPath());
-
-        if (this._stagingSha !== this._tagSha) {
-            this._prState = PrState.Brewing();
-            return;
+        const tagInSyncWithStagingBranch = this._stagingSha === this._tagSha;
+        // Though the staged commit is fresh, the staging branch is out of sync.
+        // We need to adjust the staging branch head.
+        if (!tagInSyncWithStagingBranch) {
+            if (!this._dryRun("set staging branch"))
+                await GH.updateReference(Config.stagingBranchPath(), this._tagSha, true);
         }
 
-        if (!this._tagFresh) {
-            this._prState = PrState.Brewing();
-            return;
-        }
-
-        assert(!this._restrictions.stagingBanned());
         this._prState = PrState.Staged();
     }
 
