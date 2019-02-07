@@ -64,13 +64,22 @@ class PrProblem extends Error {
         Error.captureStackTrace(this, this.constructor);
 
         this.keepStaged_ = false; // catcher should preserve the staged commit
+        // Catcher should relinquish control to other PRs despite having the staged commit.
+        // Valid only when keepStaged_ is on.
+        this._dropStagingBan = null;
     }
 
     keepStagedRequested() { return this.keepStaged_; }
+    dropStagingBanRequested() { return this._dropStagingBan; }
 
     requestToKeepStaged() {
         assert(!this.keepStagedRequested());
         this.keepStaged_ = true;
+    }
+
+    requestToDropStagingBan() {
+        assert(!this.dropStagingBanRequested());
+        this._dropStagingBan = true;
     }
 }
 
@@ -921,8 +930,10 @@ class PullRequest {
         // Though the staged commit is fresh, the staging branch is out of sync.
         // We need to adjust the staging branch head.
         if (!tagInSyncWithStagingBranch) {
-            if (!this._dryRun("set staging branch"))
+            if (!this._dryRun("set staging branch")) {
+                // staging tests will restart after that
                 await GH.updateReference(Config.stagingBranchPath(), this._tagSha, true);
+            }
         }
 
         this._prState = PrState.Staged();
@@ -953,7 +964,7 @@ class PullRequest {
 
         if (stagingStatus.failed()) {
             this._labels.add(Config.failedStagingChecksLabel());
-            throw this._exSuspend("staging tests failed");
+            throw this._exSuspendedFailure("staging tests failed");
         }
 
         if (!stagingStatus.final()) {
@@ -1209,7 +1220,7 @@ class PullRequest {
             }
 
             // drop staged state and give way to others
-            if (this._prState.staged())
+            if (this._prState.staged() && e.dropStagingBanRequested())
                 this._prState = PrState.Brewing();
 
             if (knownProblem)
@@ -1258,6 +1269,16 @@ class PullRequest {
         assert(arguments.length === 1);
         let problem = new PrProblem(why);
         problem.requestToKeepStaged();
+        return problem;
+    }
+
+    // reprocessing from scratch required, but keep PR GitHub tag
+    // until the problem is fixed
+    _exSuspendedFailure(why) {
+        assert(arguments.length === 1);
+        let problem = new PrProblem(why);
+        problem.requestToKeepStaged();
+        problem.requestToDropStagingBan();
         return problem;
     }
 
