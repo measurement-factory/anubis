@@ -63,18 +63,18 @@ class PrProblem extends Error {
         this.name = this.constructor.name;
         Error.captureStackTrace(this, this.constructor);
 
-        this.keepStaged_ = false; // catcher should preserve the staged commit
+        this._keepStaged = false; // catcher should preserve the staged commit
         // Catcher should relinquish control to other PRs despite having the staged commit.
-        // Valid only when keepStaged_ is on.
+        // Valid only when _keepStaged is on.
         this._dropStagingBan = null;
     }
 
-    keepStagedRequested() { return this.keepStaged_; }
+    keepStagedRequested() { return this._keepStaged; }
     dropStagingBanRequested() { return this._dropStagingBan; }
 
     requestToKeepStaged() {
         assert(!this.keepStagedRequested());
-        this.keepStaged_ = true;
+        this._keepStaged = true;
     }
 
     requestToDropStagingBan() {
