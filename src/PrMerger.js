@@ -135,7 +135,7 @@ class PrMerger {
         }
         const prNum = Util.ParseTag(tag.ref);
         Logger.info("PR" + prNum + " is the current");
-        await GH.getPR(prNum, false);
+        return await GH.getPR(prNum, false);
     }
 } // PrMerger
 
