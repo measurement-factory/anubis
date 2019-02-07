@@ -540,7 +540,7 @@ class PullRequest {
             this._requiredContextsCache = await GH.getProtectedBranchRequiredStatusChecks(this._prBaseBranch());
         } catch (e) {
            if (e.name === 'ErrorContext' && e.notFound())
-               Log.LogException(e, this._toString() + " no status checks are required");
+               this._logEx(e, "no status checks are required");
            else
                throw e;
         }
@@ -615,7 +615,7 @@ class PullRequest {
            this._tagSha = await GH.getReference(this._stagingTag());
        } catch (e) {
            if (e.name === 'ErrorContext' && e.notFound()) {
-               Log.LogException(e, this._toString() + " " + this._stagingTag() + " not found");
+               this._logEx(e, this._stagingTag() + " not found");
                return;
            }
            throw e;
@@ -825,6 +825,14 @@ class PullRequest {
         Log.Logger.warn(this._debugString(), msg);
     }
 
+    _logError(e, msg) {
+        Log.LogError(e, this._toString() + ' ' + msg);
+    }
+
+    _logEx(e, msg) {
+        Log.LogException(e, this._toString() + ' ' + msg);
+    }
+
     // TODO: Rename to _readOnly()
     // whether all GitHub/repository changes are prohibited
     _dryRun(msg) {
@@ -848,7 +856,7 @@ class PullRequest {
             const compareStatus = await GH.compareCommits(this._prBaseBranch(), this._stagingTag());
             return compareStatus === "diverged";
         } catch (e) {
-            Log.LogException(e, this._toString() + " compare commits failed");
+            this._logEx(e, "compare commits failed");
             return false;
         }
     }
@@ -1182,7 +1190,7 @@ class PullRequest {
             if (knownProblem)
                 this._log("did not merge: " + e.message);
             else
-                Log.LogException(e, this._toString() + " process() failure"); // TODO: Convert into a method
+                this._logEx(e, "process() failure");
 
             const suspended = knownProblem && e.keepStagedRequested(); // whether _exSuspend() occured
             const unstageRequested = !suspended; // see exception table description
@@ -1195,8 +1203,8 @@ class PullRequest {
                 if (!this._dryRun("cleanup failed staging tag"))
                     await GH.deleteReference(this._stagingTag())
                         .catch(deleteReferenceError => {
-                                Log.LogError(deleteReferenceError, this._toString() +
-                                        " ignoring deleteReference() error while handling a higher-level error");
+                                this._logError(deleteReferenceError,
+                                        "ignoring deleteReference() error while handling a higher-level error");
                                 });
             }
 
