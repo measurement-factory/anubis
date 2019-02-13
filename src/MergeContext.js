@@ -933,9 +933,8 @@ class PullRequest {
 
         if (!this._stagingSha)
             this._stagingSha = await GH.getReference(Config.stagingBranchPath());
+        // Make sure the staging branch points to our fresh staged commit.
         const tagInSyncWithStagingBranch = this._stagingSha === this._tagSha;
-        // Though the staged commit is fresh, the staging branch is out of sync.
-        // We need to adjust the staging branch head.
         // TODO: Why adjust the staging branch here? Our goal is to _compute_
         // this._prState, not to sync the repository with that state!
         if (!tagInSyncWithStagingBranch) {
