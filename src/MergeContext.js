@@ -399,7 +399,7 @@ class PrRestrictions
 // Determines the feature branch position relative to its base branch: ahead,
 // merged, or diverged. This class essentially decides whether/which one of
 // the two branches is fully contained in another.
-class BranchComparator
+class BranchPosition
 {
     constructor(baseRef, featureRef) {
         assert(baseRef !== featureRef);
@@ -408,7 +408,7 @@ class BranchComparator
         this._status = null;
     }
 
-    async compare() {
+    async compute() {
         this._status = await GH.compareCommits(this._baseRef, this._featureRef);
     }
 
@@ -451,7 +451,7 @@ class PullRequest {
         this._requiredContextsCache = null;
 
         this._tagSha = null;
-        this._stagedToBaseComparator = null;
+        this._stagedPosition = null;
         this._stagedCommitWillFail = null;
         this._stagingSha = null;
 
@@ -646,8 +646,8 @@ class PullRequest {
     // PR branch (the PR merge commit is recreated only when there are no conflicts).
     // Conflicts are tracked separately, by checking _prMergeable() flag.
     async _tagIsFresh() {
-        assert(this._stagedToBaseComparator);
-        if (!this._stagedToBaseComparator.ahead())
+        assert(this._stagedPosition);
+        if (!this._stagedPosition.ahead())
             return false;
 
         const tagCommit = await this._tagCommit();
@@ -895,10 +895,10 @@ class PullRequest {
             return;
         }
 
-        this._stagedToBaseComparator = new BranchComparator(this._prBaseBranch(), this._stagingTag());
-        await this._stagedToBaseComparator.compare();
+        this._stagedPosition = new BranchPosition(this._prBaseBranch(), this._stagingTag());
+        await this._stagedPosition.compute();
 
-        if (this._stagedToBaseComparator.merged()) {
+        if (this._stagedPosition.merged()) {
             this._log("already merged into base some time ago");
             this._prState = PrState.Merged();
             return;
@@ -914,7 +914,7 @@ class PullRequest {
             return;
         }
 
-        assert(this._stagedToBaseComparator.ahead());
+        assert(this._stagedPosition.ahead());
 
         const stagingStatuses = await this._getStagingStatuses();
         // Do not vainly recreate staged commit which will definitely fail again,
@@ -1084,8 +1084,8 @@ class PullRequest {
 
     async _mergeToBase() {
         assert(this._tagSha);
-        assert(this._stagedToBaseComparator);
-        assert(this._stagedToBaseComparator.ahead());
+        assert(this._stagedPosition);
+        assert(this._stagedPosition.ahead());
         this._log("merging to base...");
 
         if (this._dryRun("merging to base"))
@@ -1098,8 +1098,8 @@ class PullRequest {
             await GH.updateReference(this._prBaseBranchPath(), this._tagSha, false);
         } catch (e) {
             if (e.name === 'ErrorContext' && e.unprocessable()) {
-                await this._stagedToBaseComparator().compare();
-                if (this._stagedToBaseComparator.diverged())
+                await this._stagedPosition().compute();
+                if (this._stagedPosition.diverged())
                     throw new Error("failed to fast-forward to the staged commit");
             }
             throw e;
@@ -1138,9 +1138,9 @@ class PullRequest {
         const tempCommitSha = await GH.createCommit(mergeCommit.tree.sha, this._prMessage(), [baseSha], mergeCommit.author, committer);
         this._tagSha = await GH.createReference(tempCommitSha, "refs/" + this._stagingTag());
 
-        this._stagedToBaseComparator = new BranchComparator(this._prBaseBranch(), this._stagingTag());
-        await this._stagedToBaseComparator.compare();
-        assert(this._stagedToBaseComparator.ahead());
+        this._stagedPosition = new BranchPosition(this._prBaseBranch(), this._stagingTag());
+        await this._stagedPosition.compute();
+        assert(this._stagedPosition.ahead());
 
         await GH.updateReference(Config.stagingBranchPath(), this._tagSha, true);
         this._prState = PrState.Staged();
