@@ -401,15 +401,15 @@ class PrRestrictions
 // the two branches is fully contained in another.
 class BranchComparator
 {
-    constructor(baseRef, branchRef) {
-        assert(baseRef !== branchRef);
+    constructor(baseRef, featureRef) {
+        assert(baseRef !== featureRef);
         this._baseRef = baseRef;
-        this._branchRef = branchRef;
+        this._featureRef = featureRef;
         this._status = null;
     }
 
     async compare() {
-        this._status = await GH.compareCommits(this._baseRef, this._branchRef);
+        this._status = await GH.compareCommits(this._baseRef, this._featureRef);
     }
 
     // feature > base:
