@@ -396,7 +396,9 @@ class PrRestrictions
     }
 }
 
-// Compare two different branches
+// Determines the feature branch position relative to its base branch: ahead,
+// merged, or diverged. This class essentially decides whether/which one of
+// the two branches is fully contained in another.
 class BranchComparator
 {
     constructor(baseRef, branchRef) {
@@ -410,20 +412,23 @@ class BranchComparator
         this._status = await GH.compareCommits(this._baseRef, this._branchRef);
     }
 
-    // there are new commits on the branch since the common ancestor with base
+    // feature > base:
+    // the feature branch contains the base branch and some additional commits
     ahead() {
         assert(this._status);
         return this._status === "ahead";
     }
 
-    // either both branches point to same commit (just merged) or
-    // there are new commits on base since the common ancestor with the branch (merged some time ago)
+    // feature <= base:
+    // either both branches point to same commit (e.g., just merged) or
+    // there are new commits on base since the feature branch was merged
     merged() {
         assert(this._status);
         return this._status === "identical" || this._status === "behind";
     }
 
-    // both base and the branch have new commits since their common ancestor
+    // neither ahead nor merged:
+    // both base and the feature branch have unique-to-them commits
     diverged() {
         assert(this._status);
         return this._status === "diverged";
