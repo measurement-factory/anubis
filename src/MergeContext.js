@@ -907,6 +907,8 @@ class PullRequest {
         // Delete the stale staged commit to try again.
         if (!(await this._tagIsFresh())) {
             this._log("the staged commit became stale due to PR branch and(or) base branch changes");
+            // TODO: Why delete the stale tag here? Our goal is to _compute_
+            // this._prState, not to sync the repository with that state!
             if (!this._dryRun("deleting staging tag"))
                 await GH.deleteReference(this._stagingTag());
             this._prState = PrState.Brewing();
@@ -934,6 +936,8 @@ class PullRequest {
         const tagInSyncWithStagingBranch = this._stagingSha === this._tagSha;
         // Though the staged commit is fresh, the staging branch is out of sync.
         // We need to adjust the staging branch head.
+        // TODO: Why adjust the staging branch here? Our goal is to _compute_
+        // this._prState, not to sync the repository with that state!
         if (!tagInSyncWithStagingBranch) {
             if (!this._dryRun("set staging branch")) {
                 // forces staging tests to restart
