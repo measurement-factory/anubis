@@ -396,6 +396,40 @@ class PrRestrictions
     }
 }
 
+// Compare two different branches
+class BranchComparator
+{
+    constructor(baseRef, branchRef) {
+        assert(baseRef !== branchRef);
+        this._baseRef = baseRef;
+        this._branchRef = branchRef;
+        this._status = null;
+    }
+
+    async compare() {
+        this._status = await GH.compareCommits(this._baseRef, this._branchRef);
+    }
+
+    // there are new commits on the branch since the common ancestor with base
+    ahead() {
+        assert(this._status);
+        return this._status === "ahead";
+    }
+
+    // either both branches point to same commit (just merged) or
+    // there are new commits on base since the common ancestor with the branch (merged some time ago)
+    merged() {
+        assert(this._status);
+        return this._status === "identical" || this._status === "behind";
+    }
+
+    // both base and the branch have new commits since their common ancestor
+    diverged() {
+        assert(this._status);
+        return this._status === "diverged";
+    }
+}
+
 // a single GitHub pull request
 class PullRequest {
 
@@ -412,8 +446,8 @@ class PullRequest {
         this._requiredContextsCache = null;
 
         this._tagSha = null;
-        this._tagInSyncWithPrBranch = null;
-        this._compareStatus = null;
+        this._stagedToBaseComparator = null;
+        this._stagedCommitWillFail = null;
         this._stagingSha = null;
 
         // optimization: cached _tagCommit() result
@@ -606,12 +640,17 @@ class PullRequest {
     // Note that it does not track possible conflicts between PR base branch and the
     // PR branch (the PR merge commit is recreated only when there are no conflicts).
     // Conflicts are tracked separately, by checking _prMergeable() flag.
-    async _evaluateTagSynchronizationWithPrBranch() {
+    async _tagIsFresh() {
+        assert(this._stagedToBaseComparator);
+        if (!this._stagedToBaseComparator.ahead())
+            return false;
+
         const tagCommit = await this._tagCommit();
         const prMergeSha = await GH.getReference(this._mergePath());
         const prCommit = await GH.getCommit(prMergeSha);
-        this._tagInSyncWithPrBranch = tagCommit.tree.sha === prCommit.tree.sha;
-        this._log("Merge commit and PR branch synchronization: " + this._tagInSyncWithPrBranch);
+        const tagInSyncWithPrBranch = tagCommit.tree.sha === prCommit.tree.sha;
+        this._log("Merge commit and PR branch synchronization: " + tagInSyncWithPrBranch);
+        return tagInSyncWithPrBranch;
     }
 
     // loads info about "staging tag" (if any); M-staged-PRnnn tag is a
@@ -629,28 +668,12 @@ class PullRequest {
            }
            throw e;
        }
-
-       assert(this._tagSha);
-       this._compareStatus = await GH.compareCommits(this._prBaseBranch(), this._stagingTag());
-       this._log("compareStatus: " + this._compareStatus);
-       await this._evaluateTagSynchronizationWithPrBranch();
     }
 
     async _loadLabels() {
         let labels = await GH.getLabels(this._prNumber());
         assert(!this._labels);
         this._labels = new Labels(labels, this._prNumber());
-    }
-
-    async _evaluateStagedCommitFailedTests() {
-        await this._loadTag();
-        if (!this._tagSha)
-            return; // no staged commit
-        const commitStatus = await this._getStagingStatuses();
-        this._log("staging status details: " + commitStatus);
-        this._stagedCommitFailedTests = commitStatus.failed();
-        if (this._stagedCommitFailedTests)
-            this._log("staging tests failed some time ago ");
     }
 
     // Checks whether this PR is still open and still wants to be merged.
@@ -689,7 +712,7 @@ class PullRequest {
         if (this._restrictions.stagingBanned())
             throw this._exSuspend("waiting for another staged PR");
 
-        if (this._stagedCommitFailedTests)
+        if (this._stagedCommitWillFail)
             throw this._exLabeledFailure("staged commit tests will fail", Config.failedStagingChecksLabel());
 
         // optimization: delay GitHub communication as much as possible
@@ -858,61 +881,40 @@ class PullRequest {
         return str + ")";
     }
 
-    // whether the staged commit and the base HEAD have independent,
-    // (probably conflicting) changes
-    async _tagDiverged() {
-        try {
-            const compareStatus = await GH.compareCommits(this._prBaseBranch(), this._stagingTag());
-            return compareStatus === "diverged";
-        } catch (e) {
-            this._logEx(e, "compare commits failed");
-            return false;
-        }
-    }
-
     async _loadPrState() {
         if (!this._tagSha) {
             this._prState = PrState.Brewing();
             return;
         }
 
-        assert(this._compareStatus);
+        this._stagedToBaseComparator = new BranchComparator(this._prBaseBranch(), this._stagingTag());
+        await this._stagedToBaseComparator.compare();
 
-        if (this._compareStatus === "identical" || this._compareStatus === "behind") {
+        if (this._stagedToBaseComparator.merged()) {
             this._log("already merged into base some time ago");
             this._prState = PrState.Merged();
             return;
         }
 
-        // The PR branch has changed, delete the stale staged commit to try again.
-        if (!this._tagInSyncWithPrBranch) {
-            this._log("the staged commit became stale due to PR branch changes");
+        // The staged commit became out of sync with PR and(or) base branches.
+        // Delete the stale staged commit to try again.
+        if (!(await this._tagIsFresh())) {
+            this._log("the staged commit became stale due to PR branch and(or) base branch changes");
             if (!this._dryRun("deleting staging tag"))
                 await GH.deleteReference(this._stagingTag());
             this._prState = PrState.Brewing();
             return;
         }
 
-        await this._evaluateStagedCommitFailedTests();
-        // TODO: there is no sense to recreate staged commit which will definitely
-        // fail again (since the PR branch is yet unchanged and the existing errors
-        // such as branch conflicts or PR branch bugs still persist).
-        // However in one (rare?) situation it could be handy, when the failure
-        // was caused by the base branch, which has changed (probably fixing those problems).
-        if (this._stagedCommitFailedTests) {
+        assert(this._stagedToBaseComparator.ahead());
+
+        const stagingStatuses = await this._getStagingStatuses();
+        // Do not vainly recreate staged commit which will definitely fail again,
+        // since the PR+base code is yet unchanged and the existing errors still persist
+        if (stagingStatuses.failed()) {
             // We could stop processing this PR right here. However we postpone it until
             // _checkStagingPreconditions(), to let update() and other routines do their work.
-            this._prState = PrState.Brewing();
-            return;
-        }
-
-        const tagInSyncWithBaseBranch = this._compareStatus === "ahead";
-        // Tests were OK, but the base have changed. Delete the stale staged commit to try again.
-        if (!tagInSyncWithBaseBranch) {
-            assert(this._compareStatus === "diverged");
-            this._log("the staged commit became stale due to the base branch changes");
-            if (!this._dryRun("deleting staging tag"))
-                await GH.deleteReference(this._stagingTag());
+            this._stagedCommitWillFail = true;
             this._prState = PrState.Brewing();
             return;
         }
@@ -922,8 +924,6 @@ class PullRequest {
             return;
         }
 
-        // the staging commit is fresh here regarding to both PR branch and base branch
-
         if (!this._stagingSha)
             this._stagingSha = await GH.getReference(Config.stagingBranchPath());
         const tagInSyncWithStagingBranch = this._stagingSha === this._tagSha;
@@ -931,7 +931,7 @@ class PullRequest {
         // We need to adjust the staging branch head.
         if (!tagInSyncWithStagingBranch) {
             if (!this._dryRun("set staging branch")) {
-                // staging tests will restart after that
+                // forces staging tests to restart
                 await GH.updateReference(Config.stagingBranchPath(), this._tagSha, true);
             }
         }
@@ -1076,7 +1076,8 @@ class PullRequest {
 
     async _mergeToBase() {
         assert(this._tagSha);
-        assert(this._compareStatus === "ahead");
+        assert(this._stagedToBaseComparator);
+        assert(this._stagedToBaseComparator.ahead());
         this._log("merging to base...");
 
         if (this._dryRun("merging to base"))
@@ -1089,7 +1090,8 @@ class PullRequest {
             await GH.updateReference(this._prBaseBranchPath(), this._tagSha, false);
         } catch (e) {
             if (e.name === 'ErrorContext' && e.unprocessable()) {
-                if (await this._tagDiverged())
+                await this._stagedToBaseComparator().compare();
+                if (this._stagedToBaseComparator.diverged())
                     throw new Error("failed to fast-forward to the staged commit");
             }
             throw e;
@@ -1127,7 +1129,11 @@ class PullRequest {
 
         const tempCommitSha = await GH.createCommit(mergeCommit.tree.sha, this._prMessage(), [baseSha], mergeCommit.author, committer);
         this._tagSha = await GH.createReference(tempCommitSha, "refs/" + this._stagingTag());
-        this._compareStatus = "ahead";
+
+        this._stagedToBaseComparator = new BranchComparator(this._prBaseBranch(), this._stagingTag());
+        await this._stagedToBaseComparator.compare();
+        assert(this._stagedToBaseComparator.ahead());
+
         await GH.updateReference(Config.stagingBranchPath(), this._tagSha, true);
         this._prState = PrState.Staged();
     }
