@@ -841,8 +841,9 @@ class PullRequest {
     staged() { return this._prState.staged(); }
 
     _debugString() {
+        const staged = this._stagingSha ? "staged: " + this._stagingSha.substr(0, this._shaLimit) + ' ' : "";
         const detail =
-            "head: " + this._rawPr.head.sha.substr(0, this._shaLimit) + ' ' +
+            "head: " + this._rawPr.head.sha.substr(0, this._shaLimit) + ' ' + staged +
             "history: " + this._breadcrumbs.join();
         return "PR" + this._rawPr.number + ` (${detail})`;
     }
