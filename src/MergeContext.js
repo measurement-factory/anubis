@@ -926,6 +926,12 @@ class PullRequest {
             return;
         }
 
+        // TODO: It feels wrong than an external restriction affects this PR
+        // state. Yes, this PR cannot be staged, but that does not mean (from
+        // this state-computing code point of view) that this PR is not, say,
+        // PrState.Staged(). I suspect this TODO will be easier to address
+        // after addressing the "Why are we modifying the repository in a
+        // load() method?!" TODO below.
         if (this._restrictions.stagingBanned()) {
             this._prState = PrState.Brewing();
             return;
@@ -972,6 +978,12 @@ class PullRequest {
 
         if (stagingStatus.failed()) {
             this._labels.add(Config.failedStagingChecksLabel());
+            // keep the staged commit tagged to avoid ...(XXX). TODO: It is
+            // not clear what general problems we can solve by keeping this PR
+            // tagged while allowing staging of other PRs. When the next PR
+            // gets staged, this PR will enter brewing state (by that state
+            // definition), and we will be exactly where we would be if we
+            // simply unstage here and now.
             throw this._exSuspendedFailure("staging tests failed");
         }
 
@@ -1098,6 +1110,8 @@ class PullRequest {
         } catch (e) {
             if (e.name === 'ErrorContext' && e.unprocessable()) {
                 await this._stagedPosition().compute();
+                // TODO: Test whether the staged commit is now a part of
+                // the base branch. .deverged() is not checking exactly that!
                 if (this._stagedPosition.diverged())
                     throw new Error("failed to fast-forward to the staged commit");
             }
@@ -1220,9 +1234,23 @@ class PullRequest {
             const unstageRequested = !suspended; // see exception table description
             // Do we need to delete the staging tag?
             // brewing: staging tag does not exist
-            // staged: get rid of the failed staging tag (if was requested)
+            // staged: get rid of the failed staging tag (unless keepStagedRequested())
             // merged: keep the staging tag for pending cleanup
+
+            // XXX: A brewing PR may still have a staging tag -- we adjust PR
+            // state for many reasons, some not related to tag existence. We
+            // should delete that stale tag here (by default; if any).
+
+            // XXX: Deleting the tag of a failed merged PR will result in that
+            // PR becoming "brewing" on the next scan, and an attempt to merge
+            // the same changes again. That is why we must never untag merged
+            // PRs after _finalize() failures AFAICT (and not because we want
+            // to wait for the pending cleanup that does not even apply to
+            // open merged PRs IIRC).
             if (this._prState.staged() && unstageRequested) {
+                // TODO: Also reset this._prState to PrState.Brewing().
+                // TODO: All this code should probably be moved to _unstage()
+                // which should call _untag() if brewering PRs need untagging.
                 this._removeStagingLabels();
                 if (!this._dryRun("cleanup failed staging tag"))
                     await GH.deleteReference(this._stagingTag())
@@ -1232,7 +1260,10 @@ class PullRequest {
                                 });
             }
 
-            // drop staged state and give way to others
+            // Drop staged state and give way to others. This is an ugly hack:
+            // We should not be lying about PR state or even know that our PR
+            // state creates a staging ban for other PRs.
+            // XXX: e may not be knownProblem and, hence, may not have dropStagingBanRequested()
             if (this._prState.staged() && e.dropStagingBanRequested())
                 this._prState = PrState.Brewing();
 
@@ -1260,7 +1291,7 @@ class PullRequest {
         // final (set after the PR is merged): Config.mergedLabel()
     }
 
-    // remove staging-related labels
+    // remove labels that only make sense for a staged PR
     _removeStagingLabels() {
         this._labels.remove(Config.failedStagingChecksLabel());
         this._labels.remove(Config.passedStagingChecksLabel());

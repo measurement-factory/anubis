@@ -93,7 +93,7 @@ class PrMerger {
         Logger.info("PR processing order:", this._prNumbers());
     }
 
-    // forgets PR-unrelated tags and
+    // remembers still-relevant PR tags and
     // deletes (from GitHub) PR tags which do not have a corresponding open PR
     async _importTags(rawTags) {
         assert(rawTags);
@@ -135,6 +135,9 @@ class PrMerger {
         }
         const prNum = Util.ParseTag(tag.ref);
         Logger.info("PR" + prNum + " is the current");
+        // XXX: This PR was open during GH.getOpenPrs() but it may be closed
+        // now. We are getting fresh info from GitHub and should not assume
+        // that nothing has changed! Return null for now-closed staged PRs?
         return await GH.getPR(prNum, false);
     }
 } // PrMerger
