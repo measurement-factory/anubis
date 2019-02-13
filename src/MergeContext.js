@@ -866,6 +866,8 @@ class PullRequest {
         Log.LogException(e, this._toString() + ' ' + msg);
     }
 
+    // TODO: consider moving this and other similar checks
+    // directly into GH methods
     // TODO: Rename to _readOnly()
     // whether all GitHub/repository changes are prohibited
     _dryRun(msg) {
