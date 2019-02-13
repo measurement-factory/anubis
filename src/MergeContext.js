@@ -646,7 +646,6 @@ class PullRequest {
     // PR branch (the PR merge commit is recreated only when there are no conflicts).
     // Conflicts are tracked separately, by checking _prMergeable() flag.
     async _tagIsFresh() {
-        assert(this._stagedPosition);
         if (!this._stagedPosition.ahead())
             return false;
 
@@ -1084,7 +1083,6 @@ class PullRequest {
 
     async _mergeToBase() {
         assert(this._tagSha);
-        assert(this._stagedPosition);
         assert(this._stagedPosition.ahead());
         this._log("merging to base...");
 
