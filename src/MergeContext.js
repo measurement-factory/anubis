@@ -919,8 +919,6 @@ class PullRequest {
         // Do not vainly recreate staged commit which will definitely fail again,
         // since the PR+base code is yet unchanged and the existing errors still persist
         if (stagingStatuses.failed()) {
-            // We could stop processing this PR right here. However we postpone it until
-            // _checkStagingPreconditions(), to let update() and other routines do their work.
             this._stagedCommitWillFail = true;
             this._prState = PrState.Brewing();
             return;
