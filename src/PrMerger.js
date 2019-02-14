@@ -124,7 +124,6 @@ class PrMerger {
     // Requires _importTags() being run first.
     async _current() {
         Logger.info("Looking for the current PR...");
-        assert(this._tags);
         const stagingSha = await GH.getReference(Config.stagingBranchPath());
         // search for a tag, the staging_branch points to,
         // and parse out PR number from the tag name
