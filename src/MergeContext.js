@@ -646,6 +646,7 @@ class PullRequest {
     // PR branch (the PR merge commit is recreated only when there are no conflicts).
     // Conflicts are tracked separately, by checking _prMergeable() flag.
     async _tagIsFresh() {
+        assert(this._tagSha);
         if (!this._stagedPosition.ahead())
             return false;
 
@@ -904,13 +905,8 @@ class PullRequest {
         }
 
         // The staged commit became out of sync with PR and(or) base branches.
-        // Delete the stale staged commit to try again.
         if (!(await this._tagIsFresh())) {
             this._log("the staged commit became stale due to PR branch and(or) base branch changes");
-            // TODO: Why delete the stale tag here? Our goal is to _compute_
-            // this._prState, not to sync the repository with that state!
-            if (!this._dryRun("deleting staging tag"))
-                await GH.deleteReference(this._stagingTag());
             this._prState = PrState.Brewing();
             return;
         }
@@ -926,30 +922,15 @@ class PullRequest {
             return;
         }
 
-        // TODO: It feels wrong than an external restriction affects this PR
-        // state. Yes, this PR cannot be staged, but that does not mean (from
-        // this state-computing code point of view) that this PR is not, say,
-        // PrState.Staged(). I suspect this TODO will be easier to address
-        // after addressing the "Why are we modifying the repository in a
-        // load() method?!" TODO below.
-        if (this._restrictions.stagingBanned()) {
+        if (!this._stagingSha)
+            this._stagingSha = await GH.getReference(Config.stagingBranchPath());
+        // Make sure the staging branch points to our fresh staged commit.
+        if (this._stagingSha !== this._tagSha) {
             this._prState = PrState.Brewing();
             return;
         }
 
-        if (!this._stagingSha)
-            this._stagingSha = await GH.getReference(Config.stagingBranchPath());
-        // Make sure the staging branch points to our fresh staged commit.
-        const tagInSyncWithStagingBranch = this._stagingSha === this._tagSha;
-        // TODO: Why adjust the staging branch here? Our goal is to _compute_
-        // this._prState, not to sync the repository with that state!
-        if (!tagInSyncWithStagingBranch) {
-            if (!this._dryRun("set staging branch")) {
-                // forces staging tests to restart
-                await GH.updateReference(Config.stagingBranchPath(), this._tagSha, true);
-            }
-        }
-
+        assert(!this._restrictions.stagingBanned());
         this._prState = PrState.Staged();
     }
 
@@ -978,12 +959,10 @@ class PullRequest {
 
         if (stagingStatus.failed()) {
             this._labels.add(Config.failedStagingChecksLabel());
-            // keep the staged commit tagged to avoid ...(XXX). TODO: It is
-            // not clear what general problems we can solve by keeping this PR
-            // tagged while allowing staging of other PRs. When the next PR
-            // gets staged, this PR will enter brewing state (by that state
-            // definition), and we will be exactly where we would be if we
-            // simply unstage here and now.
+            // Keep the staged commit tagged to avoid endless merge commit recreation
+            // (and CI reruns) until the PR branch code is modified (i.e., either PR
+            // branch or the base branch get some changes), probably fixing/ the existing
+            // problems.
             throw this._exSuspendedFailure("staging tests failed");
         }
 
@@ -1147,6 +1126,11 @@ class PullRequest {
 
         if (this._dryRun("create staged commit"))
             throw this._exSuspend("dryRun");
+
+        if (this._tagSha) {
+            await GH.deleteReference(this._stagingTag());
+            this._tagSha = null;
+        }
 
         const tempCommitSha = await GH.createCommit(mergeCommit.tree.sha, this._prMessage(), [baseSha], mergeCommit.author, committer);
         this._tagSha = await GH.createReference(tempCommitSha, "refs/" + this._stagingTag());
