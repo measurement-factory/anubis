@@ -1089,10 +1089,8 @@ class PullRequest {
         } catch (e) {
             if (e.name === 'ErrorContext' && e.unprocessable()) {
                 await this._stagedPosition().compute();
-                // TODO: Test whether the staged commit is now a part of
-                // the base branch. .deverged() is not checking exactly that!
                 if (this._stagedPosition.diverged())
-                    throw new Error("failed to fast-forward to the staged commit");
+                    this._log("could not fast-forward, the base " + this._prBaseBranchPath() + " seems to be modified just now");
             }
             throw e;
         }
