@@ -1245,8 +1245,7 @@ class PullRequest {
             // Drop staged state and give way to others. This is an ugly hack:
             // We should not be lying about PR state or even know that our PR
             // state creates a staging ban for other PRs.
-            // XXX: e may not be knownProblem and, hence, may not have dropStagingBanRequested()
-            if (this._prState.staged() && e.dropStagingBanRequested())
+            if (this._prState.staged() && knownProblem && e.dropStagingBanRequested())
                 this._prState = PrState.Brewing();
 
             if (knownProblem)
