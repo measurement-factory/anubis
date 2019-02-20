@@ -143,12 +143,8 @@ class PrMerger {
 } // PrMerger
 
 // PrMerger's create and execute() wrapper.
-async function Step() {
+module.exports = async function Step() {
     let mergerer = new PrMerger();
     return mergerer.execute();
-}
-
-module.exports = {
-    Step: Step,
 };
 

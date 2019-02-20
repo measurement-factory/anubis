@@ -64,9 +64,7 @@ class RepoMerger {
                 this._rerun = false;
                 if (!this._server)
                     await this._createServer();
-                // TODO: export Step() like assert exports assert() so that
-                // we do not have to do write Step.Step().
-                rerunIn = await Step.Step();
+                rerunIn = await Step();
             } catch (e) {
                 Log.LogError(e, "RepoMerger.run");
                 this._rerun = true;
