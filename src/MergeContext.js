@@ -44,7 +44,7 @@ class ProcessResult
 
 // Relaying process() outcome to the caller via doProcess() exceptions:
 //
-// Exception          Unstage  Push-Labels  Result-of-process()
+// Exception          Abandon  Push-Labels  Result-of-process()
 // _exLostControl()     yes      no           approval delay (if any)
 // _exObviousFailure()  yes      yes          approval delay (if any)
 // _exLabeledFailure()  yes      yes          approval delay (if any)
@@ -64,22 +64,13 @@ class PrProblem extends Error {
         Error.captureStackTrace(this, this.constructor);
 
         this._keepStaged = false; // catcher should preserve the staged commit
-        // Catcher should relinquish control to other PRs despite having the staged commit.
-        // Valid only when _keepStaged is on.
-        this._dropStagingBan = null;
     }
 
     keepStagedRequested() { return this._keepStaged; }
-    dropStagingBanRequested() { return this._dropStagingBan; }
 
     requestToKeepStaged() {
         assert(!this.keepStagedRequested());
         this._keepStaged = true;
-    }
-
-    requestToDropStagingBan() {
-        assert(!this.dropStagingBanRequested());
-        this._dropStagingBan = true;
     }
 }
 
@@ -338,7 +329,10 @@ class Labels
 }
 
 // A state of an open pull request (with regard to merging progress). One of:
-// brewing: without a staged commit; PRs are created in this state
+// brewing:
+//   a) without a staged commit (PRs are created in this state);
+//   b) with a fresh staged commit having failed checks, which is kept until it becomes stale
+//   c) with a stale staged commit which will be deleted before creation a new one
 // staged: with a staged commit that has not been merged into the base branch
 // merged: with a staged commit that has been merged into the base branch
 // Here, PR "staged commit" is a commit at the tip of the staging branch
@@ -957,14 +951,8 @@ class PullRequest {
         const stagingStatus = await this._getStagingStatuses();
         this._log("staging status details: " + stagingStatus);
 
-        if (stagingStatus.failed()) {
-            this._labels.add(Config.failedStagingChecksLabel());
-            // Keep the staged commit tagged to avoid endless merge commit recreation
-            // (and CI reruns) until the PR branch code is modified (i.e., either PR
-            // branch or the base branch get some changes), probably fixing/ the existing
-            // problems.
-            throw this._exSuspendedFailure("staging tests failed");
-        }
+        if (stagingStatus.failed())
+            throw this._exLabeledFailure("staging tests failed", Config.failedStagingChecksLabel());
 
         if (!stagingStatus.final()) {
             this._labels.add(Config.waitingStagingChecksLabel());
@@ -1213,40 +1201,14 @@ class PullRequest {
                 this._logEx(e, "process() failure");
 
             const suspended = knownProblem && e.keepStagedRequested(); // whether _exSuspend() occured
-            const unstageRequested = !suspended; // see exception table description
-            // Do we need to delete the staging tag?
-            // brewing: staging tag does not exist
-            // staged: get rid of the failed staging tag (unless keepStagedRequested())
-            // merged: keep the staging tag for pending cleanup
-
-            // XXX: A brewing PR may still have a staging tag -- we adjust PR
-            // state for many reasons, some not related to tag existence. We
-            // should delete that stale tag here (by default; if any).
-
-            // XXX: Deleting the tag of a failed merged PR will result in that
-            // PR becoming "brewing" on the next scan, and an attempt to merge
-            // the same changes again. That is why we must never untag merged
-            // PRs after _finalize() failures AFAICT (and not because we want
-            // to wait for the pending cleanup that does not even apply to
-            // open merged PRs IIRC).
-            if (this._prState.staged() && unstageRequested) {
-                // TODO: Also reset this._prState to PrState.Brewing().
-                // TODO: All this code should probably be moved to _unstage()
-                // which should call _untag() if brewering PRs need untagging.
-                this._removeStagingLabels();
-                if (!this._dryRun("cleanup failed staging tag"))
-                    await GH.deleteReference(this._stagingTag())
-                        .catch(deleteReferenceError => {
-                                this._logError(deleteReferenceError,
-                                        "ignoring deleteReference() error while handling a higher-level error");
-                                });
-            }
 
             // Drop staged state and give way to others. This is an ugly hack:
             // We should not be lying about PR state or even know that our PR
             // state creates a staging ban for other PRs.
-            if (this._prState.staged() && knownProblem && e.dropStagingBanRequested())
+            if (this._prState.staged() && !suspended) {
+                this._removeStagingLabels();
                 this._prState = PrState.Brewing();
+            }
 
             if (knownProblem)
                 return this.delayMs(); // may be null
@@ -1294,16 +1256,6 @@ class PullRequest {
         assert(arguments.length === 1);
         let problem = new PrProblem(why);
         problem.requestToKeepStaged();
-        return problem;
-    }
-
-    // reprocessing from scratch required, but keep PR GitHub tag
-    // until the problem is fixed
-    _exSuspendedFailure(why) {
-        assert(arguments.length === 1);
-        let problem = new PrProblem(why);
-        problem.requestToKeepStaged();
-        problem.requestToDropStagingBan();
         return problem;
     }
 
