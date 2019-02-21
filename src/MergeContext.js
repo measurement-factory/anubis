@@ -49,7 +49,8 @@ class ProcessResult
 // _exObviousFailure()  yes      yes          approval delay (if any)
 // _exLabeledFailure()  yes      yes          approval delay (if any)
 // _exSuspend()         no       yes          approval delay (if any)
-// _exRetry()           yes      yes          retry or approval delay
+// _exRetryNow()        no       no           zero delay
+// _exRetrySoon()       yes      yes          retry or approval delay
 // any-unlisted-above   yes      yes          exception + M-failed-other
 // no-exception         no       yes          null delay
 
@@ -1024,12 +1025,8 @@ class PullRequest {
         // but humans may have changed the original message since that check
         if (!(await this._messageIsFresh())) {
             throw this._restrictions.instantRetriesBanned() ?
-                // The reason for this delay may not be obvious to GitHub
-                // users, but we do not want to dedicate a new label for this
-                // rare and short-lived case that we can handle on our own.
-                // TODO: Support making GitHub comments.
-                this._exRetry("waiting for humans to stop changing commit message", 30*60*1000 /* 30 minutes */):
-                this._exRetry("humans changed commit message", 0);
+                this._exRetrySoon("waiting for humans to stop changing commit message"):
+                this._exRetryNow("humans changed commit message");
         }
 
         // yes, _checkStagingPreconditions() has checked the same message
@@ -1245,11 +1242,21 @@ class PullRequest {
 
     /* _ex*() methods below are mutually exclusive: first match wins */
 
+    // instant retries does not require reprocessing from scratch
+    _exRetryNow(why) {
+        assert(arguments.length === 1);
+        this._reprocessingDelayMs = 0;
+        return new PrProblem(why);
+    }
+
     // a problem that we are likely to resolve by reprocessing from scratch
-    _exRetry(why, delayMs) {
-        assert(arguments.length === 2);
-        assert(delayMs >= 0);
-        this._reprocessingDelayMs = delayMs;
+    _exRetrySoon(why) {
+        assert(arguments.length === 1);
+        // The reason for this delay may not be obvious to GitHub
+        // users, but we do not want to dedicate a new label for this
+        // rare and short-lived case that we can handle on our own.
+        // TODO: Support making GitHub comments.
+        this._reprocessingDelayMs = 30*60*100; /* 30 minutes */
         return new PrProblem(why);
     }
 
