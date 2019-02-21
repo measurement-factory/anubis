@@ -425,7 +425,8 @@ class BranchPosition
     // both base and the feature branch have unique-to-them commits
     diverged() {
         assert(this._status);
-        return this._status === "diverged";
+        // this._status should be "diverged", but we also handle any new/unexpected statuses here
+        return !(this.ahead() || this.merged());
     }
 }
 
@@ -447,7 +448,6 @@ class PullRequest {
         this._tagSha = null;
         this._stagedPosition = null;
         this._stagedCommitWillFail = null;
-        this._stagingSha = null;
 
         // optimization: cached _tagCommit() result
         this._tagCommitCache = null;
@@ -478,7 +478,7 @@ class PullRequest {
             // the minimum may be zero, triggering instant reprocessing
             return Math.min(this._reprocessingDelayMs, this._approval.delayMs);
         }
-        return null;
+        return this._reprocessingDelayMs;
     }
 
     // creates and returns filled Approval object
@@ -634,8 +634,9 @@ class PullRequest {
         return this._tagCommitCache;
     }
 
-    // Calculates whether the PR staged commit is in sync with the PR branch.
-    // (no new branch commits since PR staged commit creation).
+    // Returns true iff PR staged commit is ahead of the base branch and the PR staged commit
+    // tree is equal to the PR branch tree. PR branch commits (since the staged commit creation)
+    // would change its tree.
     // Note that it does not track possible conflicts between PR base branch and the
     // PR branch (the PR merge commit is recreated only when there are no conflicts).
     // Conflicts are tracked separately, by checking _prMergeable() flag.
@@ -652,7 +653,7 @@ class PullRequest {
         return tagInSyncWithPrBranch;
     }
 
-    // loads info about "staging tag" (if any); M-staged-PRnnn tag is a
+    // loads info about the "staging tag" (if any); M-staged-PRnnn tag is a
     // PR-specific git tag pointing to the previously created staged commit
     async _loadTag() {
        if (this._tagSha)
@@ -840,7 +841,7 @@ class PullRequest {
     staged() { return this._prState.staged(); }
 
     _debugString() {
-        const staged = this._stagingSha ? "staged: " + this._stagingSha.substr(0, this._shaLimit) + ' ' : "";
+        const staged = this._tagSha ? "staged: " + this._tagSha.substr(0, this._shaLimit) + ' ' : "";
         const detail =
             "head: " + this._rawPr.head.sha.substr(0, this._shaLimit) + ' ' + staged +
             "history: " + this._breadcrumbs.join();
@@ -916,15 +917,13 @@ class PullRequest {
             return;
         }
 
-        if (!this._stagingSha)
-            this._stagingSha = await GH.getReference(Config.stagingBranchPath());
+        const stagingSha = await GH.getReference(Config.stagingBranchPath());
         // Make sure the staging branch points to our fresh staged commit.
-        if (this._stagingSha !== this._tagSha) {
+        if (stagingSha !== this._tagSha) {
             this._prState = PrState.Brewing();
             return;
         }
 
-        assert(!this._restrictions.stagingBanned());
         this._prState = PrState.Staged();
     }
 
@@ -1072,13 +1071,15 @@ class PullRequest {
         if (this._stagingOnly())
             throw this._exSuspend("waiting for staging-only mode to end");
 
+        assert(!this._restrictions.stagingBanned());
+
         try {
             await GH.updateReference(this._prBaseBranchPath(), this._tagSha, false);
         } catch (e) {
             if (e.name === 'ErrorContext' && e.unprocessable()) {
                 await this._stagedPosition().compute();
                 if (this._stagedPosition.diverged())
-                    this._log("could not fast-forward, the base " + this._prBaseBranchPath() + " seems to be modified just now");
+                    this._log("could not fast-forward, the base " + this._prBaseBranchPath() + " was probably modified while we were merging");
             }
             throw e;
         }
@@ -1125,6 +1126,7 @@ class PullRequest {
         await this._stagedPosition.compute();
         assert(this._stagedPosition.ahead());
 
+        assert(!this._restrictions.stagingBanned());
         await GH.updateReference(Config.stagingBranchPath(), this._tagSha, true);
         this._prState = PrState.Staged();
     }
@@ -1202,11 +1204,11 @@ class PullRequest {
 
             const suspended = knownProblem && e.keepStagedRequested(); // whether _exSuspend() occured
 
-            // Drop staged state and give way to others. This is an ugly hack:
-            // We should not be lying about PR state or even know that our PR
-            // state creates a staging ban for other PRs.
             if (this._prState.staged() && !suspended) {
                 this._removeStagingLabels();
+                // Drop staged state and give way to others. This is an ugly hack:
+                // We should not be lying about PR state or even know that our PR
+                // state creates a staging ban for other PRs.
                 this._prState = PrState.Brewing();
             }
 
