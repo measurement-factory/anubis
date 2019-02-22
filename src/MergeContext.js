@@ -1244,8 +1244,10 @@ class PullRequest {
 
     // instant retries does not require reprocessing from scratch
     _exRetryNow(why) {
+        // TODO: eliminate cod duplication with _exLostControl()
         assert(arguments.length === 1);
         this._labelPushBan = why;
+        assert(this._labelPushBan); // paranoid: `why` is truthy
         this._reprocessingDelayMs = 0;
         return new PrProblem(why);
     }
