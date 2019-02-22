@@ -842,9 +842,9 @@ class PullRequest {
     staged() { return this._prState.staged(); }
 
     _debugString() {
-        const staged = this._tagSha ? "staged: " + this._tagSha.substr(0, this._shaLimit) + ' ' : "";
+        const tagged = this._tagSha ? "tagged: " + this._tagSha.substr(0, this._shaLimit) + ' ' : "";
         const detail =
-            "head: " + this._rawPr.head.sha.substr(0, this._shaLimit) + ' ' + staged +
+            "head: " + this._rawPr.head.sha.substr(0, this._shaLimit) + ' ' + tagged +
             "history: " + this._breadcrumbs.join();
         return "PR" + this._rawPr.number + ` (${detail})`;
     }
@@ -1245,6 +1245,7 @@ class PullRequest {
     // instant retries does not require reprocessing from scratch
     _exRetryNow(why) {
         assert(arguments.length === 1);
+        this._labelPushBan = why;
         this._reprocessingDelayMs = 0;
         return new PrProblem(why);
     }
