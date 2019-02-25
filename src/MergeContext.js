@@ -635,8 +635,11 @@ class PullRequest {
         return this._tagCommitCache;
     }
 
-    // Returns true iff PR staged commit is ahead of the base branch and the PR staged commit
-    // tree is equal to the PR branch tree. PR branch commits (since the staged commit creation)
+    // Returns true iff:
+    // * PR staged commit is ahead of the base branch and
+    // * the PR staged commit tree is equal to the PR branch tree and
+    // * the PR staged commit message is equal to the PR description on GitHub.
+    // PR branch commits (since the staged commit creation)
     // would change its tree.
     // Note that it does not track possible conflicts between PR base branch and the
     // PR branch (the PR merge commit is recreated only when there are no conflicts).
@@ -644,6 +647,9 @@ class PullRequest {
     async _tagIsFresh() {
         assert(this._tagSha);
         if (!this._stagedPosition.ahead())
+            return false;
+
+        if (!(await this._messageIsFresh()))
             return false;
 
         const tagCommit = await this._tagCommit();
