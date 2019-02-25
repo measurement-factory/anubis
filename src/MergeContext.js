@@ -53,6 +53,9 @@ class ProcessResult
 // _exRetrySoon()       yes      yes          retry or approval delay
 // any-unlisted-above   yes      yes          exception + M-failed-other
 // no-exception         no       yes          null delay
+//
+// Notes:
+// "Abandon" means moving on to merging another PR.
 
 // A PR-specific process()ing error.
 // A PrProblem thrower must set any appropriate labels.
@@ -332,8 +335,8 @@ class Labels
 // A state of an open pull request (with regard to merging progress). One of:
 // brewing:
 //   a) without a staged commit (PRs are created in this state);
-//   b) with a fresh staged commit having failed checks, which is kept until it becomes stale
-//   c) with a stale staged commit which will be deleted before creation a new one
+//   b) with a fresh staged commit that failed tests
+//   c) with a stale staged commit
 // staged: with a staged commit that has not been merged into the base branch
 // merged: with a staged commit that has been merged into the base branch
 // Here, PR "staged commit" is a commit at the tip of the staging branch
@@ -637,12 +640,11 @@ class PullRequest {
 
     // Returns true iff:
     // * PR staged commit is ahead of the base branch and
-    // * the PR staged commit tree is equal to the PR branch tree and
+    // * the PR staged commit tree is equal to the PR merge commit tree and
     // * the PR staged commit message is equal to the PR description on GitHub.
-    // PR branch commits (since the staged commit creation)
-    // would change its tree.
-    // Note that it does not track possible conflicts between PR base branch and the
-    // PR branch (the PR merge commit is recreated only when there are no conflicts).
+    // Note that since PR merge commit is automatically re-created by GitHub
+    // only if the PR branch has no conflicts with the base branch, it is not
+    // possible to track such conflicts merely comparing commits.
     // Conflicts are tracked separately, by checking _prMergeable() flag.
     async _tagIsFresh() {
         assert(this._tagSha);
@@ -1248,9 +1250,8 @@ class PullRequest {
 
     /* _ex*() methods below are mutually exclusive: first match wins */
 
-    // instant retries does not require reprocessing from scratch
+    // a problem that we are likely to resolve by reprocessing instantly
     _exRetryNow(why) {
-        // TODO: eliminate cod duplication with _exLostControl()
         assert(arguments.length === 1);
         this._labelPushBan = why;
         assert(this._labelPushBan); // paranoid: `why` is truthy
@@ -1258,7 +1259,7 @@ class PullRequest {
         return new PrProblem(why);
     }
 
-    // a problem that we are likely to resolve by reprocessing from scratch
+    // a problem that we are likely to resolve by reprocessing from scratch after a small delay
     _exRetrySoon(why) {
         assert(arguments.length === 1);
         // The reason for this delay may not be obvious to GitHub
