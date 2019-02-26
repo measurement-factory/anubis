@@ -331,12 +331,10 @@ class Labels
 }
 
 // A state of an open pull request (with regard to merging progress). One of:
-// brewing:
-//   a) without a staged commit (PRs are created in this state);
-//   b) with a fresh staged commit that failed tests
-//   c) with a stale staged commit
-// staged: with a staged commit that has not been merged into the base branch
-// merged: with a staged commit that has been merged into the base branch
+// brewing: neither staged nor merged;
+// staged: with a staged commit that may be merged into the base branch either
+//         immediately or after successful tests completion;
+// merged: with a staged commit that has been merged into the base branch.
 // Here, PR "staged commit" is a commit at the tip of the staging branch
 // pointed to by the PR tag. If a PR tag does not exist or does not point to
 // the tip of the staging branch, then the PR does not have a staged commit.
