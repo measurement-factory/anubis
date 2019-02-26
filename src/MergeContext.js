@@ -49,8 +49,6 @@ class ProcessResult
 // _exObviousFailure()  yes      yes          approval delay (if any)
 // _exLabeledFailure()  yes      yes          approval delay (if any)
 // _exSuspend()         no       yes          approval delay (if any)
-// _exRetryNow()        no       no           zero delay
-// _exRetrySoon()       yes      yes          retry or approval delay
 // any-unlisted-above   yes      yes          exception + M-failed-other
 // no-exception         no       yes          null delay
 //
@@ -372,24 +370,14 @@ class PrRestrictions
 {
     constructor() {
         this._banStaging = false; // do not stage; only valid for brewing PRs
-        this._banInstantRetries = false; // do not ask the caller to re-process() immediately
     }
 
     stagingBanned() {
         return this._banStaging;
     }
 
-    instantRetriesBanned() {
-        return this._banInstantRetries;
-    }
-
     banStaging(bool) {
         this._banStaging = bool;
-        return this;
-    }
-
-    banInstantRetries(bool) {
-        this._banInstantRetries = bool;
         return this;
     }
 }
@@ -467,8 +455,6 @@ class PullRequest {
         this._restrictions = restrictions;
         this._updated = false; // _update() has been called
 
-        this._reprocessingDelayMs = null; // reprocess this PR after this delay
-
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
         this._labelPushBan = false;
     }
@@ -476,13 +462,9 @@ class PullRequest {
     // this PR will need to be reprocessed in this many milliseconds
     // returns null if this PR does not need to be reprocessed on a timer
     delayMs() {
-        if (this._approval && this._approval.grantedTimeout()) {
-            if (this._reprocessingDelayMs === null)
-                return this._approval.delayMs; // always positive
-            // the minimum may be zero, triggering instant reprocessing
-            return Math.min(this._reprocessingDelayMs, this._approval.delayMs);
-        }
-        return this._reprocessingDelayMs;
+        if (this._approval && this._approval.grantedTimeout())
+            return this._approval.delayMs; // always positive
+        return null;
     }
 
     // creates and returns filled Approval object
@@ -1032,14 +1014,6 @@ class PullRequest {
 
         await this._checkActive();
 
-        // yes, _checkStagingPreconditions() has checked the message already,
-        // but humans may have changed the original message since that check
-        if (!(await this._messageIsFresh())) {
-            throw this._restrictions.instantRetriesBanned() ?
-                this._exRetrySoon("waiting for humans to stop changing commit message"):
-                this._exRetryNow("humans changed commit message");
-        }
-
         // yes, _checkStagingPreconditions() has checked the same message
         // already, but our _criteria_ might have changed since that check
         if (!this._messageValid)
@@ -1253,26 +1227,6 @@ class PullRequest {
 
     /* _ex*() methods below are mutually exclusive: first match wins */
 
-    // a problem that we are likely to resolve by reprocessing instantly
-    _exRetryNow(why) {
-        assert(arguments.length === 1);
-        this._labelPushBan = why;
-        assert(this._labelPushBan); // paranoid: `why` is truthy
-        this._reprocessingDelayMs = 0;
-        return new PrProblem(why);
-    }
-
-    // a problem that we are likely to resolve by reprocessing from scratch after a small delay
-    _exRetrySoon(why) {
-        assert(arguments.length === 1);
-        // The reason for this delay may not be obvious to GitHub
-        // users, but we do not want to dedicate a new label for this
-        // rare and short-lived case that we can handle on our own.
-        // TODO: Support making GitHub comments.
-        this._reprocessingDelayMs = 30*60*100; /* 30 minutes */
-        return new PrProblem(why);
-    }
-
     // a problem that, once resolved, does not require reprocessing from scratch
     _exSuspend(why) {
         assert(arguments.length === 1);
@@ -1307,23 +1261,12 @@ class PullRequest {
     }
 }
 
-// PullRequest::process() wrapper that adds support for instant retries
+// PullRequest::process() wrapper
 async function Process(rawPr, banStaging) {
     let restrictions = new PrRestrictions().banStaging(banStaging);
 
     let pr = new PullRequest(rawPr, restrictions);
     let delayMs = await pr.process();
-
-    // Instant retries preserve this PR's processing slot. We speculate that
-    // not giving a staged PR a second chance would create even more
-    // unpleasant surprises for humans. Also, giving this chance follows our
-    // overall "processing should do as much as instantly possible for each
-    // PR" principle -- this PR is not stuck and _can_ do more now.
-    if (delayMs === 0) {
-        restrictions.banInstantRetries(true); // the alternative is a loop
-        pr = new PullRequest(rawPr, restrictions);
-        delayMs = await pr.process();
-    }
 
     let result = new ProcessResult();
     result.setDelayMsIfAny(delayMs);
