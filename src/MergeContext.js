@@ -442,7 +442,7 @@ class PullRequest {
 
     // this PR will need to be reprocessed in this many milliseconds
     // returns null if this PR does not need to be reprocessed on a timer
-    delayMs() {
+    _delayMs() {
         if (this._approval && this._approval.grantedTimeout())
             return this._approval.delayMs; // always positive
         return null;
@@ -1156,7 +1156,8 @@ class PullRequest {
     async process() {
         try {
             await this._doProcess();
-            return null;
+            assert(this._prState.merged());
+            return new ProcessResult();
         } catch (e) {
             const knownProblem = e instanceof PrProblem;
 
@@ -1167,16 +1168,19 @@ class PullRequest {
 
             const suspended = knownProblem && e.keepStagedRequested(); // whether _exSuspend() occured
 
-            if (this._prState.staged() && !suspended) {
-                this._removeStagingLabels();
-                // Drop staged state and give way to others. This is an ugly hack:
-                // We should not be lying about PR state or even know that our PR
-                // state creates a staging ban for other PRs.
-                this._prState = PrState.Brewing();
+            let result = new ProcessResult();
+
+            if (this._prState.staged()) {
+                if (suspended)
+                    result.setPrStaged(true);
+                else
+                    this._removeStagingLabels(); // abandoning this PR
             }
 
-            if (knownProblem)
-                return this.delayMs(); // may be null
+            if (knownProblem) {
+                result.setDelayMsIfAny(this._delayMs()); // may be null
+                return result;
+            }
 
             // report this unknown but probably PR-specific problem on GitHub
             // XXX: We may keep redoing this PR every run() step forever, without any GitHub events.
@@ -1245,11 +1249,7 @@ class PullRequest {
 // PullRequest::process() wrapper
 async function Process(rawPr, banStaging) {
     let pr = new PullRequest(rawPr, banStaging);
-    let delayMs = await pr.process();
-
-    let result = new ProcessResult();
-    result.setDelayMsIfAny(delayMs);
-    result.setPrStaged(pr.staged());
+    const result = await pr.process();
     return result;
 }
 
