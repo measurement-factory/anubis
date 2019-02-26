@@ -365,23 +365,6 @@ class PrState
     }
 }
 
-// external limits for PullRequest::process() freedoms
-class PrRestrictions
-{
-    constructor() {
-        this._banStaging = false; // do not stage; only valid for brewing PRs
-    }
-
-    stagingBanned() {
-        return this._banStaging;
-    }
-
-    banStaging(bool) {
-        this._banStaging = bool;
-        return this;
-    }
-}
-
 // Determines the feature branch position relative to its base branch: ahead,
 // merged, or diverged. This class essentially decides whether/which one of
 // the two branches is fully contained in another.
@@ -425,9 +408,7 @@ class BranchPosition
 // a single GitHub pull request
 class PullRequest {
 
-    constructor(pr, restrictions) {
-        assert(restrictions instanceof PrRestrictions);
-
+    constructor(pr, banStaging) {
         this._rawPr = pr; // may be rather old and lack pr.mergeable; see _loadRawPr()
 
         this._shaLimit = 6; // how many SHA chars to show in debug messages
@@ -452,7 +433,7 @@ class PullRequest {
         this._prState = null; // calculated PrState
 
         this._labels = null;
-        this._restrictions = restrictions;
+        this._stagingBanned = banStaging; // do not stage; only valid for brewing PRs
         this._updated = false; // _update() has been called
 
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
@@ -700,7 +681,7 @@ class PullRequest {
         if (this._approval.grantedTimeout())
             throw this._exSuspend("waiting for objections");
 
-        if (this._restrictions.stagingBanned())
+        if (this._stagingBanned)
             throw this._exSuspend("waiting for another staged PR");
 
         if (this._stagedCommitWillFail)
@@ -1053,7 +1034,7 @@ class PullRequest {
         if (this._stagingOnly())
             throw this._exSuspend("waiting for staging-only mode to end");
 
-        assert(!this._restrictions.stagingBanned());
+        assert(!this._stagingBanned);
 
         try {
             await GH.updateReference(this._prBaseBranchPath(), this._tagSha, false);
@@ -1108,7 +1089,7 @@ class PullRequest {
         await this._stagedPosition.compute();
         assert(this._stagedPosition.ahead());
 
-        assert(!this._restrictions.stagingBanned());
+        assert(!this._stagingBanned);
         await GH.updateReference(Config.stagingBranchPath(), this._tagSha, true);
         this._prState = PrState.Staged();
     }
@@ -1263,9 +1244,7 @@ class PullRequest {
 
 // PullRequest::process() wrapper
 async function Process(rawPr, banStaging) {
-    let restrictions = new PrRestrictions().banStaging(banStaging);
-
-    let pr = new PullRequest(rawPr, restrictions);
+    let pr = new PullRequest(rawPr, banStaging);
     let delayMs = await pr.process();
 
     let result = new ProcessResult();
