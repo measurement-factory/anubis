@@ -899,8 +899,7 @@ class PullRequest {
             return;
         }
 
-        this._stagedPosition = new BranchPosition(this._prBaseBranch(), this._stagingTag());
-        await this._stagedPosition.compute();
+        assert(this._stagedPosition);
 
         if (this._stagedPosition.merged()) {
             this._log("already merged into base some time ago");
@@ -941,7 +940,11 @@ class PullRequest {
         // GH.getPR() may become slow (and even fail) on merged PRs because
         // GitHub may take its time (or even fail) to calculate pr.mergeable.
         // Fortunately, we do not need that field for merged PRs.
-        const waitForMergeable = !this._prState.merged();
+        if (this._tagSha) {
+           this._stagedPosition = new BranchPosition(this._prBaseBranch(), this._stagingTag());
+           await this._stagedPosition.compute();
+        }
+        const waitForMergeable = !(this._stagedPosition && this._stagedPosition.merged());
         const pr = await GH.getPR(this._prNumber(), waitForMergeable);
         assert(pr.number === this._prNumber());
         this._rawPr = pr;
@@ -1175,9 +1178,9 @@ class PullRequest {
          * TODO: Refactor to eliminate the risk of too-early this._rawPr use.
          */
         await this._loadTag(); // requires this._rawPr.number
-        await this._loadPrState(); // requires this._loadTag()
+        await this._loadRawPr(); // requires this._loadTag()
+        await this._loadPrState(); // requires this._loadPr()
         this._log("PR state: " + this._prState);
-        await this._loadRawPr(); // requires this._loadPrState()
         await this._loadLabels();
 
         if (this._prState.brewing()) {
