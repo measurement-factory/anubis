@@ -37,7 +37,6 @@ class ProcessResult
     }
 
     prStaged() {
-        assert(this._prStaged !== null);
         return this._prStaged;
     }
 }
