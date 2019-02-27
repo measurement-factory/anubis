@@ -418,7 +418,7 @@ class PullRequest {
 
         this._tagSha = null;
         this._stagedPosition = null;
-        this._stagedCommitWillFail = null;
+        this._freshStagedCommitWithFailedChecks = null;
 
         // optimization: cached _tagCommit() result
         this._tagCommitCache = null;
@@ -666,6 +666,11 @@ class PullRequest {
 
         // TODO: If multiple failures need labeling, label all of them.
 
+        // optimization: check it first because staged commit freshness implies that other PR
+        // attributes (message, mergeability, etc) are OK.
+        if (this._freshStagedCommitWithFailedChecks)
+            throw this._exLabeledFailure("staged commit tests will fail", Config.failedStagingChecksLabel());
+
         if (this._wipPr())
             throw this._exSuspend("work-in-progress");
 
@@ -683,9 +688,6 @@ class PullRequest {
 
         if (this._stagingBanned)
             throw this._exSuspend("waiting for another staged PR");
-
-        if (this._stagedCommitWillFail)
-            throw this._exLabeledFailure("staged commit tests will fail", Config.failedStagingChecksLabel());
 
         // optimization: delay GitHub communication as much as possible
         const statusChecks = await this._getPrStatuses();
@@ -883,7 +885,7 @@ class PullRequest {
         // Do not vainly recreate staged commit which will definitely fail again,
         // since the PR+base code is yet unchanged and the existing errors still persist
         if (stagingStatuses.failed()) {
-            this._stagedCommitWillFail = true;
+            this._freshStagedCommitWithFailedChecks = true;
             this._prState = PrState.Brewing();
             return;
         }
