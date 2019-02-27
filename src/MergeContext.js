@@ -430,8 +430,10 @@ class PullRequest {
         this._prState = null; // calculated PrState
 
         this._labels = null;
+
         // while unexpected, PR merging and closing is not prohibited when staging is
         this._stagingBanned = banStaging;
+
         this._updated = false; // _update() has been called
 
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
@@ -601,8 +603,7 @@ class PullRequest {
 
     // Determines whether the existing staged commit is equivalent to a staged
     // commit that could be created right now. Relies on PR merge commit being fresh.
-    // TODO: lacks some checks, e.g., mismatching staging checks list (configured
-    // on GitHub) or staging commit message (Anubis now may generate a different message).
+    // TODO: check whether the staging checks list has changed since the staged commit creation.
     async _stagedCommitIsFresh() {
         assert(this._tagSha);
         if (!this._stagedPosition.ahead())
@@ -871,9 +872,8 @@ class PullRequest {
             return;
         }
 
-        // The staged commit became out of sync with PR and(or) base branches.
         if (!(await this._stagedCommitIsFresh())) {
-            this._log("the staged commit became stale due to PR branch and(or) base branch changes");
+            this._log("the staged commit is stale");
             this._prState = PrState.Brewing();
             return;
         }
@@ -1247,7 +1247,7 @@ class PullRequest {
     }
 }
 
-// promises to process a single PR at once, hiding PullRequest from callers
+// promises to update/advance the given PR, hiding PullRequest from callers
 function Process(rawPr, banStaging) {
     let pr = new PullRequest(rawPr, banStaging);
     return pr.process();
