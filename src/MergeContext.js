@@ -671,7 +671,7 @@ class PullRequest {
             throw this._exLabeledFailure("staged commit tests will fail", Config.failedStagingChecksLabel());
 
         if (this._wipPr())
-            throw this._exSuspend("work-in-progress");
+            throw this._exObviousFailure("work-in-progress");
 
         if (!this._messageValid)
             throw this._exLabeledFailure("invalid commit message", Config.failedDescriptionLabel());
@@ -680,13 +680,13 @@ class PullRequest {
             throw this._exObviousFailure("GitHub will not be able to merge");
 
         if (!this._approval.granted())
-            throw this._exSuspend("waiting for approval");
+            throw this._exObviousFailure("waiting for approval");
 
         if (this._approval.grantedTimeout())
-            throw this._exSuspend("waiting for objections");
+            throw this._exObviousFailure("waiting for objections");
 
         if (this._stagingBanned)
-            throw this._exSuspend("waiting for another staged PR");
+            throw this._exObviousFailure("waiting for another staged PR");
 
         // optimization: delay GitHub communication as much as possible
         const statusChecks = await this._getPrStatuses();
@@ -694,7 +694,7 @@ class PullRequest {
             throw this._exObviousFailure("failed PR tests");
 
         if (!statusChecks.final())
-            throw this._exSuspend("waiting for PR checks");
+            throw this._exObviousFailure("waiting for PR checks");
 
         assert(statusChecks.succeeded());
     }
@@ -1076,7 +1076,7 @@ class PullRequest {
         const committer = {name: Config.githubUserName(), email: Config.githubUserEmail(), date: now.toISOString()};
 
         if (this._dryRun("create staged commit"))
-            throw this._exSuspend("dryRun");
+            throw this._exObviousFailure("dryRun");
 
         if (this._tagSha) {
             await GH.deleteReference(this._stagingTag());
@@ -1213,6 +1213,7 @@ class PullRequest {
     /* _ex*() methods below are mutually exclusive: first match wins */
 
     // a problem that, once resolved, does not require reprocessing from scratch
+    // only meaningful for staged PRs
     _exSuspend(why) {
         assert(arguments.length === 1);
         let problem = new PrProblem(why);
