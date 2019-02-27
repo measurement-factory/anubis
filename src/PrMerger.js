@@ -142,11 +142,10 @@ class PrMerger {
     }
 } // PrMerger
 
-// PrMerger's create and execute() wrapper.
-async function Step() {
+// promises to process all PRs once, hiding PrMerger from callers
+function Step() {
     let mergerer = new PrMerger();
-    const result = await mergerer.execute();
-    return result;
+    return mergerer.execute();
 }
 
 module.exports = Step;
