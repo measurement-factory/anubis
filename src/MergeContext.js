@@ -1180,7 +1180,7 @@ class PullRequest {
             }
 
             if (knownProblem) {
-                result.setDelayMsIfAny(this._delayMs()); // may be null
+                result.setDelayMsIfAny(this._delayMs());
                 return result;
             }
 
@@ -1247,11 +1247,10 @@ class PullRequest {
     }
 }
 
-// PullRequest::process() wrapper
-async function Process(rawPr, banStaging) {
+// promises to process a single PR at once, hiding PullRequest from callers
+function Process(rawPr, banStaging) {
     let pr = new PullRequest(rawPr, banStaging);
-    const result = await pr.process();
-    return result;
+    return pr.process();
 }
 
 
