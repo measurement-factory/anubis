@@ -1176,7 +1176,7 @@ class PullRequest {
                 if (suspended)
                     result.setPrStaged(true);
                 else
-                    this._removeStagingLabels(); // abandoning this PR
+                    this._removePositiveStagingLabels(); // abandoning this staged PR
             }
 
             if (knownProblem) {
@@ -1205,9 +1205,8 @@ class PullRequest {
         // final (set after the PR is merged): Config.mergedLabel()
     }
 
-    // remove labels that only make sense for a staged PR
-    _removeStagingLabels() {
-        this._labels.remove(Config.failedStagingChecksLabel());
+    // remove labels that have no sense for a failed staged PR
+    _removePositiveStagingLabels() {
         this._labels.remove(Config.passedStagingChecksLabel());
         this._labels.remove(Config.waitingStagingChecksLabel());
     }
