@@ -431,7 +431,8 @@ class PullRequest {
         this._prState = null; // calculated PrState
 
         this._labels = null;
-        this._stagingBanned = banStaging; // do not stage; only valid for brewing PRs
+        // while unexpected, PR merging and closing is not prohibited when staging is
+        this._stagingBanned = banStaging;
         this._updated = false; // _update() has been called
 
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
@@ -599,17 +600,18 @@ class PullRequest {
         return this._tagCommitCache;
     }
 
-    // Returns true iff:
-    // * PR staged commit is ahead of the base branch and
-    // * the PR staged commit tree is equal to the PR merge commit tree and
-    // * the PR staged commit message is equal to the PR description on GitHub.
-    // Note that since PR merge commit is automatically re-created by GitHub
-    // only if the PR branch has no conflicts with the base branch, it is not
-    // possible to track such conflicts merely comparing commits.
-    // Conflicts are tracked separately, by checking _prMergeable() flag.
-    async _tagIsFresh() {
+    // Determines whether the existing staged commit is equivalent to a staged
+    // commit that could be created right now. Relies on PR merge commit being fresh.
+    // TODO: lacks some checks, e.g., mismatching staging checks list (configured
+    // on GitHub) or staging commit message (Anubis now may generate a different message).
+    async _stagedCommitIsFresh() {
         assert(this._tagSha);
         if (!this._stagedPosition.ahead())
+            return false;
+
+        // check this separately because GitHub does not recreate PR merge commits
+        // for conflicted PR branches (leaving stale PR merge commits).
+        if (!this._prMergeable())
             return false;
 
         if (!(await this._messageIsFresh()))
@@ -869,7 +871,7 @@ class PullRequest {
         }
 
         // The staged commit became out of sync with PR and(or) base branches.
-        if (!(await this._tagIsFresh())) {
+        if (!(await this._stagedCommitIsFresh())) {
             this._log("the staged commit became stale due to PR branch and(or) base branch changes");
             this._prState = PrState.Brewing();
             return;
@@ -915,7 +917,7 @@ class PullRequest {
     async _messageIsFresh() {
         const tagCommit = await this._tagCommit();
         const result = this._prMessage() === tagCommit.message;
-        this._log("tag message freshness: " + result);
+        this._log("staged commit message freshness: " + result);
         return result;
     }
 
@@ -1132,7 +1134,7 @@ class PullRequest {
          */
         await this._loadTag(); // requires this._rawPr.number
         await this._loadRawPr(); // requires this._loadTag()
-        await this._loadPrState(); // requires this._loadPr()
+        await this._loadPrState(); // requires this._loadRawPr()
         this._log("PR state: " + this._prState);
         await this._loadLabels();
 
