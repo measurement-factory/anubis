@@ -606,23 +606,23 @@ class PullRequest {
     // TODO: check whether the staging checks list has changed since the staged commit creation.
     async _stagedCommitIsFresh() {
         assert(this._tagSha);
-        if (!this._stagedPosition.ahead())
-            return false;
+        if (this._stagedPosition.ahead() &&
+            // check this separately because GitHub does not recreate PR merge commits
+            // for conflicted PR branches (leaving stale PR merge commits).
+            this._prMergeable() &&
+            await this._messageIsFresh()) {
 
-        // check this separately because GitHub does not recreate PR merge commits
-        // for conflicted PR branches (leaving stale PR merge commits).
-        if (!this._prMergeable())
-            return false;
-
-        if (!(await this._messageIsFresh()))
-            return false;
-
-        const tagCommit = await this._tagCommit();
-        const prMergeSha = await GH.getReference(this._mergePath());
-        const prCommit = await GH.getCommit(prMergeSha);
-        const tagInSyncWithPrBranch = tagCommit.tree.sha === prCommit.tree.sha;
-        this._log("Merge commit and PR branch synchronization: " + tagInSyncWithPrBranch);
-        return tagInSyncWithPrBranch;
+            const tagCommit = await this._tagCommit();
+            const prMergeSha = await GH.getReference(this._mergePath());
+            const prCommit = await GH.getCommit(prMergeSha);
+            // whether the PR branch has not changed
+            if (tagCommit.tree.sha === prCommit.tree.sha) {
+                this._log("the staged commit is fresh");
+                return true;
+            }
+        }
+        this._log("the staged commit is stale");
+        return false;
     }
 
     // loads info about the "staging tag" (if any); M-staged-PRnnn tag is a
@@ -873,7 +873,6 @@ class PullRequest {
         }
 
         if (!(await this._stagedCommitIsFresh())) {
-            this._log("the staged commit is stale");
             this._prState = PrState.Brewing();
             return;
         }
