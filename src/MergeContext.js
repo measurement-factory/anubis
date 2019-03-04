@@ -139,6 +139,12 @@ class StatusCheck
         this.targetUrl = raw.target_url;
         this.description = raw.description;
     }
+
+    failed() { return !(this.pending() || this.success()); }
+
+    success() { return this.state === 'success'; }
+
+    pending() { return this.state === 'pending'; }
 }
 
 // aggregates status checks for a PR or commit
@@ -176,17 +182,23 @@ class StatusChecks
     // no more required status changes or additions are expected
     final() {
         return (this.requiredStatuses.length >= this.expectedStatusCount) &&
-            this.requiredStatuses.every(check => check.state !== 'pending');
+            this.requiredStatuses.every(check => !check.pending());
     }
 
     // something went wrong with at least one of the required status checks
     failed() {
-        return this.requiredStatuses.some(check => check.state !== 'pending' && check.state !== 'success');
+        return this.requiredStatuses.some(check => check.failed());
+    }
+
+    // same as failed(), but skips the given context when searching
+    failedExcept(context) {
+        const filteredChecks = this.requiredStatuses.filter(st => st.context !== context);
+        return filteredChecks.some(check => check.failed());
     }
 
     // the results are final and all checks were a success
     succeeded() {
-        return this.final() && this.requiredStatuses.every(check => check.state === 'success');
+        return this.final() && this.requiredStatuses.every(check => check.success());
     }
 
     toString() {
@@ -882,7 +894,7 @@ class PullRequest {
         const stagingStatuses = await this._getStagingStatuses();
         // Do not vainly recreate staged commit which will definitely fail again,
         // since the PR+base code is yet unchanged and the existing errors still persist
-        if (stagingStatuses.failed()) {
+        if (stagingStatuses.failedExcept(Config.approvalContext())) {
             this._freshStagedCommitWithFailedChecks = true;
             this._prState = PrState.Brewing();
             return;
@@ -925,8 +937,11 @@ class PullRequest {
         const stagingStatus = await this._getStagingStatuses();
         this._log("staging status details: " + stagingStatus);
 
-        if (stagingStatus.failed())
+        if (stagingStatus.failedExcept(Config.approvalContext()))
             throw this._exLabeledFailure("staging tests failed", Config.failedStagingChecksLabel());
+
+        // should have checked for approval already
+        assert(!stagingStatus.failed());
 
         if (!stagingStatus.final()) {
             this._labels.add(Config.waitingStagingChecksLabel());
@@ -1012,6 +1027,7 @@ class PullRequest {
             throw this._exObviousFailure("restart waiting for objections");
 
         const statusChecks = await this._getPrStatuses();
+        // the approval status have been checked already
         if (statusChecks.failed())
             throw this._exObviousFailure("new PR branch tests appeared/failed after staging");
 
