@@ -134,7 +134,7 @@ class PrMerger {
         }
         const prNum = Util.ParseTag(tag.ref);
         Logger.info("PR" + prNum + " is the current");
-        const pr = GH.getPR(prNum, false);
+        const pr = await GH.getPR(prNum, false);
         if (pr.state === 'open')
             return pr;
         Logger.warn("The current PR" + prNum + " unexpectedly closed.");
