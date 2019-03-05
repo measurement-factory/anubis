@@ -452,6 +452,9 @@ class PullRequest {
         // while unexpected, PR merging and closing is not prohibited when staging is
         this._stagingBanned = banStaging;
 
+        // GitHub statuses of the staged commit
+        this._stagedStatuses = null;
+
         this._updated = false; // _update() has been called
 
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
@@ -897,10 +900,10 @@ class PullRequest {
 
         assert(this._stagedPosition.ahead());
 
-        const stagingStatuses = await this._getStagingStatuses();
+        const stagedStatuses = await this._getStagingStatuses();
         // Do not vainly recreate staged commit which will definitely fail again,
         // since the PR+base code is yet unchanged and the existing errors still persist
-        if (stagingStatuses.failed()) {
+        if (stagedStatuses.failed()) {
             this._freshStagedCommitWithFailedChecks = true;
             this._prState = PrState.Brewing();
             return;
@@ -913,7 +916,16 @@ class PullRequest {
             return;
         }
 
+        await this._enterStaged(stagedStatuses);
+    }
+
+    async _enterStaged(stagedStatuses) {
         this._prState = PrState.Staged();
+        if (stagedStatuses)
+            this._stagedStatuses = stagedStatuses;
+        else
+            this._stagedStatuses = await this._getStagingStatuses();
+        this._log("staging status details: " + this._stagedStatuses);
     }
 
     // loads raw PR metadata from GitHub
@@ -940,35 +952,33 @@ class PullRequest {
     }
 
     async _processStagingStatuses() {
-        const stagingStatus = await this._getStagingStatuses();
-        this._log("staging status details: " + stagingStatus);
-
-        if (stagingStatus.failed())
+        assert(this._stagedStatuses);
+        if (this._stagedStatuses.failed())
             throw this._exLabeledFailure("staging tests failed", Config.failedStagingChecksLabel());
 
-        if (!stagingStatus.final()) {
+        if (!this._stagedStatuses.final()) {
             this._labels.add(Config.waitingStagingChecksLabel());
             throw this._exSuspend("waiting for staging tests completion");
         }
 
-        assert(stagingStatus.succeeded());
+        assert(this._stagedStatuses.succeeded());
         this._labels.add(Config.passedStagingChecksLabel());
         this._log("staging checks succeeded");
 
-        await this._supplyStagingWithPrRequired(stagingStatus);
+        await this._supplyStagingWithPrRequired();
     }
 
     // Creates PR-required status checks for staged commit (if possible).
     // Staged commit needs all PR-required checks (configured on GitHub)
     // so that GitHub could merge it into the protected base branch.
-    async _supplyStagingWithPrRequired(stagedStatuses) {
-        assert(stagedStatuses.succeeded());
+    async _supplyStagingWithPrRequired() {
+        assert(this._stagedStatuses.succeeded());
 
         const requiredContexts = await this._getRequiredContexts();
         const prStatuses = await this._getPrStatuses();
 
         for (let requiredContext of requiredContexts) {
-            if (stagedStatuses.hasStatus(requiredContext)) {
+            if (this._stagedStatuses.hasStatus(requiredContext)) {
                 this._log("_supplyStagingWithPrRequired: skip existing " + requiredContext);
                 continue;
             }
@@ -1109,7 +1119,7 @@ class PullRequest {
 
         assert(!this._stagingBanned);
         await GH.updateReference(Config.stagingBranchPath(), this._tagSha, true);
-        this._prState = PrState.Staged();
+        await this._enterStaged();
     }
 
     // updates and, if possible, advances (i.e. stages) a brewing GitHub PR
