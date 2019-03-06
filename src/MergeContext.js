@@ -166,11 +166,13 @@ class StatusChecks
 
     addRequiredStatus(requiredStatus) {
         assert(requiredStatus);
+        assert(!this.hasStatus(requiredStatus.context));
         this.requiredStatuses.push(requiredStatus);
     }
 
     addOptionalStatus(optionalStatus) {
         assert(optionalStatus);
+        assert(!this.hasStatus(optionalStatus.context));
         this.optionalStatuses.push(optionalStatus);
     }
 
@@ -186,7 +188,8 @@ class StatusChecks
                 el.description === approval.description);
     }
 
-    addApprovalStatus(approval) {
+    setApprovalStatus(approval) {
+        this.requiredStatuses = this.requiredStatuses.filter(st => st.context !== Config.approvalContext());
         let raw = {
             state: approval.state,
             target_url: Config.approvalUrl(),
@@ -567,12 +570,12 @@ class PullRequest {
 
         if (!this._prStatuses.hasApprovalStatus(this._approval)) {
             await this._createApprovalStatus(this._prHeadSha());
-            this._prStatuses.addApprovalStatus(this._approval);
+            this._prStatuses.setApprovalStatus(this._approval);
         }
 
         if (this._stagedStatuses && !this._stagedStatuses.hasApprovalStatus(this._approval)) {
             await this._createApprovalStatus(this._tagSha);
-            this._stagedStatuses.addApprovalStatus(this._approval);
+            this._stagedStatuses.setApprovalStatus(this._approval);
         }
     }
 
