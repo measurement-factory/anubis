@@ -109,11 +109,6 @@ class Approval {
         return new Approval(description, "pending", null);
     }
 
-    matchesGitHubStatusCheck(approvalStatus) {
-        assert(approvalStatus);
-        return approvalStatus.state === this.state && approvalStatus.description === this.description;
-    }
-
     granted() { return this.delayMs !== null; }
 
     grantedTimeout() { return this.delayMs !== null && this.delayMs > 0; }
@@ -182,6 +177,23 @@ class StatusChecks
     hasStatus(context) {
         return this.requiredStatuses.some(el => el.context.trim() === context.trim()) ||
             this.optionalStatuses.some(el => el.context.trim() === context.trim());
+    }
+
+    hasApprovalStatus(approval) {
+        return this.requiredStatuses.some(el =>
+                el.context.trim() === Config.approvalContext() &&
+                el.state === approval.state &&
+                el.description === approval.description);
+    }
+
+    addApprovalStatus(approval) {
+        let raw = {
+            state: approval.state,
+            target_url: Config.approvalUrl(),
+            description: approval.description,
+            context: Config.approvalContext()
+        };
+        this.addRequiredStatus(new StatusCheck(raw));
     }
 
     // no more required status changes or additions are expected
@@ -455,6 +467,9 @@ class PullRequest {
         // GitHub statuses of the staged commit
         this._stagedStatuses = null;
 
+        // GitHub statuses of the PR branch head commit
+        this._prStatuses = null;
+
         this._updated = false; // _update() has been called
 
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
@@ -541,24 +556,27 @@ class PullRequest {
         return Approval.GrantAfterTimeout("waiting for more votes or a slow burner timeout", Config.votingDelayMax() - prAgeMs);
     }
 
-    async _setApprovalStatus(sha) {
-        assert(sha);
-
+    async _setApprovalStatuses() {
         if (!Config.manageApprovalStatus())
             return;
-
-        const combinedStatus = await GH.getStatuses(sha);
-        const approvalStatus = combinedStatus.statuses ?
-            combinedStatus.statuses.find(el => el.context.trim() === Config.approvalContext()) : null;
-
-        if (approvalStatus && this._approval.matchesGitHubStatusCheck(approvalStatus)) {
-            this._log("approval status already exists: " + Config.approvalContext() + ", " + this._approval);
-            return;
-        }
 
         if (this._dryRun("setting approval status"))
             return;
 
+        assert(this._prStatuses);
+
+        if (!this._prStatuses.hasApprovalStatus(this._approval)) {
+            await this._createApprovalStatus(this._prHeadSha());
+            this._prStatuses.addApprovalStatus(this._approval);
+        }
+
+        if (this._stagedStatuses && !this._stagedStatuses.hasApprovalStatus(this._approval)) {
+            await this._createApprovalStatus(this._tagSha);
+            this._stagedStatuses.addApprovalStatus(this._approval);
+        }
+    }
+
+    async _createApprovalStatus(sha) {
         await GH.createStatus(sha, this._approval.state, Config.approvalUrl(), this._approval.description, Config.approvalContext());
     }
 
@@ -613,6 +631,7 @@ class PullRequest {
         for (let st of optionalStatuses)
             statusChecks.addOptionalStatus(new StatusCheck(st));
 
+        this._log("staging status details: " + statusChecks);
         return statusChecks;
     }
 
@@ -710,15 +729,13 @@ class PullRequest {
         if (this._stagingBanned)
             throw this._exObviousFailure("waiting for another staged PR");
 
-        // optimization: delay GitHub communication as much as possible
-        const statusChecks = await this._getPrStatuses();
-        if (statusChecks.failed())
+        if (this._prStatuses.failed())
             throw this._exObviousFailure("failed PR tests");
 
-        if (!statusChecks.final())
+        if (!this._prStatuses.final())
             throw this._exObviousFailure("waiting for PR checks");
 
-        assert(statusChecks.succeeded());
+        assert(this._prStatuses.succeeded());
     }
 
     // refreshes Anubis-managed part of the GitHub PR state
@@ -735,9 +752,7 @@ class PullRequest {
 
         this._approval = await this._checkApproval();
         this._log("checkApproval: " + this._approval);
-        await this._setApprovalStatus(this._prHeadSha());
-        if (this._tagSha !== null)
-            await this._setApprovalStatus(this._tagSha);
+        await this._setApprovalStatuses();
 
         this._updated = true;
     }
@@ -881,7 +896,7 @@ class PullRequest {
 
     async _loadPrState() {
         if (!this._tagSha) {
-            this._prState = PrState.Brewing();
+            await this._enterBrewing();
             return;
         }
 
@@ -889,12 +904,12 @@ class PullRequest {
 
         if (this._stagedPosition.merged()) {
             this._log("already merged into base some time ago");
-            this._prState = PrState.Merged();
+            this._enterMerged();
             return;
         }
 
         if (!(await this._stagedCommitIsFresh())) {
-            this._prState = PrState.Brewing();
+            await this._enterBrewing();
             return;
         }
 
@@ -905,27 +920,38 @@ class PullRequest {
         // since the PR+base code is yet unchanged and the existing errors still persist
         if (stagedStatuses.failed()) {
             this._freshStagedCommitWithFailedChecks = true;
-            this._prState = PrState.Brewing();
+            await this._enterBrewing();
             return;
         }
 
         const stagingSha = await GH.getReference(Config.stagingBranchPath());
         // Make sure the staging branch points to our fresh staged commit.
         if (stagingSha !== this._tagSha) {
-            this._prState = PrState.Brewing();
+            await this._enterBrewing();
             return;
         }
 
         await this._enterStaged(stagedStatuses);
     }
 
+    async _enterBrewing() {
+        this._prState = PrState.Brewing();
+        assert(this._prStatuses === null);
+        this._prStatuses = await this._getPrStatuses();
+    }
+
     async _enterStaged(stagedStatuses) {
         this._prState = PrState.Staged();
+        assert(this._stagedStatuses === null);
         if (stagedStatuses)
             this._stagedStatuses = stagedStatuses;
         else
             this._stagedStatuses = await this._getStagingStatuses();
-        this._log("staging status details: " + this._stagedStatuses);
+        this._prStatuses = await this._getPrStatuses();
+    }
+
+    _enterMerged() {
+        this._prState = PrState.Merged();
     }
 
     // loads raw PR metadata from GitHub
@@ -975,22 +1001,30 @@ class PullRequest {
         assert(this._stagedStatuses.succeeded());
 
         const requiredContexts = await this._getRequiredContexts();
-        const prStatuses = await this._getPrStatuses();
 
         for (let requiredContext of requiredContexts) {
             if (this._stagedStatuses.hasStatus(requiredContext)) {
                 this._log("_supplyStagingWithPrRequired: skip existing " + requiredContext);
                 continue;
             }
-            const requiredPrStatus = prStatuses.requiredStatuses.find(el => el.context.trim() === requiredContext.trim());
+            const requiredPrStatus = this._prStatuses.requiredStatuses.find(el => el.context.trim() === requiredContext.trim());
             assert(requiredPrStatus);
             assert(!requiredPrStatus.description.endsWith(Config.copiedDescriptionSuffix()));
 
             if (this._dryRun("applying required PR statuses to staged"))
                 continue;
 
-            await GH.createStatus(this._tagSha, "success", requiredPrStatus.targetUrl,
-                    requiredPrStatus.description + Config.copiedDescriptionSuffix(), requiredPrStatus.context);
+            const check = new StatusCheck({
+                    state: "success",
+                    target_url: requiredPrStatus.targetUrl,
+                    description: requiredPrStatus.description + Config.copiedDescriptionSuffix(),
+                    context: requiredPrStatus.context
+                });
+
+            await GH.createStatus(this._tagSha, check.state, check.targetUrl,
+                    check.description, check.context);
+
+            this._stagedStatuses.addOptionalStatus(check);
         }
     }
 
@@ -1039,14 +1073,13 @@ class PullRequest {
         if (this._approval.grantedTimeout())
             throw this._exObviousFailure("restart waiting for objections");
 
-        const statusChecks = await this._getPrStatuses();
-        if (statusChecks.failed())
+        if (this._prStatuses.failed())
             throw this._exObviousFailure("new PR branch tests appeared/failed after staging");
 
-        if (!statusChecks.final())
+        if (!this._prStatuses.final())
             throw this._exSuspend("waiting for PR branch tests that appeared after staging");
 
-        assert(statusChecks.succeeded());
+        assert(this._prStatuses.succeeded());
 
         await this._processStagingStatuses();
     }
@@ -1075,7 +1108,7 @@ class PullRequest {
             throw e;
         }
 
-        this._prState = PrState.Merged();
+        this._enterMerged();
     }
 
     async _acquireUserProperties() {
