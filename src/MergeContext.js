@@ -563,9 +563,6 @@ class PullRequest {
         if (!Config.manageApprovalStatus())
             return;
 
-        if (this._dryRun("setting approval status"))
-            return;
-
         assert(this._prStatuses);
 
         if (!this._prStatuses.hasApprovalStatus(this._approval)) {
@@ -580,6 +577,8 @@ class PullRequest {
     }
 
     async _createApprovalStatus(sha) {
+        if (this._dryRun("creating approval status"))
+            return;
         await GH.createStatus(sha, this._approval.state, Config.approvalUrl(), this._approval.description, Config.approvalContext());
     }
 
