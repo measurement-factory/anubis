@@ -4,55 +4,74 @@ const Log = require('./Logger.js');
 const GH = require('./GitHubUtil.js');
 const Util = require('./Util.js');
 
-// A result produced by MergeInitiator and MergeFinalizer classes
-class StepResult
+
+// Process() outcome
+class ProcessResult
 {
-    // treat as private; use static methods below instead
-    constructor(delayMs) {
-        assert(delayMs !== undefined);
-        this._delayMs = delayMs;
-    }
-
-    // the step is successfully finished
-    static Succeed() {
-        return new StepResult(0);
-    }
-
-    // the step is postponed (and will be resumed some time later)
-    static Suspend() {
-        return new StepResult(-1);
-    }
-
-    // the step is finished with failure
-    static Fail() {
-        return new StepResult(null);
-    }
-
-    // the step is postponed (and will be resumed in delayMs)
-    static Delay(delayMs) {
-        assert(delayMs !== null && delayMs > 0);
-        return new StepResult(delayMs);
-    }
-
-    succeeded() {
-        return this._delayMs !== null && this._delayMs === 0;
-    }
-
-    failed() {
-        return this._delayMs === null;
-    }
-
-    suspended() {
-        return this._delayMs !== null && this._delayMs < 0;
+    constructor() {
+        this._delayMs = null; // reprocess in that many milliseconds
+        this._prStaged = null; // this PR holds the lock on the staging branch
     }
 
     delayed() {
-        return this._delayMs !== null && this._delayMs > 0;
+        return this._delayMs !== null;
     }
 
-    delay() {
+    delayMs() {
         assert(this.delayed());
         return this._delayMs;
+    }
+
+    setDelayMsIfAny(msOrNull) {
+        assert(this._delayMs === null);
+        if (msOrNull !== null) {
+            const ms = msOrNull;
+            assert(ms > 0);
+            this._delayMs = ms;
+        }
+    }
+
+    setPrStaged(bool) {
+        assert(this._prStaged === null);
+        this._prStaged = bool;
+    }
+
+    prStaged() {
+        return this._prStaged;
+    }
+}
+
+// Relaying process() outcome to the caller via doProcess() exceptions:
+//
+// Exception          Abandon  Push-Labels  Result-of-process()
+// _exLostControl()     yes      no           approval delay (if any)
+// _exObviousFailure()  yes      yes          approval delay (if any)
+// _exLabeledFailure()  yes      yes          approval delay (if any)
+// _exSuspend()         no       yes          approval delay (if any)
+// any-unlisted-above   yes      yes          exception + M-failed-other
+// no-exception         no       yes          null delay
+//
+// Notes:
+// "Abandon" means moving on to merging another PR.
+
+// A PR-specific process()ing error.
+// A PrProblem thrower must set any appropriate labels.
+// Other exceptions get Config.failedOtherLabel() added automatically.
+// Babel does not support extending Error; this class requires node v8+.
+class PrProblem extends Error {
+    constructor(message, ...params) {
+        super(message, ...params);
+        this.name = this.constructor.name;
+        Error.captureStackTrace(this, this.constructor);
+
+        this._keepStaged = false; // catcher should preserve the staged commit
+    }
+
+    keepStagedRequested() { return this._keepStaged; }
+
+    requestToKeepStaged() {
+        assert(!this.keepStagedRequested());
+        this._keepStaged = true;
     }
 }
 
@@ -90,11 +109,6 @@ class Approval {
         return new Approval(description, "pending", null);
     }
 
-    matchesGitHubStatusCheck(approvalStatus) {
-        assert(approvalStatus);
-        return approvalStatus.state === this.state && approvalStatus.description === this.description;
-    }
-
     granted() { return this.delayMs !== null; }
 
     grantedTimeout() { return this.delayMs !== null && this.delayMs > 0; }
@@ -120,11 +134,22 @@ class StatusCheck
         this.targetUrl = raw.target_url;
         this.description = raw.description;
     }
+
+    failed() { return !(this.pending() || this.success()); }
+
+    success() { return this.state === 'success'; }
+
+    pending() { return this.state === 'pending'; }
 }
 
-// aggregates (required) status checks for a PR or commit
+// aggregates status checks for a PR or commit
 class StatusChecks
 {
+    // TODO: we should distinguish CI-reported (genuine) statuses from
+    // bot-reported (derivative) statuses, such as approvals.
+    // For example, failed() should count only genuine statuses, whereas
+    // final() should count all statuses.
+
     // expectedStatusCount:
     //   for staged commits: the bot-configured number of required checks (Config.stagingChecks()),
     //   for PR commits: GitHub configured number of required checks (requested from GitHub)
@@ -141,11 +166,13 @@ class StatusChecks
 
     addRequiredStatus(requiredStatus) {
         assert(requiredStatus);
+        assert(!this.hasStatus(requiredStatus.context));
         this.requiredStatuses.push(requiredStatus);
     }
 
     addOptionalStatus(optionalStatus) {
         assert(optionalStatus);
+        assert(!this.hasStatus(optionalStatus.context));
         this.optionalStatuses.push(optionalStatus);
     }
 
@@ -154,20 +181,45 @@ class StatusChecks
             this.optionalStatuses.some(el => el.context.trim() === context.trim());
     }
 
+    hasApprovalStatus(approval) {
+        return this.requiredStatuses.some(el =>
+                el.context.trim() === Config.approvalContext() &&
+                el.state === approval.state &&
+                el.description === approval.description);
+    }
+
+    setApprovalStatus(approval) {
+        this.requiredStatuses = this.requiredStatuses.filter(st => st.context !== Config.approvalContext());
+        let raw = {
+            state: approval.state,
+            target_url: Config.approvalUrl(),
+            description: approval.description,
+            context: Config.approvalContext()
+        };
+        this.addRequiredStatus(new StatusCheck(raw));
+    }
+
     // no more required status changes or additions are expected
     final() {
         return (this.requiredStatuses.length >= this.expectedStatusCount) &&
-            this.requiredStatuses.every(check => check.state !== 'pending');
+            this.requiredStatuses.every(check => !check.pending());
     }
 
     // something went wrong with at least one of the required status checks
     failed() {
-        return this.requiredStatuses.some(check => check.state !== 'pending' && check.state !== 'success');
+        return this._failedExcept(Config.approvalContext());
+    }
+
+    // Whether at least one of the required status checks failed.
+    // Ignores checks with the given context, when searching.
+    _failedExcept(context) {
+        const filteredChecks = this.requiredStatuses.filter(st => context ? st.context !== context : true);
+        return filteredChecks.some(check => check.failed());
     }
 
     // the results are final and all checks were a success
     succeeded() {
-        return this.final() && this.requiredStatuses.every(check => check.state === 'success');
+        return this.final() && this.requiredStatuses.every(check => check.success());
     }
 
     toString() {
@@ -198,19 +250,241 @@ class StatusChecks
     }
 }
 
-// Common methods/fields for MergeInitiator and MergeFinalizer.
-// Do not create directly.
-class MergeContext {
+// pull request label (e.g., M-cleared-for-merge)
+class Label
+{
+    constructor(name, presentOnGitHub) {
+        assert(arguments.length === 2);
+        this.name = name;
+        // we keep some unset labels to delay their removal from GitHub
+        this._presentHere = true; // set from Anubis high-level code point of view
+        this._presentOnGitHub = presentOnGitHub; // set from GitHub point of view
+    }
+    // whether the label should be considered "set" from Anubis high-level code point of view
+    present() { return this._presentHere; }
 
-    constructor(pr) {
-        this._pr = pr;
-        this._shaLimit = 6;
-        // information used for approval test status creation/updating
-        this._approval = null;
-        // cached _getRequiredContexts() result
+    needsRemovalFromGitHub() { return this._presentOnGitHub && !this._presentHere; }
+
+    needsAdditionToGitHub() { return !this._presentOnGitHub && this._presentHere; }
+
+    markForRemoval() { this._presentHere = false; }
+
+    markForAddition() { this._presentHere = true; }
+}
+
+// Pull request labels. Hides the fact that some labels may be kept internally
+// while appearing to be unset for high-level code. Delays synchronization
+// with GitHub to help GitHub aggregate human-readable label change reports.
+class Labels
+{
+    // the labels parameter is the label array received from GitHub
+    constructor(labels, prNum) {
+        this._prNum = prNum;
+        this._labels = labels.map(label => new Label(label.name, true));
+    }
+
+    // adding a previously added or existing label is a no-op
+    add(name) {
+        const label = this._find(name);
+        if (label)
+            label.markForAddition();
+        else
+            this._labels.push(new Label(name, false));
+    }
+
+    // removing a previously removed or missing label is a no-op
+    remove(name) {
+        const label = this._find(name);
+        if (label)
+            label.markForRemoval();
+    }
+
+    // whether the label is present (from high-level Anubis code point of view)
+    has(name) {
+        const label = this._find(name);
+        return label && label.present();
+    }
+
+    // brings GitHub labels in sync with ours
+    async pushToGitHub() {
+        let syncedLabels = [];
+        for (let label of this._labels) {
+            if (label.needsRemovalFromGitHub()) {
+                await this._removeFromGitHub(label.name);
+            } else {
+                if (label.needsAdditionToGitHub())
+                    await this._addToGitHub(label.name); // TODO: Optimize to add all labels at once
+                // else still unchanged
+
+                syncedLabels.push(label);
+            }
+        }
+        this._labels = syncedLabels;
+    }
+
+    // a summary of changed labels (used for debugging)
+    diff() {
+        let str = "";
+        for (let label of this._labels) {
+            if (label.needsRemovalFromGitHub() || label.needsAdditionToGitHub()) {
+                if (str.length)
+                    str += ", ";
+                const prefix = label.present() ? '+' : '-';
+                str += prefix + label.name;
+            }
+        }
+        return '[' + str + ']';
+    }
+
+    // removes a single label from GitHub
+    async _removeFromGitHub(name) {
+        try {
+            await GH.removeLabel(name, this._prNum);
+        } catch (e) {
+            if (e.name === 'ErrorContext' && e.notFound()) {
+                Log.LogException(e, "_removeFromGitHub: " + name + " not found");
+                return;
+            }
+            throw e;
+        }
+    }
+
+    // adds a single label to GitHub
+    async _addToGitHub(name) {
+        let params = Util.commonParams();
+        params.number = this._prNum;
+        params.labels = [];
+        params.labels.push(name);
+
+        await GH.addLabels(params);
+    }
+
+    _find(name) { return this._labels.find(label => label.name === name); }
+}
+
+// A state of an open pull request (with regard to merging progress). One of:
+// brewing: neither staged nor merged;
+// staged: with a staged commit that may be merged into the base branch either
+//         immediately or after successful tests completion;
+// merged: with a staged commit that has been merged into the base branch.
+// Here, PR "staged commit" is a commit at the tip of the staging branch
+// pointed to by the PR tag. If a PR tag does not exist or does not point to
+// the tip of the staging branch, then the PR does not have a staged commit.
+class PrState
+{
+    // treat as private; use static methods below instead
+    constructor(state) {
+        this._state = state;
+    }
+
+    static Brewing() { return new PrState(-1); }
+    static Staged() { return new PrState(0); }
+    static Merged() { return new PrState(1); }
+
+    brewing() { return this._state < 0; }
+    staged() { return this._state === 0; }
+    merged() { return this._state > 0; }
+
+    toString() {
+        if (this.brewing())
+            return "brewing";
+        if (this.staged())
+            return "staged";
+        assert(this.merged());
+        return "merged";
+    }
+}
+
+// Determines the feature branch position relative to its base branch: ahead,
+// merged, or diverged. This class essentially decides whether/which one of
+// the two branches is fully contained in another.
+class BranchPosition
+{
+    constructor(baseRef, featureRef) {
+        assert(baseRef !== featureRef);
+        this._baseRef = baseRef;
+        this._featureRef = featureRef;
+        this._status = null;
+    }
+
+    async compute() {
+        this._status = await GH.compareCommits(this._baseRef, this._featureRef);
+    }
+
+    // feature > base:
+    // the feature branch contains the base branch and some additional commits
+    ahead() {
+        assert(this._status);
+        return this._status === "ahead";
+    }
+
+    // feature <= base:
+    // either both branches point to same commit (e.g., just merged) or
+    // there are new commits on base since the feature branch was merged
+    merged() {
+        assert(this._status);
+        return this._status === "identical" || this._status === "behind";
+    }
+
+    // neither ahead nor merged:
+    // both base and the feature branch have unique-to-them commits
+    diverged() {
+        assert(this._status);
+        // this._status should be "diverged", but we also handle any new/unexpected statuses here
+        return !(this.ahead() || this.merged());
+    }
+}
+
+// a single GitHub pull request
+class PullRequest {
+
+    constructor(pr, banStaging) {
+        this._rawPr = pr; // may be rather old and lack pr.mergeable; see _loadRawPr()
+
+        this._shaLimit = 6; // how many SHA chars to show in debug messages
+
+        this._approval = null; // future Approval object
+
+        // optimization: cached _getRequiredContexts() result
         this._requiredContextsCache = null;
+
         this._tagSha = null;
-        this._role = null;
+        this._stagedPosition = null;
+        this._freshStagedCommitWithFailedChecks = null;
+
+        // optimization: cached _tagCommit() result
+        this._tagCommitCache = null;
+
+        // major methods we have called, in the call order (for debugging only)
+        this._breadcrumbs = [];
+
+        this._messageValid = null;
+
+        this._prState = null; // calculated PrState
+
+        this._labels = null;
+
+        // while unexpected, PR merging and closing is not prohibited when staging is
+        this._stagingBanned = banStaging;
+
+        // GitHub statuses of the staged commit
+        this._stagedStatuses = null;
+
+        // GitHub statuses of the PR branch head commit
+        this._prStatuses = null;
+
+        this._updated = false; // _update() has been called
+
+        // truthy value contains a reason for disabling _pushLabelsToGitHub()
+        this._labelPushBan = false;
+    }
+
+    // this PR will need to be reprocessed in this many milliseconds
+    // returns null if this PR does not need to be reprocessed on a timer
+    _delayMs() {
+        if (this._approval && this._approval.grantedTimeout())
+            return this._approval.delayMs; // always positive
+        return null;
     }
 
     // creates and returns filled Approval object
@@ -228,7 +502,7 @@ class MergeContext {
             }
         }
 
-        let reviews = await GH.getReviews(this.prNumber());
+        let reviews = await GH.getReviews(this._prNumber());
 
         // An array of [{reviewer, date, state}] elements,
         // where 'reviewer' is a core developer, 'date' the review date and 'state' is either
@@ -285,22 +559,26 @@ class MergeContext {
         return Approval.GrantAfterTimeout("waiting for more votes or a slow burner timeout", Config.votingDelayMax() - prAgeMs);
     }
 
-    async _setApprovalStatus(sha) {
-        assert(sha);
-
-        if (this._dryRun("setting approval status"))
-            return;
+    async _setApprovalStatuses() {
         if (!Config.manageApprovalStatus())
             return;
 
-        const combinedStatus = await GH.getStatuses(sha);
-        const approvalStatus = combinedStatus.statuses ?
-            combinedStatus.statuses.find(el => el.context.trim() === Config.approvalContext()) : null;
+        assert(this._prStatuses);
 
-        if (approvalStatus && this._approval.matchesGitHubStatusCheck(approvalStatus)) {
-            this._log("Approval status already exists: " + Config.approvalContext() + ", " + this._approval);
-            return;
+        if (!this._prStatuses.hasApprovalStatus(this._approval)) {
+            await this._createApprovalStatus(this._prHeadSha());
+            this._prStatuses.setApprovalStatus(this._approval);
         }
+
+        if (this._stagedStatuses && !this._stagedStatuses.hasApprovalStatus(this._approval)) {
+            await this._createApprovalStatus(this._tagSha);
+            this._stagedStatuses.setApprovalStatus(this._approval);
+        }
+    }
+
+    async _createApprovalStatus(sha) {
+        if (this._dryRun("creating approval status"))
+            return;
         await GH.createStatus(sha, this._approval.state, Config.approvalUrl(), this._approval.description, Config.approvalContext());
     }
 
@@ -312,7 +590,7 @@ class MergeContext {
             this._requiredContextsCache = await GH.getProtectedBranchRequiredStatusChecks(this._prBaseBranch());
         } catch (e) {
            if (e.name === 'ErrorContext' && e.notFound())
-               Log.LogException(e, this._toString() + " no status checks are required");
+               this._logEx(e, "no status checks are required");
            else
                throw e;
         }
@@ -355,6 +633,7 @@ class MergeContext {
         for (let st of optionalStatuses)
             statusChecks.addOptionalStatus(new StatusCheck(st));
 
+        this._log("staging status details: " + statusChecks);
         return statusChecks;
     }
 
@@ -364,137 +643,165 @@ class MergeContext {
         return this._tagCommitCache;
     }
 
-    // Whether the PR merge commit has not changed since the PR staged commit creation.
-    // Note that it does not track possible conflicts between PR base branch and the
-    // PR branch (the PR merge commit is recreated only when there are no conflicts).
-    // Conflicts are tracked separately, by checking _prMergeable() flag.
-    async _tagIsFresh() {
-        const tagCommit = await this._tagCommit();
-        const prMergeSha = await GH.getReference(this._mergePath());
-        const prCommit = await GH.getCommit(prMergeSha);
-        const result = tagCommit.tree.sha === prCommit.tree.sha;
-        this._log("tag freshness: " + result);
-        return result;
-    }
+    // Determines whether the existing staged commit is equivalent to a staged
+    // commit that could be created right now. Relies on PR merge commit being fresh.
+    // TODO: check whether the staging checks list has changed since the staged commit creation.
+    async _stagedCommitIsFresh() {
+        assert(this._tagSha);
+        if (this._stagedPosition.ahead() &&
+            // check this separately because GitHub does not recreate PR merge commits
+            // for conflicted PR branches (leaving stale PR merge commits).
+            this._prMergeable() &&
+            await this._messageIsFresh()) {
 
-    // Label manipulation methods
-
-    async _hasLabel(label) {
-        const labels = await GH.getLabels(this.prNumber());
-        return labels.find(lbl => lbl.name === label) !== undefined;
-    }
-
-    async _removeLabelsIf(labels) {
-        const currentLabels = await GH.getLabels(this.prNumber());
-        for (let label of labels) {
-            if (currentLabels.find(lbl => lbl.name === label) !== undefined)
-                await this._removeLabel(label);
-            else
-                this._log("_removeLabelsIf: skip non-existent " + label);
+            const tagCommit = await this._tagCommit();
+            const prMergeSha = await GH.getReference(this._mergePath());
+            const prCommit = await GH.getCommit(prMergeSha);
+            // whether the PR branch has not changed
+            if (tagCommit.tree.sha === prCommit.tree.sha) {
+                this._log("the staged commit is fresh");
+                return true;
+            }
         }
+        this._log("the staged commit is stale");
+        return false;
     }
 
-    async _removeLabel(label) {
-        try {
-            await GH.removeLabel(label, this.prNumber());
-        } catch (e) {
-            if (e.name === 'ErrorContext' && e.notFound()) {
-                Log.LogException(e, this._toString() + " removeLabel: " + label + " not found");
+    // loads info about the "staging tag" (if any); M-staged-PRnnn tag is a
+    // PR-specific git tag pointing to the previously created staged commit
+    async _loadTag() {
+       if (this._tagSha)
+           return;
+
+       try {
+           this._tagSha = await GH.getReference(this._stagingTag());
+       } catch (e) {
+           if (e.name === 'ErrorContext' && e.notFound()) {
+               this._logEx(e, this._stagingTag() + " not found");
+               return;
+           }
+           throw e;
+       }
+    }
+
+    async _loadLabels() {
+        let labels = await GH.getLabels(this._prNumber());
+        assert(!this._labels);
+        this._labels = new Labels(labels, this._prNumber());
+    }
+
+    // Checks whether this PR is still open and still wants to be merged.
+    // This is a common part of staging and merging precondition checks.
+    async _checkActive() {
+        if (!this._prOpen())
+            throw this._exLostControl("unexpected closure");
+
+        if (this._labels.has(Config.mergedLabel()))
+            throw this._exLostControl("premature " + Config.mergedLabel());
+    }
+
+    // whether the PR should be staged (including re-staged)
+    async _checkStagingPreconditions() {
+        this._log("checking staging preconditions");
+
+        await this._checkActive();
+
+        // TODO: If multiple failures need labeling, label all of them.
+
+        // optimization: check it first because staged commit freshness implies that other PR
+        // attributes (message, mergeability, etc) are OK.
+        if (this._freshStagedCommitWithFailedChecks)
+            throw this._exLabeledFailure("staged commit tests will fail", Config.failedStagingChecksLabel());
+
+        if (this._wipPr())
+            throw this._exObviousFailure("work-in-progress");
+
+        if (!this._messageValid)
+            throw this._exLabeledFailure("invalid commit message", Config.failedDescriptionLabel());
+
+        if (!this._prMergeable())
+            throw this._exObviousFailure("GitHub will not be able to merge");
+
+        if (!this._approval.granted())
+            throw this._exObviousFailure("waiting for approval");
+
+        if (this._approval.grantedTimeout())
+            throw this._exObviousFailure("waiting for objections");
+
+        if (this._stagingBanned)
+            throw this._exObviousFailure("waiting for another staged PR");
+
+        if (this._prStatuses.failed())
+            throw this._exObviousFailure("failed PR tests");
+
+        if (!this._prStatuses.final())
+            throw this._exObviousFailure("waiting for PR checks");
+
+        assert(this._prStatuses.succeeded());
+    }
+
+    // refreshes Anubis-managed part of the GitHub PR state
+    async _update() {
+        if (this._updated)
+            return;
+
+        this._breadcrumbs.push("update");
+
+        assert(!this._prState.merged());
+
+        this._messageValid = this._prMessageValid();
+        this._log("messageValid: " + this._messageValid);
+
+        this._approval = await this._checkApproval();
+        this._log("checkApproval: " + this._approval);
+        await this._setApprovalStatuses();
+
+        this._updated = true;
+    }
+
+    // brings GitHub labels in sync with ours
+    async _pushLabelsToGitHub() {
+        if (this._labels) {
+            if (this._labelPushBan) {
+                this._log("will not push changed labels: " + this._labelPushBan);
                 return;
             }
-            throw e;
+            this._log("pushing changed labels: " + this._labels.diff());
+            if (!this._dryRun("pushing labels"))
+                await this._labels.pushToGitHub();
         }
     }
 
-    async _addLabel(label) {
-        const currentLabels = await GH.getLabels(this.prNumber());
-        if (currentLabels.find(lbl => lbl.name === label) !== undefined) {
-            this._log("addLabel: skip already existing " + label);
-            return;
+    // cleans up and closes a merged PR, removing it from our radar for good
+    async _finalize() {
+        this._breadcrumbs.push("finalize");
+
+        assert(this._prState.merged());
+
+        // Clear any positive labels (there should be no negatives here)
+        // because Config.mergedLabel() set below already implies that all
+        // intermediate processing steps have succeeded.
+        this._removeTemporaryLabelsSetByAnubis();
+
+        this._labels.remove(Config.clearedForMergeLabel());
+        this._labels.add(Config.mergedLabel());
+
+        if (!this._dryRun("closing PR")) {
+            await GH.updatePR(this._prNumber(), 'closed');
+            await GH.deleteReference(this._stagingTag());
         }
 
-        let params = Util.commonParams();
-        params.number = this.prNumber();
-        params.labels = [];
-        params.labels.push(label);
-
-        await GH.addLabels(params);
-    }
-
-    async _labelFailedDescription(isValid) {
-        if (this._dryRun("labeling on failed description"))
-            return;
-        const label = Config.failedDescriptionLabel();
-        if (isValid)
-            await this._removeLabelsIf([label]);
-        else
-            await this._addLabel(label);
-    }
-
-    async _unlabelPreconditionsChecking() {
-        await this._removeLabelsIf([
-                Config.passedStagingChecksLabel(),
-                Config.waitingStagingChecksLabel()
-                ]);
-    }
-
-    async _unlabelPreconditionsChecked() {
-        await this._removeLabelsIf([
-                Config.failedOtherLabel(),
-                Config.failedStagingChecksLabel(),
-                Config.failedDescriptionLabel()
-                ]);
-    }
-
-    async _labelWaitingStagingChecks() {
-        await this._removeLabelsIf([
-                Config.passedStagingChecksLabel()
-                ]);
-        await this._addLabel(Config.waitingStagingChecksLabel());
-    }
-
-    async _labelMerged() {
-        await this._removeLabelsIf([
-                Config.waitingStagingChecksLabel(),
-                Config.passedStagingChecksLabel(),
-                Config.clearedForMergeLabel()
-                ]);
-        await this._addLabel(Config.mergedLabel());
-    }
-
-    async _labelFailedOther() {
-        await this._removeLabelsIf([
-                Config.waitingStagingChecksLabel(),
-                Config.passedStagingChecksLabel()
-                ]);
-        await this._addLabel(Config.failedOtherLabel());
-    }
-
-    async _labelCleanStaged() {
-        await this._removeLabelsIf([
-                Config.waitingStagingChecksLabel(),
-                Config.passedStagingChecksLabel()
-        ]);
-    }
-
-    async _labelFailedStagingChecks() {
-        await this._removeLabelsIf([ Config.waitingStagingChecksLabel() ]);
-        await this._addLabel(Config.failedStagingChecksLabel());
-    }
-
-    async _labelPassedStagingChecks() {
-        await this._removeLabelsIf([ Config.waitingStagingChecksLabel() ]);
-        await this._addLabel(Config.passedStagingChecksLabel());
+        this._log("finalize completed");
     }
 
     // Getters
 
-    prNumber() { return this._pr.number; }
+    _prNumber() { return this._rawPr.number; }
 
-    _prHeadSha() { return this._pr.head.sha; }
+    _prHeadSha() { return this._rawPr.head.sha; }
 
     _prMessage() {
-        return (this._pr.title + ' (#' + this._pr.number + ')' + '\n\n' + this._prBody()).trim();
+        return (this._rawPr.title + ' (#' + this._rawPr.number + ')' + '\n\n' + this._prBody()).trim();
     }
 
     _prMessageValid() {
@@ -506,55 +813,73 @@ class MergeContext {
         return true;
     }
 
-    _prInProgress() { return this._pr.title.startsWith('WIP:'); }
+    _wipPr() { return this._rawPr.title.startsWith('WIP:'); }
 
     _prRequestedReviewers() {
         let reviewers = [];
-        if (this._pr.requested_reviewers) {
-            for (let r of this._pr.requested_reviewers)
+        if (this._rawPr.requested_reviewers) {
+            for (let r of this._rawPr.requested_reviewers)
                reviewers.push(r.login);
         }
         return reviewers;
     }
 
-    _prAuthor() { return this._pr.user.login; }
+    _prAuthor() { return this._rawPr.user.login; }
 
-    _prMergeable() { return this._pr.mergeable; }
+    _prMergeable() {
+        // requires GH.getPR() call
+        assert(this._rawPr.mergeable !== undefined);
+        return this._rawPr.mergeable;
+    }
 
-    _prBaseBranch() { return this._pr.base.ref; }
+    _prBaseBranch() { return this._rawPr.base.ref; }
 
     _prBaseBranchPath() { return "heads/" + this._prBaseBranch(); }
 
-    _prOpen() { return this._pr.state === 'open'; }
+    _prOpen() { return this._rawPr.state === 'open'; }
 
     _prBody() {
-        if (this._pr.body === undefined || this._pr.body === null)
+        if (this._rawPr.body === undefined || this._rawPr.body === null)
             return "";
-        return this._pr.body.replace(/\r+\n/g, '\n');
+        return this._rawPr.body.replace(/\r+\n/g, '\n');
     }
 
-    _stagingTag() { return Util.StagingTag(this._pr.number); }
+    _stagingTag() { return Util.StagingTag(this._rawPr.number); }
 
-    _createdAt() { return this._pr.created_at; }
+    _createdAt() { return this._rawPr.created_at; }
 
-    _mergePath() { return "pull/" + this._pr.number + "/merge"; }
+    _mergePath() { return "pull/" + this._rawPr.number + "/merge"; }
 
-    isFinalizer() { return this._role === "finalizer"; }
-
-    isInitiator() { return this._role === "initiator"; }
+    staged() { return this._prState.staged(); }
 
     _debugString() {
-        return "PR" + this._pr.number + "(" + this._role + ", " + "head: " + this._pr.head.sha.substr(0, this._shaLimit);
+        const tagged = this._tagSha ? "tagged: " + this._tagSha.substr(0, this._shaLimit) + ' ' : "";
+        const detail =
+            "head: " + this._rawPr.head.sha.substr(0, this._shaLimit) + ' ' + tagged +
+            "history: " + this._breadcrumbs.join();
+        return "PR" + this._rawPr.number + ` (${detail})`;
     }
 
+    // TODO: support variable number of arguments
     _log(msg) {
-        Log.Logger.info(this._debugString() + "):", msg);
+        Log.Logger.info(this._debugString(), msg);
     }
 
-    _logFailedCondition(cond) {
-        this._log("condition '" + cond + "' failed");
-     }
+    // TODO: support variable number of arguments
+    _warn(msg) {
+        Log.Logger.warn(this._debugString(), msg);
+    }
 
+    _logError(e, msg) {
+        Log.LogError(e, this._toString() + ' ' + msg);
+    }
+
+    _logEx(e, msg) {
+        Log.LogException(e, this._toString() + ' ' + msg);
+    }
+
+    // TODO: consider moving this and other similar checks
+    // directly into GH methods
     // TODO: Rename to _readOnly()
     // whether all GitHub/repository changes are prohibited
     _dryRun(msg) {
@@ -570,51 +895,222 @@ class MergeContext {
             str += ", tag: " + this._tagSha.substr(0, this._shaLimit);
         return str + ")";
     }
-} // MergeContext
 
-// Starts PR processing.
-// Performs all PR merge steps up to and including the staged commit creation.
-class MergeInitiator extends MergeContext {
-
-    constructor(pr) {
-        super(pr);
-        this._role = "initiator";
-    }
-
-    // Tries to load 'staging tag' for the PR.
-    async _loadTag() {
-       try {
-           this._tagSha = await GH.getReference(this._stagingTag());
-       } catch (e) {
-           if (e.name === 'ErrorContext' && e.notFound())
-               Log.LogException(e, this._toString() + " " + this._stagingTag() + " not found");
-           else
-               throw e;
-       }
-    }
-
-    // Check 'staging tag' state as merge condition.
-    // Returns true if there is a fresh tag with 'failure' status.
-    async _stagingFailed() {
-        await this._loadTag();
-        if (!this._tagSha)
-            return false;
-
-        const isFresh = await this._tagIsFresh();
-        this._log("staging tag is " + (isFresh ? "fresh" : "stale"));
-        if (isFresh) {
-            const commitStatus = await this._getStagingStatuses();
-            this._log("staging status details: " + commitStatus);
-            if (commitStatus.failed()) {
-                this._log("staging checks failed some time ago");
-                if (this._prMergeable() !== true)
-                    this._log("merge commit did not change due to conflicts with " + this._prBaseBranch());
-                return true;
-            }
+    async _loadPrState() {
+        if (!this._tagSha) {
+            await this._enterBrewing();
+            return;
         }
-        if (!this._dryRun("deleting staging commit"))
-            await GH.deleteReference(this._stagingTag());
-        return false;
+
+        assert(this._stagedPosition);
+
+        if (this._stagedPosition.merged()) {
+            this._log("already merged into base some time ago");
+            this._enterMerged();
+            return;
+        }
+
+        if (!(await this._stagedCommitIsFresh())) {
+            await this._enterBrewing();
+            return;
+        }
+
+        assert(this._stagedPosition.ahead());
+
+        const stagedStatuses = await this._getStagingStatuses();
+        // Do not vainly recreate staged commit which will definitely fail again,
+        // since the PR+base code is yet unchanged and the existing errors still persist
+        if (stagedStatuses.failed()) {
+            this._freshStagedCommitWithFailedChecks = true;
+            await this._enterBrewing();
+            return;
+        }
+
+        const stagingSha = await GH.getReference(Config.stagingBranchPath());
+        // Make sure the staging branch points to our fresh staged commit.
+        if (stagingSha !== this._tagSha) {
+            await this._enterBrewing();
+            return;
+        }
+
+        await this._enterStaged(stagedStatuses);
+    }
+
+    async _enterBrewing() {
+        this._prState = PrState.Brewing();
+        assert(this._prStatuses === null);
+        this._prStatuses = await this._getPrStatuses();
+    }
+
+    async _enterStaged(stagedStatuses) {
+        this._prState = PrState.Staged();
+        assert(this._stagedStatuses === null);
+        if (stagedStatuses)
+            this._stagedStatuses = stagedStatuses;
+        else
+            this._stagedStatuses = await this._getStagingStatuses();
+        this._prStatuses = await this._getPrStatuses();
+    }
+
+    _enterMerged() {
+        this._prState = PrState.Merged();
+    }
+
+    // loads raw PR metadata from GitHub
+    async _loadRawPr() {
+        // GH.getPR() may become slow (and even fail) on merged PRs because
+        // GitHub may take its time (or even fail) to calculate pr.mergeable.
+        // Fortunately, we do not need that field for merged PRs.
+        if (this._tagSha) {
+           this._stagedPosition = new BranchPosition(this._prBaseBranch(), this._stagingTag());
+           await this._stagedPosition.compute();
+        }
+        const waitForMergeable = !(this._stagedPosition && this._stagedPosition.merged());
+        const pr = await GH.getPR(this._prNumber(), waitForMergeable);
+        assert(pr.number === this._prNumber());
+        this._rawPr = pr;
+    }
+
+    // Whether the commit message configuration remained intact since staging.
+    async _messageIsFresh() {
+        const tagCommit = await this._tagCommit();
+        const result = this._prMessage() === tagCommit.message;
+        this._log("staged commit message freshness: " + result);
+        return result;
+    }
+
+    async _processStagingStatuses() {
+        assert(this._stagedStatuses);
+        if (this._stagedStatuses.failed())
+            throw this._exLabeledFailure("staging tests failed", Config.failedStagingChecksLabel());
+
+        if (!this._stagedStatuses.final()) {
+            this._labels.add(Config.waitingStagingChecksLabel());
+            throw this._exSuspend("waiting for staging tests completion");
+        }
+
+        assert(this._stagedStatuses.succeeded());
+        this._labels.add(Config.passedStagingChecksLabel());
+        this._log("staging checks succeeded");
+
+        await this._supplyStagingWithPrRequired();
+    }
+
+    // Creates PR-required status checks for staged commit (if possible).
+    // Staged commit needs all PR-required checks (configured on GitHub)
+    // so that GitHub could merge it into the protected base branch.
+    async _supplyStagingWithPrRequired() {
+        assert(this._stagedStatuses.succeeded());
+
+        const requiredContexts = await this._getRequiredContexts();
+
+        for (let requiredContext of requiredContexts) {
+            if (this._stagedStatuses.hasStatus(requiredContext)) {
+                this._log("_supplyStagingWithPrRequired: skip existing " + requiredContext);
+                continue;
+            }
+            const requiredPrStatus = this._prStatuses.requiredStatuses.find(el => el.context.trim() === requiredContext.trim());
+            assert(requiredPrStatus);
+            assert(!requiredPrStatus.description.endsWith(Config.copiedDescriptionSuffix()));
+
+            if (this._dryRun("applying required PR statuses to staged"))
+                continue;
+
+            const check = new StatusCheck({
+                    state: "success",
+                    target_url: requiredPrStatus.targetUrl,
+                    description: requiredPrStatus.description + Config.copiedDescriptionSuffix(),
+                    context: requiredPrStatus.context
+                });
+
+            await GH.createStatus(this._tagSha, check.state, check.targetUrl,
+                    check.description, check.context);
+
+            this._stagedStatuses.addOptionalStatus(check);
+        }
+    }
+
+    // whether target branch changes are prohibited
+    _stagingOnly() {
+        // TODO: The caller should not have to remember to call _dryRun() first
+        assert(!this._dryRun("_stagingOnly"));
+        const msg = "merge staged";
+
+        if (Config.stagedRun()) {
+            this._log("skip " + msg + " due to staged_run option");
+            return true;
+        }
+
+        if (Config.guardedRun()) {
+            if (this._labels.has(Config.clearedForMergeLabel())) {
+                this._log("allow " + msg + " due to " + Config.clearedForMergeLabel() + " overruling guarded_run option");
+                return false;
+            }
+            this._log("skip " + msg + " due to guarded_run option");
+            return true;
+        }
+
+        return false; // no staging-only mode by default
+    }
+
+    // checks whether this staged PR can be merged
+    async _checkMergePreconditions() {
+        this._log("checking merge preconditions");
+
+        await this._checkActive();
+
+        // yes, _checkStagingPreconditions() has checked the same message
+        // already, but our _criteria_ might have changed since that check
+        if (!this._messageValid)
+            throw this._exLabeledFailure("commit message is now considered invalid", Config.failedDescriptionLabel());
+
+        assert(!this._wipPr());
+
+        // TODO: unstage only if there is competition for being staged
+
+        // yes, _checkStagingPreconditions() has checked approval already, but
+        // humans may have changed their mind since that check
+        if (!this._approval.granted())
+            throw this._exObviousFailure("lost approval");
+        if (this._approval.grantedTimeout())
+            throw this._exObviousFailure("restart waiting for objections");
+
+        if (this._prStatuses.failed())
+            throw this._exObviousFailure("new PR branch tests appeared/failed after staging");
+
+        if (!this._prStatuses.final())
+            throw this._exSuspend("waiting for PR branch tests that appeared after staging");
+
+        assert(this._prStatuses.succeeded());
+
+        await this._processStagingStatuses();
+    }
+
+    async _mergeToBase() {
+        assert(this._tagSha);
+        assert(this._stagedPosition.ahead());
+        this._log("merging to base...");
+
+        if (this._dryRun("merging to base"))
+            throw this._exSuspend("dryRun");
+
+        if (this._stagingOnly())
+            throw this._exSuspend("waiting for staging-only mode to end");
+
+        assert(!this._stagingBanned);
+
+        try {
+            await GH.updateReference(this._prBaseBranchPath(), this._tagSha, false);
+        } catch (e) {
+            if (e.name === 'ErrorContext' && e.unprocessable()) {
+                await this._stagedPosition().compute();
+                if (this._stagedPosition.diverged())
+                    this._log("could not fast-forward, the base " + this._prBaseBranchPath() + " was probably modified while we were merging");
+            }
+            throw e;
+        }
+
+        this._enterMerged();
     }
 
     async _acquireUserProperties() {
@@ -632,334 +1128,195 @@ class MergeInitiator extends MergeContext {
         assert(Config.githubUserName());
     }
 
-    async _checkConditions() {
-        this._log("initiator: checking conditions");
-        this._approval = null;
-
-        const pr = await GH.getPR(this.prNumber(), true);
-        // refresh PR data
-        assert(pr.number === this._pr.number);
-        this._pr = pr;
-
-        if (!this._prOpen()) {
-            this._logFailedCondition("open");
-            return StepResult.Fail();
-        }
-
-        if (await this._hasLabel(Config.mergedLabel(), this.prNumber())) {
-            this._logFailedCondition("already has merged status");
-            return StepResult.Fail();
-        }
-
-        const messageValid = this._prMessageValid();
-        await this._labelFailedDescription(messageValid);
-
-        this._approval = await this._checkApproval();
-        this._log("checkApproval: " + this._approval);
-        await this._setApprovalStatus(this._prHeadSha());
-
-        if (this._prInProgress()) {
-            this._logFailedCondition("not in progress");
-            return StepResult.Fail();
-        }
-
-        if (!this._prMergeable()) {
-            this._logFailedCondition("mergeable");
-            return StepResult.Fail();
-        }
-
-        if (await this._stagingFailed()) {
-            this._logFailedCondition("fresh tag with failed staging checks");
-            return StepResult.Fail();
-        }
-
-        const statusChecks = await this._getPrStatuses();
-        if (statusChecks.failed())
-            return StepResult.Fail();
-
-        if (!messageValid) {
-            this._logFailedCondition("commit message");
-            return StepResult.Fail();
-        }
-
-        if (!this._approval.granted()) {
-            this._logFailedCondition("approved");
-            return StepResult.Fail();
-        }
-
-        if (this._approval.grantedTimeout())
-            return StepResult.Delay(this._approval.delayMs);
-
-        if (!statusChecks.final())
-            return StepResult.Suspend();
-
-        return StepResult.Succeed();
-    }
-
     async _createStaged() {
-        this._log("start merging...");
         const baseSha = await GH.getReference(this._prBaseBranchPath());
-        const mergeSha = await GH.getReference("pull/" + this.prNumber() + "/merge");
+        const mergeSha = await GH.getReference("pull/" + this._prNumber() + "/merge");
         const mergeCommit = await GH.getCommit(mergeSha);
         if (!Config.githubUserName())
             await this._acquireUserProperties();
         let now = new Date();
         const committer = {name: Config.githubUserName(), email: Config.githubUserEmail(), date: now.toISOString()};
+
+        if (this._dryRun("create staged commit"))
+            throw this._exObviousFailure("dryRun");
+
+        if (this._tagSha) {
+            await GH.deleteReference(this._stagingTag());
+            this._tagSha = null;
+        }
+
         const tempCommitSha = await GH.createCommit(mergeCommit.tree.sha, this._prMessage(), [baseSha], mergeCommit.author, committer);
         this._tagSha = await GH.createReference(tempCommitSha, "refs/" + this._stagingTag());
-        await this._setApprovalStatus(this._tagSha);
+
+        this._stagedPosition = new BranchPosition(this._prBaseBranch(), this._stagingTag());
+        await this._stagedPosition.compute();
+        assert(this._stagedPosition.ahead());
+
+        assert(!this._stagingBanned);
         await GH.updateReference(Config.stagingBranchPath(), this._tagSha, true);
+        await this._enterStaged();
     }
 
-    // returns filled StepResult object
-    async process() {
-        // TODO: Optimize old/busy repo by quitting unless _prOpen().
-        // TODO: Optimize label tests by caching all PR labels here.
+    // updates and, if possible, advances (i.e. stages) a brewing GitHub PR
+    async _stage() {
+        this._breadcrumbs.push("stage");
 
-        if (!this._dryRun("reset labels before precondition checking"))
-            await this._unlabelPreconditionsChecking();
+        assert(this._prState.brewing());
 
-        const conditions = await this._checkConditions();
-        if (!conditions.succeeded())
-            return conditions;
+        // methods below compute fresh labels from scratch
+        this._removeTemporaryLabelsSetByAnubis();
 
-        if (this._dryRun("start merging"))
-            return StepResult.Suspend();
-
-        await this._unlabelPreconditionsChecked();
+        await this._update();
+        await this._checkStagingPreconditions();
         await this._createStaged();
-        await this._labelWaitingStagingChecks();
-
-        return StepResult.Succeed();
-    }
-} // MergeInitiator
-
-// Finishes PR processing.
-// Performs all PR merge steps after the staged commit creation.
-// Requires PRs having staged commit and staging branch pointing to it.
-class MergeFinalizer extends MergeContext {
-    constructor(pr, tSha) {
-        super(pr);
-        assert(tSha);
-        // optimization: cached _tagCommit() result
-        this._tagCommitCache = null;
-        this._tagSha = tSha;
-        this._role = "finalizer";
     }
 
-    // whether the staged commit and the base HEAD have independent,
-    // (probably conflicting) changes
-    async _tagDiverged() {
-        try {
-            const compareStatus = await GH.compareCommits(this._prBaseBranch(), this._stagingTag());
-            return compareStatus === "diverged";
-        } catch (e) {
-            Log.LogError(e, this._toString() + " compare commits failed");
-            return false;
-        }
+    // updates and, if possible, advances (i.e. merges) a staged GitHub PR
+    async _mergeStaged() {
+        this._breadcrumbs.push("merge");
+
+        assert(this._prState.staged());
+
+        // methods below compute fresh labels from scratch
+        this._removeTemporaryLabelsSetByAnubis();
+
+        await this._update();
+        await this._checkMergePreconditions();
+        await this._mergeToBase();
     }
 
-    // Whether the commit message configuration remained intact since staging.
-    async _messageIsFresh() {
-        const tagCommit = await this._tagCommit();
-        const result = this._prMessage() === tagCommit.message;
-        this._log("tag message freshness: " + result);
-        return result;
+    // Maintain Anubis-controlled PR metadata.
+    // If possible, also merge or advance the PR towards merging.
+    // The caller must follow up with _pushLabelsToGitHub()!
+    async _doProcess() {
+        this._breadcrumbs.push("load");
+
+        /*
+         * Until _loadRawPr(), we must avoid this._rawPr fields except .number.
+         * TODO: Refactor to eliminate the risk of too-early this._rawPr use.
+         */
+        await this._loadTag(); // requires this._rawPr.number
+        await this._loadRawPr(); // requires this._loadTag()
+        await this._loadPrState(); // requires this._loadRawPr()
+        this._log("PR state: " + this._prState);
+        await this._loadLabels();
+
+        if (this._prState.brewing()) {
+            await this._stage();
+            assert(this._prState.staged());
+        }
+
+        if (this._prState.staged())
+            await this._mergeStaged();
+
+        assert(this._prState.merged());
+        await this._finalize();
     }
 
-    // Adjusts the successfully merged PR (labels, status, tag).
-    async _cleanupMerged() {
-        if (this._dryRun("cleanup merged"))
-            return StepResult.Suspend();
-
-        this._log("merged, cleanup...");
-        await this._labelMerged();
-        await GH.updatePR(this.prNumber(), 'closed');
-        await GH.deleteReference(this._stagingTag());
-        return StepResult.Succeed();
-    }
-
-    async _cleanupMergeFailed(deleteTag, labelsCleanup) {
-        if (this._dryRun("cleanup merge failed"))
-            return StepResult.Suspend();
-        this._log("merge failed, cleanup...");
-        if (labelsCleanup === undefined)
-            labelsCleanup = this._labelFailedOther;
-        labelsCleanup = labelsCleanup.bind(this);
-        await labelsCleanup();
-        if (deleteTag)
-            await GH.deleteReference(this._stagingTag());
-        return StepResult.Fail();
-    }
-
-    // returns filled StepResult object
-    async _processStagingStatuses() {
-        const stagingStatus = await this._getStagingStatuses();
-        this._log("staging status details: " + stagingStatus);
-        if (stagingStatus.failed()) {
-            this._log("staging checks failed");
-            return await this._cleanupMergeFailed(false, this._labelFailedStagingChecks);
-        }
-        if (!stagingStatus.final()) {
-            if (!this._dryRun("setting M-wating-staging-checks label"))
-                await this._labelWaitingStagingChecks();
-            this._log("waiting for more staging checks completing");
-            return StepResult.Suspend();
-        }
-        assert(stagingStatus.succeeded());
-        this._log("staging checks succeeded");
-        if (this._dryRun("finish processing"))
-            return StepResult.Suspend();
-        await this._supplyStagingWithPrRequired(stagingStatus);
-        return StepResult.Succeed();
-    }
-
-    // Creates PR-required status checks for staged commit (if possible).
-    // Staged commit needs all PR-required checks (configured on GitHub)
-    // so that GitHub could merge it into the protected base branch.
-    async _supplyStagingWithPrRequired(stagedStatuses) {
-        assert(stagedStatuses.succeeded());
-
-        const requiredContexts = await this._getRequiredContexts();
-        const prStatuses = await this._getPrStatuses();
-
-        for (let requiredContext of requiredContexts) {
-            if (stagedStatuses.hasStatus(requiredContext)) {
-                this._log("_supplyStagingWithPrRequired: skip existing " + requiredContext);
-                continue;
-            }
-            const requiredPrStatus = prStatuses.requiredStatuses.find(el => el.context.trim() === requiredContext.trim());
-            assert(requiredPrStatus);
-            assert(!requiredPrStatus.description.endsWith(Config.copiedDescriptionSuffix()));
-            await GH.createStatus(this._tagSha, "success", requiredPrStatus.targetUrl,
-                    requiredPrStatus.description + Config.copiedDescriptionSuffix(), requiredPrStatus.context);
-        }
-    }
-
-    // whether target branch changes are prohibited
-    async _stagingOnly() {
-        // TODO: The caller should not have to remember to call _dryRun() first
-        assert(!this._dryRun("_stagingOnly"));
-        const msg = "finalize merging";
-
-        if (Config.stagedRun()) {
-            this._log("skip " + msg + " due to staged_run option");
-            return true;
-        }
-
-        if (Config.guardedRun()) {
-            if (await this._hasLabel(Config.clearedForMergeLabel(), this.prNumber())) {
-                this._log("allow " + msg + " due to " + Config.clearedForMergeLabel() + " overruling guarded_run option");
-                return false;
-            }
-            this._log("skip " + msg + " due to guarded_run option");
-            return true;
-        }
-
-        return false; // no staging-only mode by default
-    }
-
-    async _checkConditions() {
-        const pr = await GH.getPR(this.prNumber(), true);
-        // refresh PR data
-        assert(pr.number === this._pr.number);
-        this._pr = pr;
-
-        if (!this._prOpen()) {
-            this._logFailedCondition("not opened");
-            return StepResult.Fail();
-        }
-
-        if (await this._hasLabel(Config.mergedLabel(), this.prNumber())) {
-            this._logFailedCondition("already has merged status");
-            return StepResult.Fail();
-        }
-
-        const compareStatus = await GH.compareCommits(this._prBaseBranch(), this._stagingTag());
-        if (compareStatus === "identical" || compareStatus === "behind") {
-            this._logFailedCondition("already merged to base");
-            return await this._cleanupMerged();
-        }
-
-        if (!(await this._tagIsFresh()))
-            return await this._cleanupMergeFailed(true, this._labelCleanStaged);
-
-        if (!(await this._messageIsFresh()))
-            return await this._cleanupMergeFailed(true, this._labelCleanStaged);
-
-        this._approval = await this._checkApproval();
-        this._log("checkApproval: " + this._approval);
-        await this._setApprovalStatus(this._prHeadSha());
-        await this._setApprovalStatus(this._tagSha);
-
-        if (this._prInProgress()) {
-            this._logFailedCondition("not in progress");
-            return await this._cleanupMergeFailed(true, this._labelCleanStaged);
-        }
-
-        const statusChecks = await this._getPrStatuses();
-        if (statusChecks.failed())
-            return await this._cleanupMergeFailed(true, this._labelCleanStaged);
-
-        if (!this._approval.granted()) {
-            this._logFailedCondition("approved");
-            return await this._cleanupMergeFailed(true, this._labelCleanStaged);
-        }
-
-        if (this._approval.grantedTimeout())
-            return await this._cleanupMergeFailed(true, this._labelCleanStaged);
-
-        if (!statusChecks.final())
-            return StepResult.Suspend();
-
-        assert(compareStatus === "ahead");
-
-        const stagingResult = await this._processStagingStatuses();
-        if (!stagingResult.succeeded())
-            return stagingResult;
-
-        if (await this._stagingOnly()) {
-            await this._labelPassedStagingChecks();
-            return StepResult.Suspend();
-        }
-        return StepResult.Succeed();
-    }
-
-    async _mergeToBase() {
-        assert(this._tagSha);
-        this._log("merging to base...");
-        try {
-            await GH.updateReference(this._prBaseBranchPath(), this._tagSha, false);
-            return StepResult.Succeed();
-        } catch (e) {
-            if (e.name === 'ErrorContext' && e.unprocessable()) {
-                if (await this._tagDiverged()) {
-                    Log.LogException(e, this._toString() + " fast-forwarding failed");
-                    return await this._cleanupMergeFailed(true);
-                }
-            }
-            throw e;
-        }
-    }
-
-    // returns filled StepResult object
+    // Updates and, if possible, advances PR towards (and including) merging.
+    // If reprocessing is needed in X milliseconds, returns X.
+    // Otherwise, returns null.
     async process() {
-        const conditions = await this._checkConditions();
-        if (!conditions.succeeded())
-            return conditions;
+        try {
+            await this._doProcess();
+            assert(this._prState.merged());
+            return new ProcessResult();
+        } catch (e) {
+            const knownProblem = e instanceof PrProblem;
 
-        const result = await this._mergeToBase();
-        if (!result.succeeded())
-            return result;
+            if (knownProblem)
+                this._log("did not merge: " + e.message);
+            else
+                this._logEx(e, "process() failure");
 
-        this._log("merged successfully");
-        return await this._cleanupMerged();
+            const suspended = knownProblem && e.keepStagedRequested(); // whether _exSuspend() occured
 
+            let result = new ProcessResult();
+
+            if (this._prState.staged()) {
+                if (suspended)
+                    result.setPrStaged(true);
+                else
+                    this._removePositiveStagingLabels(); // abandoning this staged PR
+            }
+
+            if (knownProblem) {
+                result.setDelayMsIfAny(this._delayMs());
+                return result;
+            }
+
+            // report this unknown but probably PR-specific problem on GitHub
+            // XXX: We may keep redoing this PR every run() step forever, without any GitHub events.
+            // TODO: Process Config.failedOtherLabel() PRs last and ignore their failures.
+            this._labels.add(Config.failedOtherLabel());
+            throw e;
+        } finally {
+            await this._pushLabelsToGitHub();
+        }
     }
-} // MergeFinalizer
+
+    // remove intermediate step labels that may be set by us
+    _removeTemporaryLabelsSetByAnubis() {
+        // set by humans: Config.clearedForMergeLabel();
+        this._labels.remove(Config.failedDescriptionLabel());
+        this._labels.remove(Config.failedOtherLabel());
+        this._labels.remove(Config.failedStagingChecksLabel());
+        this._labels.remove(Config.passedStagingChecksLabel());
+        this._labels.remove(Config.waitingStagingChecksLabel());
+        // final (set after the PR is merged): Config.mergedLabel()
+    }
+
+    // remove labels that have no sense for a failed staged PR
+    _removePositiveStagingLabels() {
+        this._labels.remove(Config.passedStagingChecksLabel());
+        this._labels.remove(Config.waitingStagingChecksLabel());
+    }
+
+    /* _ex*() methods below are mutually exclusive: first match wins */
+
+    // a problem that, once resolved, does not require reprocessing from scratch
+    // only meaningful for staged PRs
+    _exSuspend(why) {
+        assert(arguments.length === 1);
+        let problem = new PrProblem(why);
+        problem.requestToKeepStaged();
+        return problem;
+    }
+
+    // somebody else appears to perform Anubis-only PR manipulations
+    // minimize changes to avoid conflicts (but do not block other PRs)
+    _exLostControl(why) {
+        assert(arguments.length === 1);
+        this._labelPushBan = why;
+        assert(this._labelPushBan); // paranoid: `why` is truthy
+        return new PrProblem(why);
+    }
+
+    // a problem that humans can discern via GitHub-maintained PR state
+    // reprocessing will be required after the problem is fixed
+    _exObviousFailure(why) {
+        assert(arguments.length === 1);
+        return new PrProblem(why);
+    }
+
+    // a problem that humans cannot easily detect without an Anubis-set label
+    // reprocessing will be required after the problem is fixed
+    _exLabeledFailure(why, label) {
+        assert(arguments.length === 2);
+        assert(!this._labelPushBan);
+        this._labels.add(label);
+        return new PrProblem(why);
+    }
+}
+
+// promises to update/advance the given PR, hiding PullRequest from callers
+function Process(rawPr, banStaging) {
+    let pr = new PullRequest(rawPr, banStaging);
+    return pr.process();
+}
+
 
 module.exports = {
-    MergeInitiator: MergeInitiator,
-    MergeFinalizer: MergeFinalizer
+    Process: Process
 };
 

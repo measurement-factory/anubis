@@ -3,7 +3,7 @@ const http = require('http');
 const Config = require('./Config.js');
 const Log = require('./Logger.js');
 const Util = require('./Util.js');
-const PrMerger = require('./PrMerger.js');
+const Step = require('./PrMerger.js');
 
 const Logger = Log.Logger;
 
@@ -60,16 +60,11 @@ class RepoMerger {
         this._running = true;
         let rerunIn = null;
         do {
-            let prMerger = null;
             try {
                 this._rerun = false;
-                rerunIn = null;
                 if (!this._server)
                     await this._createServer();
-                prMerger = new PrMerger();
-                await prMerger.runStep();
-                if (prMerger.rerunIn !== null)
-                    rerunIn = prMerger.rerunIn;
+                rerunIn = await Step();
             } catch (e) {
                 Log.LogError(e, "RepoMerger.run");
                 this._rerun = true;
@@ -79,9 +74,6 @@ class RepoMerger {
                 const period = 10; // 10 min
                 Logger.info("next re-try in " + period + " minutes.");
                 await Util.sleep(period * 60 * 1000); // 10 min
-            } finally {
-                if (prMerger)
-                    prMerger.logStatistics();
             }
         } while (this._rerun);
         if (rerunIn)
@@ -94,8 +86,12 @@ class RepoMerger {
         this._server = null;
     }
 
-    _plan(ms) {
-        assert(ms > 0);
+    _plan(requestedMs) {
+        assert(requestedMs > 0);
+        // obey node.js setTimeout() limits
+        const maxMs = Math.pow(2, 31) - 1;
+        const ms = Math.min(requestedMs, maxMs);
+
         assert(this._timer === null);
         let date = new Date();
         date.setSeconds(date.getSeconds() + ms/1000);

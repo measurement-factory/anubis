@@ -13,7 +13,7 @@ function commonParams() {
     };
 }
 
-const TagRegex = /(refs\/)(tags\/.*-PR)(\d+)$/;
+const TagRegex = /(refs\/)(tags\/M-staged-PR)(\d+)$/;
 
 function MatchTag(ref) {
     return ref.match(TagRegex) !== null;

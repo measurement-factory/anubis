@@ -29,6 +29,8 @@ function protectedBranchAppender(protectedBranchPages, aPage) {
 }
 
 async function pager(firstPage, appender) {
+    assert(firstPage);
+
     let allPages = null;
     if (appender === undefined)
         appender = defaultAppender;
@@ -47,18 +49,18 @@ async function pager(firstPage, appender) {
     return await doPager(firstPage);
 }
 
-function getPRList() {
+function getOpenPrs() {
     const params = commonParams();
     return new Promise( (resolve, reject) => {
         GitHub.authenticate(GitHubAuthentication);
         GitHub.pullRequests.getAll(params, async (err, res) => {
             if (err) {
-                reject(new ErrorContext(err, getPRList.name, params));
+                reject(new ErrorContext(err, getOpenPrs.name, params));
                 return;
             }
             res = await pager(res);
             const result = res.data.length;
-            logApiResult(getPRList.name, params, result);
+            logApiResult(getOpenPrs.name, params, result);
             for (let pr of res.data)
                 pr.anubisProcessor = null;
             resolve(res.data);
@@ -83,18 +85,20 @@ function getLabels(prNum) {
     });
 }
 
-// Gets a PR from GitHub, waiting for a period until GitHub calculates
-// it's 'mergeable' flag. Afther the period, returns the PR as is.
+// Gets PR metadata from GitHub
+// If requested and needed, retries until GitHub calculates PR mergeable flag.
+// Those retries, if any, are limited to a few minutes.
 async function getPR(prNum, awaitMergeable) {
     const max = 64 * 1000 + 1; // ~2 min. overall
     for (let d = 1000; d < max; d *= 2) {
         const pr = await getRawPR(prNum);
-        if (!awaitMergeable || pr.mergeable !== null)
+        // pr.mergeable is useless (and not calculated?) for a closed PR
+        if (pr.mergeable !== null || pr.state === 'closed' || !awaitMergeable)
             return pr;
-        Log.Logger.info("PR" + prNum + ": GitHub still caluclates mergeable status. Will retry in " + (d/1000) + " seconds");
+        Log.Logger.info("PR" + prNum + ": GitHub still calculates mergeable attribute. Will retry in " + (d/1000) + " seconds");
         await Util.sleep(d);
     }
-    return Promise.reject(new ErrorContext("GitHub could not calculate mergeable status",
+    return Promise.reject(new ErrorContext("Timed out waiting for GitHub to calculate mergeable attribute",
                 getPR.name, {pr: prNum}));
 }
 
@@ -243,8 +247,12 @@ function getTags() {
                 reject(new ErrorContext(err, getTags.name, params));
                 return;
             }
-            res = await pager(res);
-            const result = notFound ? [] : res.data;
+            let result = [];
+            const gotSomeTags = !notFound;
+            if (gotSomeTags) {
+                res = await pager(res);
+                result = res.data;
+            }
             logApiResult(getTags.name, params, {tags: result.length});
             resolve(result);
         });
@@ -478,7 +486,7 @@ function getUserEmails() {
 }
 
 module.exports = {
-    getPRList: getPRList,
+    getOpenPrs: getOpenPrs,
     getLabels: getLabels,
     getPR: getPR,
     getReviews: getReviews,

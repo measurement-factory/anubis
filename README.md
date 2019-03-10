@@ -140,10 +140,10 @@ request state:
   `config::staging_checks` tests have completed.
 * `M-passed-staging-checks`: Similar to the GitHub "green check" mark
   for the staging branch commit (but ignores failures of optional
-  checks). Applied only when the bot is running in staging-only mode (see
-  `config::staged_run` and `config::guarded_run`). The bot removes this
-  label when either the PR was successfully merged or its staging
-  results are no longer fresh/applicable.
+  checks). Usually only visible when the bot is running in staging-only
+  mode (see `config::staged_run` and `config::guarded_run`). The bot
+  removes this label when either the PR was successfully merged or its
+  staging results are no longer fresh/applicable.
 * `M-failed-staging-checks`: Essentially duplicates GitHub "red x" mark
   for the _staging commit_. The bot removes this label when it notices
   that the failed checks are no longer fresh/applicable.
