@@ -485,6 +485,24 @@ function getUserEmails() {
     });
 }
 
+function searchCommits(query) {
+    let params = {};
+    params.q = query;
+    params.sort = 'committer-date';
+    return new Promise( (resolve, reject) => {
+      GitHub.authenticate(GitHubAuthentication);
+      GitHub.search.commits(params, (err, res) => {
+          if (err) {
+             reject(new ErrorContext(err, searchCommits.name, params));
+             return;
+          }
+          const result = {count: res.data.total_count};
+          logApiResult(searchCommits.name, params, result);
+          resolve(res.data.items);
+      });
+    });
+}
+
 module.exports = {
     getOpenPrs: getOpenPrs,
     getLabels: getLabels,
@@ -506,6 +524,7 @@ module.exports = {
     getProtectedBranchRequiredStatusChecks: getProtectedBranchRequiredStatusChecks,
     getCollaborators: getCollaborators,
     getUser: getUser,
-    getUserEmails: getUserEmails
+    getUserEmails: getUserEmails,
+    searchCommits: searchCommits
 };
 

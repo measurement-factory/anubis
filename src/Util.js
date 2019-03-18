@@ -14,6 +14,14 @@ function commonParams() {
 }
 
 const TagRegex = /(refs\/)(tags\/M-staged-PR)(\d+)$/;
+const PrNumberRegex = /(.* \(#)(\d+)(\))((\n\n)|($))/;
+
+function ParsePrMessage(message) {
+    const matched = message.match(PrNumberRegex);
+    if (!matched)
+        return null;
+    return matched[2];
+}
 
 function MatchTag(ref) {
     return ref.match(TagRegex) !== null;
@@ -75,6 +83,7 @@ module.exports = {
     StagingTag: StagingTag,
     MatchTag: MatchTag,
     ParseTag: ParseTag,
+    ParsePrMessage: ParsePrMessage,
     ErrorContext: ErrorContext
 };
 

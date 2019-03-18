@@ -368,8 +368,7 @@ class Labels
 //         immediately or after successful tests completion;
 // merged: with a staged commit that has been merged into the base branch.
 // Here, PR "staged commit" is a commit at the tip of the staging branch
-// pointed to by the PR tag. If a PR tag does not exist or does not point to
-// the tip of the staging branch, then the PR does not have a staged commit.
+// with commit message first line, having the PR number NNN (as "(#PRNNN)" string).
 class PrState
 {
     // treat as private; use static methods below instead
@@ -448,12 +447,11 @@ class PullRequest {
         // optimization: cached _getRequiredContexts() result
         this._requiredContextsCache = null;
 
-        this._tagSha = null;
+        this._stagedSha = null;
         this._stagedPosition = null;
         this._freshStagedCommitWithFailedChecks = null;
 
-        // optimization: cached _tagCommit() result
-        this._tagCommitCache = null;
+        this._stagedCommit = null;
 
         // major methods we have called, in the call order (for debugging only)
         this._breadcrumbs = [];
@@ -571,7 +569,7 @@ class PullRequest {
         }
 
         if (this._stagedStatuses && !this._stagedStatuses.hasApprovalStatus(this._approval)) {
-            await this._createApprovalStatus(this._tagSha);
+            await this._createApprovalStatus(this._stagedSha);
             this._stagedStatuses.setApprovalStatus(this._approval);
         }
     }
@@ -621,7 +619,7 @@ class PullRequest {
 
     // returns filled StatusChecks object
     async _getStagingStatuses() {
-        const combinedStagingStatuses = await GH.getStatuses(this._tagSha);
+        const combinedStagingStatuses = await GH.getStatuses(this._stagedSha);
         const genuineStatuses = combinedStagingStatuses.statuses.filter(st => !st.description.endsWith(Config.copiedDescriptionSuffix()));
         assert(genuineStatuses.length <= Config.stagingChecks());
         let statusChecks = new StatusChecks(Config.stagingChecks(), "Staging");
@@ -637,28 +635,21 @@ class PullRequest {
         return statusChecks;
     }
 
-    async _tagCommit() {
-        if (!this._tagCommitCache)
-            this._tagCommitCache = await GH.getCommit(this._tagSha);
-        return this._tagCommitCache;
-    }
-
     // Determines whether the existing staged commit is equivalent to a staged
     // commit that could be created right now. Relies on PR merge commit being fresh.
     // TODO: check whether the staging checks list has changed since the staged commit creation.
     async _stagedCommitIsFresh() {
-        assert(this._tagSha);
+        assert(this._stagedSha);
         if (this._stagedPosition.ahead() &&
             // check this separately because GitHub does not recreate PR merge commits
             // for conflicted PR branches (leaving stale PR merge commits).
             this._prMergeable() &&
             await this._messageIsFresh()) {
 
-            const tagCommit = await this._tagCommit();
             const prMergeSha = await GH.getReference(this._mergePath());
             const prCommit = await GH.getCommit(prMergeSha);
             // whether the PR branch has not changed
-            if (tagCommit.tree.sha === prCommit.tree.sha) {
+            if (this._stagedCommit.tree.sha === prCommit.tree.sha) {
                 this._log("the staged commit is fresh");
                 return true;
             }
@@ -667,22 +658,21 @@ class PullRequest {
         return false;
     }
 
-    // loads info about the "staging tag" (if any); M-staged-PRnnn tag is a
-    // PR-specific git tag pointing to the previously created staged commit
-    async _loadTag() {
-       if (this._tagSha)
+    // loads info about the PR staged commit, if any
+    async _loadStaged() {
+       if (this._stagedSha)
            return;
-
-       try {
-           this._tagSha = await GH.getReference(this._stagingTag());
-       } catch (e) {
-           if (e.name === 'ErrorContext' && e.notFound()) {
-               this._logEx(e, this._stagingTag() + " not found");
-               return;
-           }
-           throw e;
-       }
+        const stagedSha = await GH.getReference(Config.stagingBranchPath());
+        this._stagedCommit = await GH.getCommit(stagedSha);
+        const prNum = Util.ParsePrMessage(this._stagedCommit.message);
+        if (prNum !== null && this._prNumber().toString() === prNum) {
+            this._log("found staged commit " + stagedSha);
+            this._stagedSha = stagedSha;
+            return;
+        }
+        this._log("no staged commit was found");
     }
+
 
     async _loadLabels() {
         let labels = await GH.getLabels(this._prNumber());
@@ -708,10 +698,8 @@ class PullRequest {
 
         // TODO: If multiple failures need labeling, label all of them.
 
-        // optimization: check it first because staged commit freshness implies that other PR
-        // attributes (message, mergeability, etc) are OK.
-        if (this._freshStagedCommitWithFailedChecks)
-            throw this._exLabeledFailure("staged commit tests will fail", Config.failedStagingChecksLabel());
+        if (this._labels.has(Config.failedStagingChecksLabel()))
+            throw this._exObviousFailure("staged commit tests failed");
 
         if (this._wipPr())
             throw this._exObviousFailure("work-in-progress");
@@ -786,10 +774,8 @@ class PullRequest {
         this._labels.remove(Config.clearedForMergeLabel());
         this._labels.add(Config.mergedLabel());
 
-        if (!this._dryRun("closing PR")) {
+        if (!this._dryRun("closing PR"))
             await GH.updatePR(this._prNumber(), 'closed');
-            await GH.deleteReference(this._stagingTag());
-        }
 
         this._log("finalize completed");
     }
@@ -844,8 +830,6 @@ class PullRequest {
         return this._rawPr.body.replace(/\r+\n/g, '\n');
     }
 
-    _stagingTag() { return Util.StagingTag(this._rawPr.number); }
-
     _createdAt() { return this._rawPr.created_at; }
 
     _mergePath() { return "pull/" + this._rawPr.number + "/merge"; }
@@ -853,9 +837,9 @@ class PullRequest {
     staged() { return this._prState.staged(); }
 
     _debugString() {
-        const tagged = this._tagSha ? "tagged: " + this._tagSha.substr(0, this._shaLimit) + ' ' : "";
+        const staged = this._stagedSha ? "staged: " + this._stagedSha.substr(0, this._shaLimit) + ' ' : "";
         const detail =
-            "head: " + this._rawPr.head.sha.substr(0, this._shaLimit) + ' ' + tagged +
+            "head: " + this._rawPr.head.sha.substr(0, this._shaLimit) + ' ' + staged +
             "history: " + this._breadcrumbs.join();
         return "PR" + this._rawPr.number + ` (${detail})`;
     }
@@ -891,14 +875,33 @@ class PullRequest {
 
     _toString() {
         let str = this._debugString();
-        if (this._tagSha !== null)
-            str += ", tag: " + this._tagSha.substr(0, this._shaLimit);
+        if (this._stagedSha !== null)
+            str += ", staged: " + this._stagedSha.substr(0, this._shaLimit);
         return str + ")";
     }
 
+    _dateForDaysAgo(days) {
+        let d = new Date();
+        d.setDate(d.getDate() - days);
+        const dd = String(d.getDate()).padStart(2, '0');
+        const mm = String(d.getMonth() + 1).padStart(2, '0'); //January is 0!
+        const yyyy = d.getFullYear();
+        return yyyy + '-' + mm + '-' + dd;
+    }
+
     async _loadPrState() {
-        if (!this._tagSha) {
-            await this._enterBrewing();
+        if (!this._stagedSha) {
+            const query = 'repo:' + Config.owner() + "/" + Config.repo() + '+#' + this._prNumber() +
+                '+author:' + this._prAuthor() + '+committer-date:>' + this._dateForDaysAgo(30);
+            let commits = await GH.searchCommits(query);
+            if (commits.length === 0) {
+                await this._enterBrewing();
+                return;
+            }
+            // ambiguous commit search: expected either 0 or 1
+            assert(commits.length < 2);
+            this._log("already merged at " + commits[0].sha);
+            this._enterMerged();
             return;
         }
 
@@ -922,13 +925,6 @@ class PullRequest {
         // since the PR+base code is yet unchanged and the existing errors still persist
         if (stagedStatuses.failed()) {
             this._freshStagedCommitWithFailedChecks = true;
-            await this._enterBrewing();
-            return;
-        }
-
-        const stagingSha = await GH.getReference(Config.stagingBranchPath());
-        // Make sure the staging branch points to our fresh staged commit.
-        if (stagingSha !== this._tagSha) {
             await this._enterBrewing();
             return;
         }
@@ -961,8 +957,8 @@ class PullRequest {
         // GH.getPR() may become slow (and even fail) on merged PRs because
         // GitHub may take its time (or even fail) to calculate pr.mergeable.
         // Fortunately, we do not need that field for merged PRs.
-        if (this._tagSha) {
-           this._stagedPosition = new BranchPosition(this._prBaseBranch(), this._stagingTag());
+        if (this._stagedSha) {
+           this._stagedPosition = new BranchPosition(this._prBaseBranch(), Config.stagingBranch());
            await this._stagedPosition.compute();
         }
         const waitForMergeable = !(this._stagedPosition && this._stagedPosition.merged());
@@ -973,8 +969,7 @@ class PullRequest {
 
     // Whether the commit message configuration remained intact since staging.
     async _messageIsFresh() {
-        const tagCommit = await this._tagCommit();
-        const result = this._prMessage() === tagCommit.message;
+        const result = this._prMessage() === this._stagedCommit.message;
         this._log("staged commit message freshness: " + result);
         return result;
     }
@@ -1023,7 +1018,7 @@ class PullRequest {
                     context: requiredPrStatus.context
                 });
 
-            await GH.createStatus(this._tagSha, check.state, check.targetUrl,
+            await GH.createStatus(this._stagedSha, check.state, check.targetUrl,
                     check.description, check.context);
 
             this._stagedStatuses.addOptionalStatus(check);
@@ -1087,7 +1082,7 @@ class PullRequest {
     }
 
     async _mergeToBase() {
-        assert(this._tagSha);
+        assert(this._stagedSha);
         assert(this._stagedPosition.ahead());
         this._log("merging to base...");
 
@@ -1100,7 +1095,7 @@ class PullRequest {
         assert(!this._stagingBanned);
 
         try {
-            await GH.updateReference(this._prBaseBranchPath(), this._tagSha, false);
+            await GH.updateReference(this._prBaseBranchPath(), this._stagedSha, false);
         } catch (e) {
             if (e.name === 'ErrorContext' && e.unprocessable()) {
                 await this._stagedPosition().compute();
@@ -1140,20 +1135,16 @@ class PullRequest {
         if (this._dryRun("create staged commit"))
             throw this._exObviousFailure("dryRun");
 
-        if (this._tagSha) {
-            await GH.deleteReference(this._stagingTag());
-            this._tagSha = null;
-        }
-
         const tempCommitSha = await GH.createCommit(mergeCommit.tree.sha, this._prMessage(), [baseSha], mergeCommit.author, committer);
-        this._tagSha = await GH.createReference(tempCommitSha, "refs/" + this._stagingTag());
 
-        this._stagedPosition = new BranchPosition(this._prBaseBranch(), this._stagingTag());
+        assert(!this._stagingBanned);
+        await GH.updateReference(Config.stagingBranchPath(), tempCommitSha, true);
+        this._stagedSha = tempCommitSha;
+
+        this._stagedPosition = new BranchPosition(this._prBaseBranch(), Config.stagingBranch());
         await this._stagedPosition.compute();
         assert(this._stagedPosition.ahead());
 
-        assert(!this._stagingBanned);
-        await GH.updateReference(Config.stagingBranchPath(), this._tagSha, true);
         await this._enterStaged();
     }
 
@@ -1195,8 +1186,8 @@ class PullRequest {
          * Until _loadRawPr(), we must avoid this._rawPr fields except .number.
          * TODO: Refactor to eliminate the risk of too-early this._rawPr use.
          */
-        await this._loadTag(); // requires this._rawPr.number
-        await this._loadRawPr(); // requires this._loadTag()
+        await this._loadStaged();
+        await this._loadRawPr(); // requires this._loadStaged()
         await this._loadPrState(); // requires this._loadRawPr()
         this._log("PR state: " + this._prState);
         await this._loadLabels();
@@ -1260,7 +1251,6 @@ class PullRequest {
         // set by humans: Config.clearedForMergeLabel();
         this._labels.remove(Config.failedDescriptionLabel());
         this._labels.remove(Config.failedOtherLabel());
-        this._labels.remove(Config.failedStagingChecksLabel());
         this._labels.remove(Config.passedStagingChecksLabel());
         this._labels.remove(Config.waitingStagingChecksLabel());
         // final (set after the PR is merged): Config.mergedLabel()
