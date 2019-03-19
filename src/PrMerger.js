@@ -94,9 +94,10 @@ class PrMerger {
     // If that PR exists, it is in either a "staged" or "merged" state.
     async _current() {
         Logger.info("Looking for the current PR...");
-        const stagedSha = await GH.getReference(Config.stagingBranchPath());
-        const stagedCommit = await GH.getCommit(stagedSha);
-        const prNum = Util.ParsePrNumber(stagedCommit.message);
+        const stagedBranchSha = await GH.getReference(Config.stagingBranchPath());
+        const stagedBranchCommit = await GH.getCommit(stagedBranchSha);
+        Logger.info("Staged branch head sha: " + stagedBranchCommit.sha);
+        const prNum = Util.ParsePrNumber(stagedBranchCommit.message);
         if (prNum === null) {
             Logger.info("Could not track a PR by the staged branch.");
         } else {

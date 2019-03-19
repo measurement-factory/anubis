@@ -447,10 +447,10 @@ class PullRequest {
         // optimization: cached _getRequiredContexts() result
         this._requiredContextsCache = null;
 
-        this._stagedSha = null;
         this._stagedPosition = null;
         this._freshStagedCommitWithFailedChecks = null;
 
+        // this PR staged commit received from GitHub, if any
         this._stagedCommit = null;
 
         // major methods we have called, in the call order (for debugging only)
@@ -569,7 +569,7 @@ class PullRequest {
         }
 
         if (this._stagedStatuses && !this._stagedStatuses.hasApprovalStatus(this._approval)) {
-            await this._createApprovalStatus(this._stagedSha);
+            await this._createApprovalStatus(this._stagedSha());
             this._stagedStatuses.setApprovalStatus(this._approval);
         }
     }
@@ -619,7 +619,7 @@ class PullRequest {
 
     // returns filled StatusChecks object
     async _getStagingStatuses() {
-        const combinedStagingStatuses = await GH.getStatuses(this._stagedSha);
+        const combinedStagingStatuses = await GH.getStatuses(this._stagedSha());
         const genuineStatuses = combinedStagingStatuses.statuses.filter(st => !st.description.endsWith(Config.copiedDescriptionSuffix()));
         assert(genuineStatuses.length <= Config.stagingChecks());
         let statusChecks = new StatusChecks(Config.stagingChecks(), "Staging");
@@ -639,7 +639,7 @@ class PullRequest {
     // commit that could be created right now. Relies on PR merge commit being fresh.
     // TODO: check whether the staging checks list has changed since the staged commit creation.
     async _stagedCommitIsFresh() {
-        assert(this._stagedSha);
+        assert(this._stagedSha());
         if (this._stagedPosition.ahead() &&
             // check this separately because GitHub does not recreate PR merge commits
             // for conflicted PR branches (leaving stale PR merge commits).
@@ -660,17 +660,16 @@ class PullRequest {
 
     // loads info about the PR staged commit, if any
     async _loadStaged() {
-       if (this._stagedSha)
-           return;
+        assert(!this._stagedSha());
         const stagedSha = await GH.getReference(Config.stagingBranchPath());
-        this._stagedCommit = await GH.getCommit(stagedSha);
-        const prNum = Util.ParsePrNumber(this._stagedCommit.message);
+        const stagedCommit = await GH.getCommit(stagedSha);
+        const prNum = Util.ParsePrNumber(stagedCommit.message);
         if (prNum !== null && this._prNumber().toString() === prNum) {
             this._log("found staged commit " + stagedSha);
-            this._stagedSha = stagedSha;
+            this._stagedCommit = stagedCommit;
             return;
         }
-        this._log("no staged commit was found");
+        this._log("staged commit does not exist");
     }
 
 
@@ -834,10 +833,12 @@ class PullRequest {
 
     _mergePath() { return "pull/" + this._rawPr.number + "/merge"; }
 
+    _stagedSha() { return this._stagedCommit ? this._stagedCommit.sha : null; }
+
     staged() { return this._prState.staged(); }
 
     _debugString() {
-        const staged = this._stagedSha ? "staged: " + this._stagedSha.substr(0, this._shaLimit) + ' ' : "";
+        const staged = this._stagedSha() ? "staged: " + this._stagedSha().substr(0, this._shaLimit) + ' ' : "";
         const detail =
             "head: " + this._rawPr.head.sha.substr(0, this._shaLimit) + ' ' + staged +
             "history: " + this._breadcrumbs.join();
@@ -875,8 +876,8 @@ class PullRequest {
 
     _toString() {
         let str = this._debugString();
-        if (this._stagedSha !== null)
-            str += ", staged: " + this._stagedSha.substr(0, this._shaLimit);
+        if (this._stagedSha())
+            str += ", staged: " + this._stagedSha().substr(0, this._shaLimit);
         return str + ")";
     }
 
@@ -917,7 +918,7 @@ class PullRequest {
     }
 
     async _loadPrState() {
-        if (!this._stagedSha) {
+        if (!this._stagedSha()) {
             if (await this._mergedSomeTimeAgo())
                 this._enterMerged();
             else
@@ -977,7 +978,7 @@ class PullRequest {
         // GH.getPR() may become slow (and even fail) on merged PRs because
         // GitHub may take its time (or even fail) to calculate pr.mergeable.
         // Fortunately, we do not need that field for merged PRs.
-        if (this._stagedSha) {
+        if (this._stagedSha()) {
            this._stagedPosition = new BranchPosition(this._prBaseBranch(), Config.stagingBranch());
            await this._stagedPosition.compute();
         }
@@ -1038,7 +1039,7 @@ class PullRequest {
                     context: requiredPrStatus.context
                 });
 
-            await GH.createStatus(this._stagedSha, check.state, check.targetUrl,
+            await GH.createStatus(this._stagedSha(), check.state, check.targetUrl,
                     check.description, check.context);
 
             this._stagedStatuses.addOptionalStatus(check);
@@ -1102,7 +1103,7 @@ class PullRequest {
     }
 
     async _mergeToBase() {
-        assert(this._stagedSha);
+        assert(this._stagedSha());
         assert(this._stagedPosition.ahead());
         this._log("merging to base...");
 
@@ -1115,7 +1116,7 @@ class PullRequest {
         assert(!this._stagingBanned);
 
         try {
-            await GH.updateReference(this._prBaseBranchPath(), this._stagedSha, false);
+            await GH.updateReference(this._prBaseBranchPath(), this._stagedSha(), false);
         } catch (e) {
             if (e.name === 'ErrorContext' && e.unprocessable()) {
                 await this._stagedPosition().compute();
@@ -1155,11 +1156,10 @@ class PullRequest {
         if (this._dryRun("create staged commit"))
             throw this._exObviousFailure("dryRun");
 
-        const tempCommitSha = await GH.createCommit(mergeCommit.tree.sha, this._prMessage(), [baseSha], mergeCommit.author, committer);
+        this._stagedCommit = await GH.createCommit(mergeCommit.tree.sha, this._prMessage(), [baseSha], mergeCommit.author, committer);
 
         assert(!this._stagingBanned);
-        await GH.updateReference(Config.stagingBranchPath(), tempCommitSha, true);
-        this._stagedSha = tempCommitSha;
+        await GH.updateReference(Config.stagingBranchPath(), this._stagedSha(), true);
 
         this._stagedPosition = new BranchPosition(this._prBaseBranch(), Config.stagingBranch());
         await this._stagedPosition.compute();

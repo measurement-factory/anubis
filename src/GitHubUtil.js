@@ -189,7 +189,7 @@ function createCommit(treeSha, message, parents, author, committer) {
             }
             const result = {sha: res.data.sha};
             logApiResult(createCommit.name, params, result);
-            resolve(res.data.sha);
+            resolve(res.data);
         });
   });
 }
