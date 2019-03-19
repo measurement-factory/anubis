@@ -98,15 +98,16 @@ class PrMerger {
         const stagedCommit = await GH.getCommit(stagedSha);
         const prNum = Util.ParsePrNumber(stagedCommit.message);
         if (prNum === null) {
-            Logger.info("No current PR found.");
-            return null;
+            Logger.info("Could not track a PR by the staged branch.");
+        } else {
+            const pr = await GH.getPR(prNum, false);
+            if (pr.state === 'open') {
+                Logger.info("PR" + prNum + " is the current");
+                return pr;
+            }
+            Logger.info("Tracked PR" + prNum + " by the staged branch but it is already closed.");
         }
-        const pr = await GH.getPR(prNum, false);
-        if (pr.state === 'open') {
-            Logger.info("PR" + prNum + " is the current");
-            return pr;
-        }
-        Logger.warn("The PR" + prNum + " is already closed.");
+        Logger.info("No current PR found.");
         return null;
     }
 } // PrMerger
