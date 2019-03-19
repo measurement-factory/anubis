@@ -76,20 +76,16 @@ algorithm:
    using a GitHub-editable commit message.
 2. Reset the staging (a.k.a. "auto") branch to the PR staging commit.
    The previous state of the staging branch is ignored.
-3. Remember the staging commit using a "staging tag". The bot uses this
-   git tag to identify the being-merged PR in case the bot is killed
-   while running the subsequent merging steps (that may take a while).
-4. Wait for GitHub to report exactly `config::staging_checks` CI test
+3. Wait for GitHub to report exactly `config::staging_checks` CI test
    results for the staging branch. The project CI infrastructure is
    expected to auto-test the staging branch on every change. A check
    failure is a PR-specific step failure -- in GitHub terminology, all
    staging checks are currently deemed "required". If discovered, any
    extra check is considered a configuration problem (not related to any
    specific PR). Error handling is detailed in the next section.
-5. Fast forward the PR target branch (usually "master") to the
+4. Fast forward the PR target branch (usually "master") to the
    now-tested staging commit.
-6. Label the PR as merged (see below for PR labels), close the PR, and
-   remove its staging tag.
+5. Label the PR as merged (see below for PR labels) and close the PR.
 
 If the bot is killed while executing the above algorithm, it will resume
 from the beginning of the unfinished step.
@@ -145,8 +141,9 @@ request state:
   removes this label when either the PR was successfully merged or its
   staging results are no longer fresh/applicable.
 * `M-failed-staging-checks`: Essentially duplicates GitHub "red x" mark
-  for the _staging commit_. The bot removes this label when it notices
-  that the failed checks are no longer fresh/applicable.
+  for the _staging commit_. The bot does not attempt to merge this PR
+  again until a human decides that this problem is resolved and removes
+  the label manually.
 * `M-failed-description`: The PR title and/or description is invalid
   (see below for PR commit message rules). The bot removes this label
   when it revisits the PR and notices that the commit message components
@@ -154,9 +151,8 @@ request state:
 * `M-failed-other`: A fatal PR-specific error other than the staging
   branch test failure (the latter is marked with
   `M-failed-staging-checks`). It is probably necessary to
-  consult CI logs to determine what happened. The bot does not attempt
-  to merge this PR again until the PR branch or PR target branch change.
-  When the bot notices that change, it removes this label.
+  consult CI logs to determine what happened.
+  The bot removes this label once the problem is resolved.
 * `M-cleared-for-merge`: A human has allowed the bot running in
   `config::guarded_run` mode to perform the final merging step --
   updating the target branch. The label has no effect unless the bot is
@@ -279,7 +275,7 @@ All configuration fields are required.
 *port* | The bot listens for GitHub requests on this TCP port. | 7777
 *repo* | The name of the GitHub repository that the bot should serve. | "squid"
 *owner* | The owner (a person or organization) of the GitHub repository. | "squid-cache"
-*dry_run*| A boolean option to enable read-only, no-modifications mode where the bot logs pull requests selected for merging but skips further merging steps, including PR labeling and commit tagging | false
+*dry_run*| A boolean option to enable read-only, no-modifications mode where the bot logs pull requests selected for merging but skips further merging steps, including PR labeling | false
 *staged_run*| A boolean option to enable staging-only mode where the bot performs all the merging steps up to (but not including) the target branch update. Eligible PRs are merged into and tested on the staging branch but are never merged into their target branches. Staging-only mode prevents any target branch modifications by the bot. TODO: Check that the PR target branch is not the configured staging branch, setting `M-failed-other` if needed. | false
 *guarded_run*| Enables staging-only mode (see `config::staged_run`) for PRs without a `M-cleared-for-merge` label. Has no effect on PRs with that label. While `config::staged_run` blocks target branch modifications, this option allows them for a human-designated subset of PRs. | false
 *staging_branch* | The name of the bot-maintained git branch used for testing PR changes as if they were merged into their target branch. | auto
