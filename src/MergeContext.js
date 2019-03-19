@@ -664,7 +664,7 @@ class PullRequest {
            return;
         const stagedSha = await GH.getReference(Config.stagingBranchPath());
         this._stagedCommit = await GH.getCommit(stagedSha);
-        const prNum = Util.ParsePrMessage(this._stagedCommit.message);
+        const prNum = Util.ParsePrNumber(this._stagedCommit.message);
         if (prNum !== null && this._prNumber().toString() === prNum) {
             this._log("found staged commit " + stagedSha);
             this._stagedSha = stagedSha;
@@ -889,19 +889,39 @@ class PullRequest {
         return yyyy + '-' + mm + '-' + dd;
     }
 
+    /// Checks whether the PR base branch has this PR's staged commit merged.
+    /// TODO: for now the search scope of this method is limited only by
+    /// the project 'default branch', configured on GitHub, which is usually
+    /// (but not always) 'master' branch.
+    async _mergedSomeTimeAgo() {
+        const query = 'repo:' + Config.owner() + "/" + Config.repo() + '+#' + this._prNumber() +
+            '+author:' + this._prAuthor() + '+committer-date:>' + this._dateForDaysAgo(100);
+        // searches the default branch
+        const commits = await GH.searchCommits(query);
+        if (commits.length === 0)
+            return false;
+
+        let headerPrNum = null;
+        for (let commit of commits) {
+            const num = Util.ParsePrNumber(commit.commit.message);
+            if (num) {
+                assert(!headerPrNum); // the PR can be merged only once
+                headerPrNum = num;
+            }
+        }
+
+        assert(headerPrNum);
+        assert(this._prNumber().toString() === headerPrNum);
+        this._log("was merged some time ago at " + commits[0].sha);
+        return true;
+    }
+
     async _loadPrState() {
         if (!this._stagedSha) {
-            const query = 'repo:' + Config.owner() + "/" + Config.repo() + '+#' + this._prNumber() +
-                '+author:' + this._prAuthor() + '+committer-date:>' + this._dateForDaysAgo(30);
-            let commits = await GH.searchCommits(query);
-            if (commits.length === 0) {
+            if (await this._mergedSomeTimeAgo())
+                this._enterMerged();
+            else
                 await this._enterBrewing();
-                return;
-            }
-            // ambiguous commit search: expected either 0 or 1
-            assert(commits.length < 2);
-            this._log("already merged at " + commits[0].sha);
-            this._enterMerged();
             return;
         }
 
@@ -1249,6 +1269,7 @@ class PullRequest {
     // remove intermediate step labels that may be set by us
     _removeTemporaryLabelsSetByAnubis() {
         // set by humans: Config.clearedForMergeLabel();
+        // set by humans: Config.failedStagingChecksLabel();
         this._labels.remove(Config.failedDescriptionLabel());
         this._labels.remove(Config.failedOtherLabel());
         this._labels.remove(Config.passedStagingChecksLabel());

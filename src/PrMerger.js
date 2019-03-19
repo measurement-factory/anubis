@@ -96,8 +96,7 @@ class PrMerger {
         Logger.info("Looking for the current PR...");
         const stagedSha = await GH.getReference(Config.stagingBranchPath());
         const stagedCommit = await GH.getCommit(stagedSha);
-        Logger.info("Message: " + stagedCommit.message);
-        const prNum = Util.ParsePrMessage(stagedCommit.message);
+        const prNum = Util.ParsePrNumber(stagedCommit.message);
         if (prNum === null) {
             Logger.info("No current PR found.");
             return null;

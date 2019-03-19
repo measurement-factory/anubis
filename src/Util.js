@@ -13,30 +13,15 @@ function commonParams() {
     };
 }
 
-const TagRegex = /(refs\/)(tags\/M-staged-PR)(\d+)$/;
-const PrNumberRegex = /(.* \(#)(\d+)(\))((\n\n)|($))/;
+const PrNumberRegex = /(.* \(#)(\d+)(\)$)/;
 
-function ParsePrMessage(message) {
-    const matched = message.match(PrNumberRegex);
+function ParsePrNumber(prMessage) {
+    assert(prMessage);
+    const lines = prMessage.split(/\r*\n/);
+    const matched = lines[0].match(PrNumberRegex);
     if (!matched)
         return null;
     return matched[2];
-}
-
-function MatchTag(ref) {
-    return ref.match(TagRegex) !== null;
-}
-
-function ParseTag(ref) {
-    const matched = ref.match(TagRegex);
-    if (!matched)
-        return null;
-    return matched[3];
-}
-
-function StagingTag(prNum) {
-    assert(prNum);
-    return "tags/M-staged-PR" + prNum;
 }
 
 // An error context for promisificated wrappers.
@@ -80,10 +65,7 @@ class ErrorContext extends Error {
 module.exports = {
     sleep: sleep,
     commonParams: commonParams,
-    StagingTag: StagingTag,
-    MatchTag: MatchTag,
-    ParseTag: ParseTag,
-    ParsePrMessage: ParsePrMessage,
+    ParsePrNumber: ParsePrNumber,
     ErrorContext: ErrorContext
 };
 
