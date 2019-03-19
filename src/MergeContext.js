@@ -1244,7 +1244,7 @@ class PullRequest {
 
             let result = new ProcessResult();
 
-            if (this._prState.staged()) {
+            if (this._prState && this._prState.staged()) {
                 if (suspended)
                     result.setPrStaged(true);
                 else
@@ -1259,6 +1259,8 @@ class PullRequest {
             // report this unknown but probably PR-specific problem on GitHub
             // XXX: We may keep redoing this PR every run() step forever, without any GitHub events.
             // TODO: Process Config.failedOtherLabel() PRs last and ignore their failures.
+            if (!this._labels)
+                this._labels = new Labels([], this._prNumber());
             this._labels.add(Config.failedOtherLabel());
             throw e;
         } finally {
