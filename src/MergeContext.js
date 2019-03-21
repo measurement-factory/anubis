@@ -368,7 +368,7 @@ class Labels
 //         immediately or after successful tests completion;
 // merged: with a staged commit that has been merged into the base branch.
 // Here, PR "staged commit" is a commit at the tip of the staging branch
-// with commit message first line, having the PR number NNN (as "(#PRNNN)" string).
+// with commit title ending with the PR number (see PrNumberRegex).
 class PrState
 {
     // treat as private; use static methods below instead
@@ -810,6 +810,8 @@ class PullRequest {
 
     _prAuthor() { return this._rawPr.user.login; }
 
+    _defaultRepoBranch() { return this._rawPr.base.repo.default_branch; }
+
     _prMergeable() {
         // requires GH.getPR() call
         assert(this._rawPr.mergeable !== undefined);
@@ -889,13 +891,14 @@ class PullRequest {
         return yyyy + '-' + mm + '-' + dd;
     }
 
-
     /// Checks whether the PR base branch has this PR's staged commit merged.
     async _mergedSomeTimeAgo() {
         const dateSince = this._dateForDaysAgo(100);
         let commits = null;
 
-        if (this._prBaseBranch() === 'master') {
+        if (this._prBaseBranch() === this._defaultRepoBranch()) {
+            // Optimization: GitHub can search the default repository branch (which is usually master)
+            // by commit message substring
             const query = 'repo:' + Config.owner() + "/" + Config.repo() +
                 '+ (#' + this._prNumber() + ')' +
                 '+author:' + this._prAuthor() +

@@ -21,8 +21,9 @@ function ParsePrNumber(prMessage) {
     const matched = lines[0].match(PrNumberRegex);
     if (!matched)
         return null;
-    assert(matched[1] > 0);
-    return matched[1];
+    const prNumber = matched[1];
+    assert(prNumber > 0);
+    return prNumber;
 }
 
 // An error context for promisificated wrappers.
