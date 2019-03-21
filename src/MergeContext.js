@@ -448,7 +448,6 @@ class PullRequest {
         this._requiredContextsCache = null;
 
         this._stagedPosition = null;
-        this._freshStagedCommitWithFailedChecks = null;
 
         // this PR staged commit received from GitHub, if any
         this._stagedCommit = null;
@@ -952,7 +951,7 @@ class PullRequest {
         // Do not vainly recreate staged commit which will definitely fail again,
         // since the PR+base code is yet unchanged and the existing errors still persist
         if (stagedStatuses.failed()) {
-            this._freshStagedCommitWithFailedChecks = true;
+            this._labels.add(Config.failedStagingChecksLabel());
             await this._enterBrewing();
             return;
         }
@@ -1215,9 +1214,9 @@ class PullRequest {
          */
         await this._loadStaged();
         await this._loadRawPr(); // requires this._loadStaged()
-        await this._loadPrState(); // requires this._loadRawPr()
-        this._log("PR state: " + this._prState);
         await this._loadLabels();
+        await this._loadPrState(); // requires this._loadRawPr() and this._loadLabels()
+        this._log("PR state: " + this._prState);
 
         if (this._prState.brewing()) {
             await this._stage();
