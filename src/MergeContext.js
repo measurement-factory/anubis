@@ -672,7 +672,6 @@ class PullRequest {
         this._log("staged commit does not exist");
     }
 
-
     async _loadLabels() {
         let labels = await GH.getLabels(this._prNumber());
         assert(!this._labels);
@@ -897,8 +896,10 @@ class PullRequest {
         let commits = null;
 
         if (this._prBaseBranch() === 'master') {
-            const query = 'repo:' + Config.owner() + "/" + Config.repo() + '+#' + this._prNumber() +
-                '+author:' + this._prAuthor() + '+committer-date:>' + dateSince;
+            const query = 'repo:' + Config.owner() + "/" + Config.repo() +
+                '+ (#' + this._prNumber() + ')' +
+                '+author:' + this._prAuthor() +
+                '+committer-date:>' + dateSince;
             commits = await GH.searchCommits(query); // searches the default branch
         } else {
             commits = await GH.getCommits(this._prBaseBranch(), dateSince, this._prAuthor()); // searches any branch

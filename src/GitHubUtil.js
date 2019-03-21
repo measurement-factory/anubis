@@ -213,7 +213,7 @@ function compareCommits(baseRef, headRef) {
   });
 }
 
-function getCommits(branch, since) {
+function getCommits(branch, since, author) {
     let params = commonParams();
     params.sha = branch; // sha or branch to start listing commits from
     params.since = since;

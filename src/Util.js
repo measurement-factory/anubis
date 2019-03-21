@@ -13,7 +13,7 @@ function commonParams() {
     };
 }
 
-const PrNumberRegex = /(.* \(#)(\d+)(\)$)/;
+const PrNumberRegex = / \(#(\d+)\)$/;
 
 function ParsePrNumber(prMessage) {
     assert(prMessage);
@@ -21,7 +21,8 @@ function ParsePrNumber(prMessage) {
     const matched = lines[0].match(PrNumberRegex);
     if (!matched)
         return null;
-    return matched[2];
+    assert(matched[1] > 0);
+    return matched[1];
 }
 
 // An error context for promisificated wrappers.
