@@ -890,31 +890,34 @@ class PullRequest {
         return yyyy + '-' + mm + '-' + dd;
     }
 
-    /// Checks whether the PR base branch has this PR's staged commit merged.
-    /// TODO: for now the search scope of this method is limited only by
-    /// the project 'default branch', configured on GitHub, which is usually
-    /// (but not always) 'master' branch.
-    async _mergedSomeTimeAgo() {
-        const query = 'repo:' + Config.owner() + "/" + Config.repo() + '+#' + this._prNumber() +
-            '+author:' + this._prAuthor() + '+committer-date:>' + this._dateForDaysAgo(100);
-        // searches the default branch
-        const commits = await GH.searchCommits(query);
-        if (commits.length === 0)
-            return false;
 
-        let headerPrNum = null;
+    /// Checks whether the PR base branch has this PR's staged commit merged.
+    async _mergedSomeTimeAgo() {
+        const dateSince = this._dateForDaysAgo(100);
+        let commits = null;
+
+        if (this._prBaseBranch() === 'master') {
+            const query = 'repo:' + Config.owner() + "/" + Config.repo() + '+#' + this._prNumber() +
+                '+author:' + this._prAuthor() + '+committer-date:>' + dateSince;
+            commits = await GH.searchCommits(query); // searches the default branch
+        } else {
+            commits = await GH.getCommits(this._prBaseBranch(), dateSince, this._prAuthor()); // searches any branch
+        }
+
+        let mergedSha = null;
         for (let commit of commits) {
             const num = Util.ParsePrNumber(commit.commit.message);
-            if (num) {
-                assert(!headerPrNum); // the PR can be merged only once
-                headerPrNum = num;
+            if (num && num === this._prNumber().toString()) {
+                assert(!mergedSha); // the PR can be merged only once
+                mergedSha = commit.sha;
             }
         }
 
-        assert(headerPrNum);
-        assert(this._prNumber().toString() === headerPrNum);
-        this._log("was merged some time ago at " + commits[0].sha);
-        return true;
+        if (mergedSha) {
+            this._log("was merged some time ago at " + mergedSha);
+            return true;
+        }
+        return false;
     }
 
     async _loadPrState() {

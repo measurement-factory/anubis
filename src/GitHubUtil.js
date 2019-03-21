@@ -213,6 +213,25 @@ function compareCommits(baseRef, headRef) {
   });
 }
 
+function getCommits(branch, since) {
+    let params = commonParams();
+    params.sha = branch; // sha or branch to start listing commits from
+    params.since = since;
+    return new Promise( (resolve, reject) => {
+        GitHub.authenticate(GitHubAuthentication);
+        GitHub.repos.getCommits(params, async (err, res) => {
+            if (err) {
+                reject(new ErrorContext(err, getCommits.name, params));
+                return;
+            }
+            res = await pager(res);
+            const result = {commits: res.data.length};
+            logApiResult(getCommits.name, params, result);
+            resolve(res.data);
+        });
+  });
+}
+
 function getReference(ref) {
     let params = commonParams();
     params.ref = ref;
@@ -446,6 +465,7 @@ module.exports = {
     getReviews: getReviews,
     getStatuses: getStatuses,
     getCommit: getCommit,
+    getCommits: getCommits,
     createCommit: createCommit,
     compareCommits: compareCommits,
     getReference: getReference,
