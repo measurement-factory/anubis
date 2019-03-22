@@ -189,7 +189,7 @@ function createCommit(treeSha, message, parents, author, committer) {
             }
             const result = {sha: res.data.sha};
             logApiResult(createCommit.name, params, result);
-            resolve(res.data.sha);
+            resolve(res.data);
         });
   });
 }
@@ -209,6 +209,25 @@ function compareCommits(baseRef, headRef) {
             const result = {status: res.data.status};
             logApiResult(compareCommits.name, params, result);
             resolve(res.data.status);
+        });
+  });
+}
+
+function getCommits(branch, since, author) {
+    let params = commonParams();
+    params.sha = branch; // sha or branch to start listing commits from
+    params.since = since;
+    return new Promise( (resolve, reject) => {
+        GitHub.authenticate(GitHubAuthentication);
+        GitHub.repos.getCommits(params, async (err, res) => {
+            if (err) {
+                reject(new ErrorContext(err, getCommits.name, params));
+                return;
+            }
+            res = await pager(res);
+            const result = {commits: res.data.length};
+            logApiResult(getCommits.name, params, result);
+            resolve(res.data);
         });
   });
 }
@@ -236,48 +255,6 @@ function getReference(ref) {
     });
 }
 
-// get all available repository tags
-function getTags() {
-    let params = commonParams();
-    return new Promise( (resolve, reject) => {
-        GitHub.authenticate(GitHubAuthentication);
-        GitHub.gitdata.getTags(params, async (err, res) => {
-            const notFound = (err && err.code === 404);
-            if (err && !notFound) {
-                reject(new ErrorContext(err, getTags.name, params));
-                return;
-            }
-            let result = [];
-            const gotSomeTags = !notFound;
-            if (gotSomeTags) {
-                res = await pager(res);
-                result = res.data;
-            }
-            logApiResult(getTags.name, params, {tags: result.length});
-            resolve(result);
-        });
-    });
-}
-
-function createReference(sha, ref) {
-    assert(!Config.dryRun());
-    let params = commonParams();
-    params.sha = sha;
-    params.ref = ref;
-    return new Promise( (resolve, reject) => {
-        GitHub.authenticate(GitHubAuthentication);
-        GitHub.gitdata.createReference(params, (err, res) => {
-            if (err) {
-                reject(new ErrorContext(err, createReference.name, params));
-                return;
-            }
-            const result = {ref: res.data.ref, sha: res.data.object.sha};
-            logApiResult(createReference.name, params, result);
-            resolve(res.data.object.sha);
-        });
-    });
-}
-
 function updateReference(ref, sha, force) {
     assert(!Config.dryRun());
     assert((ref === Config.stagingBranchPath()) || !Config.stagedRun());
@@ -296,28 +273,6 @@ function updateReference(ref, sha, force) {
             const result = {ref: res.data.ref, sha: res.data.object.sha};
             logApiResult(updateReference.name, params, result);
             resolve(res.data.object.sha);
-       });
-    });
-}
-
-// For the record: GitHub returns 422 error if there is no such
-// reference 'refs/:sha', and 404 if there is no such tag 'tags/:tag'.
-// Once I saw that both errors can be returned, so looks like this
-// GitHub behavior is unstable.
-function deleteReference(ref) {
-    assert(!Config.dryRun());
-    let params = commonParams();
-    params.ref = ref;
-    return new Promise( (resolve, reject) => {
-        GitHub.authenticate(GitHubAuthentication);
-        GitHub.gitdata.deleteReference(params, (err) => {
-            if (err) {
-                reject(new ErrorContext(err, deleteReference.name, params));
-                return;
-            }
-            const result = {deleted: true};
-            logApiResult(deleteReference.name, params, result);
-            resolve(result);
        });
     });
 }
@@ -485,6 +440,24 @@ function getUserEmails() {
     });
 }
 
+function searchCommits(query) {
+    let params = {};
+    params.q = query;
+    params.sort = 'committer-date';
+    return new Promise( (resolve, reject) => {
+      GitHub.authenticate(GitHubAuthentication);
+      GitHub.search.commits(params, (err, res) => {
+          if (err) {
+             reject(new ErrorContext(err, searchCommits.name, params));
+             return;
+          }
+          const result = {count: res.data.total_count};
+          logApiResult(searchCommits.name, params, result);
+          resolve(res.data.items);
+      });
+    });
+}
+
 module.exports = {
     getOpenPrs: getOpenPrs,
     getLabels: getLabels,
@@ -492,13 +465,11 @@ module.exports = {
     getReviews: getReviews,
     getStatuses: getStatuses,
     getCommit: getCommit,
+    getCommits: getCommits,
     createCommit: createCommit,
     compareCommits: compareCommits,
     getReference: getReference,
-    getTags: getTags,
-    createReference: createReference,
     updateReference: updateReference,
-    deleteReference: deleteReference,
     updatePR: updatePR,
     addLabels: addLabels,
     removeLabel: removeLabel,
@@ -506,6 +477,7 @@ module.exports = {
     getProtectedBranchRequiredStatusChecks: getProtectedBranchRequiredStatusChecks,
     getCollaborators: getCollaborators,
     getUser: getUser,
-    getUserEmails: getUserEmails
+    getUserEmails: getUserEmails,
+    searchCommits: searchCommits
 };
 

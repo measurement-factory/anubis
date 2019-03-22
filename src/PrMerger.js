@@ -14,7 +14,6 @@ class PrMerger {
         this._total = 0; // the number of open PRs received from GitHub
         this._errors = 0; // the number of PRs with processing failures
         this._todo = null; // raw PRs to be processed
-        this._tags = null; // tags pointing to staged commits of _todo PRs
     }
 
     // Implements a single Anubis processing step.
@@ -25,8 +24,6 @@ class PrMerger {
         this._todo = await GH.getOpenPrs();
         this._total = this._todo.length;
         Logger.info(`Received ${this._total} PRs from GitHub:`, this._prNumbers());
-
-        await this._importTags(await GH.getTags()); // needs this._todo
 
         await this._determineProcessingOrder(await this._current());
 
@@ -93,51 +90,25 @@ class PrMerger {
         Logger.info("PR processing order:", this._prNumbers());
     }
 
-    // remembers still-relevant PR tags and
-    // deletes (from GitHub) PR tags which do not have a corresponding open PR
-    async _importTags(rawTags) {
-        assert(rawTags);
-
-        assert(!this._tags);
-        this._tags = [];
-
-        for (let tag of rawTags) {
-            let prNum = Util.ParseTag(tag.ref);
-            if (prNum === null)
-                continue;
-            for (let pr of this._todo) {
-                if (prNum === pr.number.toString()) {
-                    prNum = null;
-                    this._tags.push(tag);
-                    break;
-                }
-            }
-            if (prNum !== null) {
-                if (!Config.dryRun())
-                    await GH.deleteReference(Util.StagingTag(prNum));
-            }
-        }
-    }
-
     // Returns a raw PR with a staged commit (or null).
     // If that PR exists, it is in either a "staged" or "merged" state.
-    // Requires _importTags() being run first.
     async _current() {
         Logger.info("Looking for the current PR...");
-        const stagingSha = await GH.getReference(Config.stagingBranchPath());
-        // search for a tag, the staging_branch points to,
-        // and parse out PR number from the tag name
-        const tag = this._tags.find((t) => { return (t.object.sha === stagingSha) && Util.MatchTag(t.ref); });
-        if (tag === undefined) {
-            Logger.info("No current PR found.");
-            return null;
+        const stagedBranchSha = await GH.getReference(Config.stagingBranchPath());
+        const stagedBranchCommit = await GH.getCommit(stagedBranchSha);
+        Logger.info("Staged branch head sha: " + stagedBranchCommit.sha);
+        const prNum = Util.ParsePrNumber(stagedBranchCommit.message);
+        if (prNum === null) {
+            Logger.info("Could not track a PR by the staged branch.");
+        } else {
+            const pr = await GH.getPR(prNum, false);
+            if (pr.state === 'open') {
+                Logger.info("PR" + prNum + " is the current");
+                return pr;
+            }
+            Logger.info("Tracked PR" + prNum + " by the staged branch but it is already closed.");
         }
-        const prNum = Util.ParseTag(tag.ref);
-        Logger.info("PR" + prNum + " is the current");
-        const pr = await GH.getPR(prNum, false);
-        if (pr.state === 'open')
-            return pr;
-        Logger.warn("The current PR" + prNum + " unexpectedly closed.");
+        Logger.info("No current PR found.");
         return null;
     }
 } // PrMerger

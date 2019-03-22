@@ -13,22 +13,17 @@ function commonParams() {
     };
 }
 
-const TagRegex = /(refs\/)(tags\/M-staged-PR)(\d+)$/;
+const PrNumberRegex = / \(#(\d+)\)$/;
 
-function MatchTag(ref) {
-    return ref.match(TagRegex) !== null;
-}
-
-function ParseTag(ref) {
-    const matched = ref.match(TagRegex);
+function ParsePrNumber(prMessage) {
+    assert(prMessage);
+    const lines = prMessage.split(/\r*\n/);
+    const matched = lines[0].match(PrNumberRegex);
     if (!matched)
         return null;
-    return matched[3];
-}
-
-function StagingTag(prNum) {
-    assert(prNum);
-    return "tags/M-staged-PR" + prNum;
+    const prNumber = matched[1];
+    assert(prNumber > 0);
+    return prNumber;
 }
 
 // An error context for promisificated wrappers.
@@ -72,9 +67,7 @@ class ErrorContext extends Error {
 module.exports = {
     sleep: sleep,
     commonParams: commonParams,
-    StagingTag: StagingTag,
-    MatchTag: MatchTag,
-    ParseTag: ParseTag,
+    ParsePrNumber: ParsePrNumber,
     ErrorContext: ErrorContext
 };
 
