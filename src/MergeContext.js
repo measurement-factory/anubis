@@ -790,9 +790,7 @@ class PullRequest {
     _invalidCharacterPosition(str) {
         const prohibitedCharacters = /[^\u0020-\u007f]+/; // allow non-special ASCII characters
         const match = prohibitedCharacters.exec(str);
-        if (match)
-            return match.index;
-        return -1;
+        return match ? match.index : -1;
     }
 
     _prMessageValid() {
