@@ -787,9 +787,23 @@ class PullRequest {
         return (this._rawPr.title + ' (#' + this._rawPr.number + ')' + '\n\n' + this._prBody()).trim();
     }
 
+    _invalidCharacterPosition(str) {
+        const prohibitedCharacters = /[^\u0020-\u007f]+/; // allow non-special ASCII characters
+        const match = prohibitedCharacters.exec(str);
+        if (match)
+            return match.index;
+        return -1;
+    }
+
     _prMessageValid() {
         const lines = this._prMessage().split('\n');
-        for (let line of lines) {
+        for (let i = 0; i < lines.length; ++i) {
+            const line = lines[i];
+            const invalidPosition = this._invalidCharacterPosition(line);
+            if (invalidPosition !== -1) {
+                this._warn("PR message has an invalid character at (" + i + "," + invalidPosition + ")");
+                return false;
+            }
             if (line.length > 72)
                 return false;
         }
