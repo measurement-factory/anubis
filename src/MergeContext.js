@@ -788,10 +788,9 @@ class PullRequest {
     }
 
     // Searches for the first non_ASCII_printable character and returns
-    // its position in the string. By default, JavaScript strings are
-    // represented as a sequence of UTF-16 characters.
+    // its position in the string.
     _invalidCharacterPosition(str) {
-        const prohibitedCharacters = /[^\u0020-\u007f]+/; // allow non-special ASCII characters
+        const prohibitedCharacters = /[^\x20-\x7e]/; // allow non-special ASCII characters
         const match = prohibitedCharacters.exec(str);
         return match ? match.index : -1;
     }
@@ -800,6 +799,7 @@ class PullRequest {
         const lines = this._prMessage().split('\n');
         for (let i = 0; i < lines.length; ++i) {
             const line = lines[i];
+            // this._prBody() already cared about removing trailing \r characters
             const invalidPosition = this._invalidCharacterPosition(line);
             if (invalidPosition !== -1) {
                 this._warn(`PR message has an invalid character at line ${i}, offset ${invalidPosition}`);
