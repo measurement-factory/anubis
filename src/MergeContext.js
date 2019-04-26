@@ -1125,7 +1125,7 @@ class PullRequest {
             await GH.updateReference(this._prBaseBranchPath(), this._stagedSha(), false);
         } catch (e) {
             if (e.name === 'ErrorContext' && e.unprocessable()) {
-                await this._stagedPosition().compute();
+                await this._stagedPosition.compute();
                 if (this._stagedPosition.diverged())
                     this._log("could not fast-forward, the base " + this._prBaseBranchPath() + " was probably modified while we were merging");
             }
