@@ -126,12 +126,14 @@ class StatusCheck
     constructor(raw) {
         assert(raw.context);
         assert(raw.state);
-        assert(raw.target_url);
         assert(raw.description);
+        // raw.target_url may be nil. For example, Jenkins does not provide it
+        // in the initial 'pending' status for merge commit, i.e., when the
+        // Jenkins job was just created and queued (but has not been started).
 
         this.context = raw.context;
         this.state = raw.state;
-        this.targetUrl = raw.target_url;
+        this._targetUrl = raw.target_url;
         this.description = raw.description;
     }
 
@@ -140,6 +142,15 @@ class StatusCheck
     success() { return this.state === 'success'; }
 
     pending() { return this.state === 'pending'; }
+
+    targetUrl() {
+        // Ensure non-nil _targetUrl upon its usage.
+        // It may be still nil for some pending statuses.
+        // Callers are responsible for calling this method
+        // only for non-pending statuses.
+        assert(this._targetUrl);
+        return this._targetUrl;
+    }
 }
 
 // aggregates status checks for a PR or commit
@@ -1040,7 +1051,7 @@ class PullRequest {
 
             const check = new StatusCheck({
                     state: "success",
-                    target_url: requiredPrStatus.targetUrl,
+                    target_url: requiredPrStatus.targetUrl(),
                     description: requiredPrStatus.description + Config.copiedDescriptionSuffix(),
                     context: requiredPrStatus.context
                 });
