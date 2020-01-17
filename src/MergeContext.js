@@ -787,8 +787,7 @@ class PullRequest {
         return (this._rawPr.title + ' (#' + this._rawPr.number + ')' + '\n\n' + this._prBody()).trim();
     }
 
-    // Searches for the first non_ASCII_printable character and returns
-    // its position in the string.
+    // returns the position of the first non-ASCII_printable character (or -1)
     _invalidCharacterPosition(str) {
         const prohibitedCharacters = /[^\u{20}-\u{7f}]/u; // allow non-special ASCII characters
         const match = prohibitedCharacters.exec(str);
@@ -796,10 +795,11 @@ class PullRequest {
     }
 
     _prMessageValid() {
+        // _prBody() removed CRs in CRLF sequences
+        // other CRs are not treated specially (and are banned)
         const lines = this._prMessage().split('\n');
         for (let i = 0; i < lines.length; ++i) {
             const line = lines[i];
-            // this._prBody() already removed trailing \r characters
             const invalidPosition = this._invalidCharacterPosition(line);
             if (invalidPosition !== -1) {
                 this._warn(`PR message has an invalid character at line ${i}, offset ${invalidPosition}`);
