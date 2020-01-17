@@ -126,8 +126,10 @@ class StatusCheck
     constructor(raw) {
         assert(raw.context);
         assert(raw.state);
-        assert(raw.target_url);
         assert(raw.description);
+        // raw.target_url may be nil. For example, Jenkins does not provide it
+        // in the initial 'pending' status for merge commit, i.e., when the
+        // Jenkins job was just created and queued (but has not been started).
 
         this.context = raw.context;
         this.state = raw.state;
