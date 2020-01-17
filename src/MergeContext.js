@@ -790,7 +790,7 @@ class PullRequest {
     // Searches for the first non_ASCII_printable character and returns
     // its position in the string.
     _invalidCharacterPosition(str) {
-        const prohibitedCharacters = /[^\x20-\x7e]/; // allow non-special ASCII characters
+        const prohibitedCharacters = /[^\u{20}-\u{7f}]/u; // allow non-special ASCII characters
         const match = prohibitedCharacters.exec(str);
         return match ? match.index : -1;
     }
@@ -799,7 +799,7 @@ class PullRequest {
         const lines = this._prMessage().split('\n');
         for (let i = 0; i < lines.length; ++i) {
             const line = lines[i];
-            // this._prBody() already cared about removing trailing \r characters
+            // this._prBody() already removed trailing \r characters
             const invalidPosition = this._invalidCharacterPosition(line);
             if (invalidPosition !== -1) {
                 this._warn(`PR message has an invalid character at line ${i}, offset ${invalidPosition}`);
