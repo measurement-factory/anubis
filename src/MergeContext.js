@@ -789,9 +789,24 @@ class PullRequest {
         return (this._rawPr.title + ' (#' + this._rawPr.number + ')' + '\n\n' + this._prBody()).trim();
     }
 
+    // returns the position of the first non-ASCII_printable character (or -1)
+    _invalidCharacterPosition(str) {
+        const prohibitedCharacters = /[^\u{20}-\u{7e}]/u;
+        const match = prohibitedCharacters.exec(str);
+        return match ? match.index : -1;
+    }
+
     _prMessageValid() {
+        // _prBody() removed CRs in CRLF sequences
+        // other CRs are not treated specially (and are banned)
         const lines = this._prMessage().split('\n');
-        for (let line of lines) {
+        for (let i = 0; i < lines.length; ++i) {
+            const line = lines[i];
+            const invalidPosition = this._invalidCharacterPosition(line);
+            if (invalidPosition !== -1) {
+                this._warn(`PR message has an invalid character at line ${i}, offset ${invalidPosition}`);
+                return false;
+            }
             if (line.length > 72)
                 return false;
         }
