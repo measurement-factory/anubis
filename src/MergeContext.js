@@ -789,7 +789,7 @@ class PullRequest {
 
     // returns the position of the first non-ASCII_printable character (or -1)
     _invalidCharacterPosition(str) {
-        const prohibitedCharacters = /[^\u{20}-\u{7e}]/u; // allow non-special ASCII characters
+        const prohibitedCharacters = /[^\u{20}-\u{7e}]/u;
         const match = prohibitedCharacters.exec(str);
         return match ? match.index : -1;
     }
