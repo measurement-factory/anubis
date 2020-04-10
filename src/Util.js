@@ -1,5 +1,5 @@
 const assert = require('assert');
-const Config = require('./Config.js');
+const Config = require('../config/Config.js');
 
 function sleep(msec) {
     return new Promise((resolve) => setTimeout(resolve, msec));

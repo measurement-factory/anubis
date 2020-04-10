@@ -1,6 +1,6 @@
 const assert = require('assert');
 const bunyan = require('bunyan');
-const Config = require('./Config.js');
+const Config = require('../config/Config.js');
 
 const Logger = bunyan.createLogger(Config.loggerParams());
 
