@@ -679,6 +679,13 @@ class PullRequest {
         this._labels = new Labels(labels, this._prNumber());
     }
 
+    // check and throw if there are some human-controlled labels preventing the
+    // PR from further processing
+    checkForHumanLabels() {
+        if (this._labels.has(Config.failedStagingOtherLabel()))
+            throw this._exObviousFailure("an unexpected error during staging some time ago");
+    }
+
     // Checks whether this PR is still open and still wants to be merged.
     // This is a common part of staging and merging precondition checks.
     async _checkActive() {
@@ -697,8 +704,12 @@ class PullRequest {
 
         // TODO: If multiple failures need labeling, label all of them.
 
+        // must be already checked in checkForHumanLabels()
+        assert(!this._labels.has(Config.failedStagingOtherLabel()));
+
         if (this._labels.has(Config.failedStagingChecksLabel()))
             throw this._exObviousFailure("staged commit tests failed");
+
 
         if (this._wipPr())
             throw this._exObviousFailure("work-in-progress");
@@ -1232,6 +1243,7 @@ class PullRequest {
         await this._loadStaged();
         await this._loadRawPr(); // requires this._loadStaged()
         await this._loadLabels();
+        this.checkForHumanLabels();
         await this._loadPrState(); // requires this._loadRawPr() and this._loadLabels()
         this._log("PR state: " + this._prState);
 
@@ -1284,7 +1296,7 @@ class PullRequest {
             // TODO: Process Config.failedOtherLabel() PRs last and ignore their failures.
             if (!this._labels)
                 this._labels = new Labels([], this._prNumber());
-            this._labels.add(Config.failedOtherLabel());
+            this._labels.add(this._stagedSha() ? Config.failedStagingOtherLabel() : Config.failedOtherLabel());
             throw e;
         } finally {
             await this._pushLabelsToGitHub();
@@ -1295,6 +1307,7 @@ class PullRequest {
     _removeTemporaryLabelsSetByAnubis() {
         // set by humans: Config.clearedForMergeLabel();
         // set by humans: Config.failedStagingChecksLabel();
+        // set by humans: Config.failedStagingOtherLabel();
         this._labels.remove(Config.failedDescriptionLabel());
         this._labels.remove(Config.failedOtherLabel());
         this._labels.remove(Config.passedStagingChecksLabel());

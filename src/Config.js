@@ -83,8 +83,10 @@ class ConfigOptions {
     stagingChecks() { return this._stagingChecks; }
     loggerParams() { return this._loggerParams; }
 
-    // fast-forward merge failed
+    // an unexpected error occurred (except from M-failed-staging-other).
     failedOtherLabel() { return "M-failed-other"; }
+    // an unexpected error occurred during 'staged' phase
+    failedStagingOtherLabel() { return "M-failed-staging-other"; }
     // some of required staging checks failed
     failedStagingChecksLabel() { return "M-failed-staging-checks"; }
     // fast-forward merge succeeded
