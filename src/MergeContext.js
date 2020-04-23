@@ -959,6 +959,7 @@ class PullRequest {
 
         if (!(await this._stagedCommitIsFresh())) {
             await this._enterBrewing();
+            this._labels.add(Config.abandonedStagingChecksLabel());
             return;
         }
 
@@ -1299,6 +1300,7 @@ class PullRequest {
         this._labels.remove(Config.failedOtherLabel());
         this._labels.remove(Config.passedStagingChecksLabel());
         this._labels.remove(Config.waitingStagingChecksLabel());
+        this._labels.remove(Config.abandonedStagingChecksLabel());
         // final (set after the PR is merged): Config.mergedLabel()
     }
 

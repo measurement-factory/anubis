@@ -163,6 +163,9 @@ request state:
 * `M-merged`: The PR was successfully merged (and probably closed).
   The bot will not attempt to merge this PR again even if it is
   reopened. The bot never removes this label.
+* `M-abandoned-staging-checks`: The PR state changed, making the
+  still running CI tests stale/inapplicable. The bot removes this label
+  after creating a fresh stage commit for this PR.
 
 All labels, except `M-cleared-for-merge` and `M-merged`, are ignored by
 the bot itself! Humans may find them useful when determining the current

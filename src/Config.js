@@ -97,6 +97,8 @@ class ConfigOptions {
     failedDescriptionLabel() { return "M-failed-description"; }
     // allows target branch update in 'guarded_run' mode
     clearedForMergeLabel() { return "M-cleared-for-merge"; }
+    // whether the PR was abandoned due to a stale staged commit
+    abandonedStagingChecksLabel() { return "M-abandoned-staging-checks"; }
 
     // an URL of the description of the approval test status
     approvalUrl() { return this._approvalUrl; }
