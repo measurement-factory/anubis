@@ -710,7 +710,6 @@ class PullRequest {
         if (this._labels.has(Config.failedStagingChecksLabel()))
             throw this._exObviousFailure("staged commit tests failed");
 
-
         if (this._wipPr())
             throw this._exObviousFailure("work-in-progress");
 
