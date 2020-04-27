@@ -299,6 +299,7 @@ class Labels
         return label;
     }
 
+    // adds a label and immediately applies it to GitHub
     async addAndPush(name) {
         const label = this.add(name);
         if (label.needsAdditionToGitHub()) {
