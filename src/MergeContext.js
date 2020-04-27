@@ -1309,7 +1309,6 @@ class PullRequest {
     _removeTemporaryLabelsSetByAnubis() {
         // set by humans: Config.clearedForMergeLabel();
         // set by humans: Config.failedStagingChecksLabel();
-        this._log("REMOVE temporary labels!!!");
         this._labels.remove(Config.failedDescriptionLabel());
         this._labels.remove(Config.failedOtherLabel());
         this._labels.remove(Config.passedStagingChecksLabel());
