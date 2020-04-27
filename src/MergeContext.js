@@ -1235,14 +1235,15 @@ class PullRequest {
     async _doProcess() {
         this._breadcrumbs.push("load");
 
+        await this._loadLabels();
+        this.checkForHumanLabels();
+
         /*
          * Until _loadRawPr(), we must avoid this._rawPr fields except .number.
          * TODO: Refactor to eliminate the risk of too-early this._rawPr use.
          */
         await this._loadStaged();
         await this._loadRawPr(); // requires this._loadStaged()
-        await this._loadLabels();
-        this.checkForHumanLabels();
         await this._loadPrState(); // requires this._loadRawPr() and this._loadLabels()
         this._log("PR state: " + this._prState);
 
@@ -1278,11 +1279,18 @@ class PullRequest {
 
             let result = new ProcessResult();
 
-            if (this._prState && this._prState.staged()) {
-                if (suspended)
-                    result.setPrStaged(true);
-                else
-                    this._removePositiveStagingLabels(); // abandoning this staged PR
+            const wasStaged = this._stagedSha(); // the PR is staged now or was staged some time ago
+
+            if (this._prState && this._prState.staged() && suspended) {
+                result.setPrStaged(true);
+            } else if (wasStaged) {
+                // There are several situations:
+                // * the PR is in the 'staged' state and an error occurred - we abandon this staged PR
+                // * an early error occurred before we could determine whether the existing PR is 'staged'
+                //   (i.e., the existing staged commit is not stale).
+                // * an error occurred just after we switched (due to the stale staged commit) from 'staged' to 'brewing'
+                // We need to do cleanup in all these cases.
+                this._removePositiveStagingLabels();
             }
 
             if (knownProblem) {
@@ -1295,7 +1303,16 @@ class PullRequest {
             // TODO: Process Config.failedOtherLabel() PRs last and ignore their failures.
             if (!this._labels)
                 this._labels = new Labels([], this._prNumber());
-            this._labels.add(this._stagedSha() ? Config.failedStagingOtherLabel() : Config.failedOtherLabel());
+
+            // failedOtherLabel() and failedStagingChecksLabel() are mutually exclusive
+            if (wasStaged) {
+                this._labels.remove(Config.failedOtherLabel());
+                // avoid livelocking
+                this._labels.add(Config.failedStagingOtherLabel());
+            } else {
+                // removed by humans: Config.failedStagingOtherLabel()
+                this._labels.add(Config.failedOtherLabel());
+            }
             throw e;
         } finally {
             await this._pushLabelsToGitHub();

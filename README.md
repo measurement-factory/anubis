@@ -155,7 +155,7 @@ request state:
   not attempt to merge this PR again until a human decides that this
   problem is resolved and removes the label manually.
 * `M-failed-other`: A fatal PR-specific error, not classified as
-  `M-failed-staging-other. It is probably necessary to consult CI
+  `M-failed-staging-other`. It is probably necessary to consult CI
   logs to determine what happened. When processing the PR again,
   the bot automatically removes this label, optimistically assuming
   that the problem may be solved by that time.
