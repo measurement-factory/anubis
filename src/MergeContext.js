@@ -269,6 +269,8 @@ class Label
 
     needsAdditionToGitHub() { return !this._presentOnGitHub && this._presentHere; }
 
+    onAddedToGitHub() { this._presentOnGitHub = true; }
+
     markForRemoval() { this._presentHere = false; }
 
     markForAddition() { this._presentHere = true; }
@@ -287,11 +289,22 @@ class Labels
 
     // adding a previously added or existing label is a no-op
     add(name) {
-        const label = this._find(name);
+        let label = this._find(name);
         if (label)
             label.markForAddition();
-        else
-            this._labels.push(new Label(name, false));
+        else {
+            label = new Label(name, false);
+            this._labels.push(label);
+        }
+        return label;
+    }
+
+    async addAndPush(name) {
+        const label = this.add(name);
+        if (label.needsAdditionToGitHub()) {
+            await this._addToGitHub(label.name);
+            label.onAddedToGitHub();
+        }
     }
 
     // removing a previously removed or missing label is a no-op
@@ -959,7 +972,7 @@ class PullRequest {
 
         if (!(await this._stagedCommitIsFresh())) {
             await this._enterBrewing();
-            this._labels.add(Config.abandonedStagingChecksLabel());
+            await this._labels.addAndPush(Config.abandonedStagingChecksLabel());
             return;
         }
 
@@ -1296,6 +1309,7 @@ class PullRequest {
     _removeTemporaryLabelsSetByAnubis() {
         // set by humans: Config.clearedForMergeLabel();
         // set by humans: Config.failedStagingChecksLabel();
+        this._log("REMOVE temporary labels!!!");
         this._labels.remove(Config.failedDescriptionLabel());
         this._labels.remove(Config.failedOtherLabel());
         this._labels.remove(Config.passedStagingChecksLabel());
