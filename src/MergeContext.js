@@ -972,8 +972,8 @@ class PullRequest {
         }
 
         if (!(await this._stagedCommitIsFresh())) {
-            await this._enterBrewing();
             await this._labels.addAndPush(Config.abandonedStagingChecksLabel());
+            await this._enterBrewing();
             return;
         }
 
