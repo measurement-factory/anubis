@@ -269,7 +269,7 @@ class Label
 
     needsAdditionToGitHub() { return !this._presentOnGitHub && this._presentHere; }
 
-    onAddedToGitHub() { this._presentOnGitHub = true; }
+    markAsAdded() { this._presentOnGitHub = true; }
 
     markForRemoval() { this._presentHere = false; }
 
@@ -300,11 +300,10 @@ class Labels
     }
 
     // adds a label and immediately applies it to GitHub
-    async addAndPush(name) {
+    async addImmediately(name) {
         const label = this.add(name);
         if (label.needsAdditionToGitHub()) {
-            await this._addToGitHub(label.name);
-            label.onAddedToGitHub();
+            await this._addToGitHub(label);
         }
     }
 
@@ -329,7 +328,7 @@ class Labels
                 await this._removeFromGitHub(label.name);
             } else {
                 if (label.needsAdditionToGitHub())
-                    await this._addToGitHub(label.name); // TODO: Optimize to add all labels at once
+                    await this._addToGitHub(label); // TODO: Optimize to add all labels at once
                 // else still unchanged
 
                 syncedLabels.push(label);
@@ -366,13 +365,15 @@ class Labels
     }
 
     // adds a single label to GitHub
-    async _addToGitHub(name) {
+    async _addToGitHub(label) {
         let params = Util.commonParams();
         params.number = this._prNum;
         params.labels = [];
-        params.labels.push(name);
+        params.labels.push(label.name);
 
         await GH.addLabels(params);
+
+        label.markAsAdded();
     }
 
     _find(name) { return this._labels.find(label => label.name === name); }
@@ -972,7 +973,7 @@ class PullRequest {
         }
 
         if (!(await this._stagedCommitIsFresh())) {
-            await this._labels.addAndPush(Config.abandonedStagingChecksLabel());
+            await this._labels.addImmediately(Config.abandonedStagingChecksLabel());
             await this._enterBrewing();
             return;
         }
