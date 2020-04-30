@@ -290,9 +290,9 @@ class Labels
     // adding a previously added or existing label is a no-op
     add(name) {
         let label = this._find(name);
-        if (label)
+        if (label) {
             label.markForAddition();
-        else {
+        } else {
             label = new Label(name, false);
             this._labels.push(label);
         }
@@ -302,9 +302,8 @@ class Labels
     // adds a label and immediately applies it to GitHub
     async addImmediately(name) {
         const label = this.add(name);
-        if (label.needsAdditionToGitHub()) {
+        if (label.needsAdditionToGitHub())
             await this._addToGitHub(label);
-        }
     }
 
     // removing a previously removed or missing label is a no-op
