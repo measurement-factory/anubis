@@ -277,8 +277,9 @@ class Label
 }
 
 // Pull request labels. Hides the fact that some labels may be kept internally
-// while appearing to be unset for high-level code. Delays synchronization
-// with GitHub to help GitHub aggregate human-readable label change reports.
+// while appearing to be unset for high-level code. By default, delays
+// synchronization with GitHub to help GitHub aggregate human-readable label
+// change reports.
 class Labels
 {
     // the labels parameter is the label array received from GitHub
@@ -299,7 +300,7 @@ class Labels
         return label;
     }
 
-    // adds a label and immediately applies it to GitHub
+    // adds a label, updating GitHub without waiting for pushToGitHub()
     async addImmediately(name) {
         const label = this.add(name);
         if (label.needsAdditionToGitHub())
