@@ -140,6 +140,14 @@ request state:
   mode (see `config::staged_run` and `config::guarded_run`). The bot
   removes this label when either the PR was successfully merged or its
   staging results are no longer fresh/applicable.
+* `M-abandoned-staging-checks`: Anubis discovered a stale _staging commit_.
+  This usually happens when either the PR state changes (e.g., the author
+  commits new code) or the staging_branch is unexpectedly modified. After
+  labeling the PR, the bot ignores any failed or unfinished tests associated
+  with that stale commit. This label was added so that the developer observing
+  the PR page on GitHub can be sure that Anubis had a good reason to ignore
+  failed or unfinished staging tests. The bot removes this (usually
+  short-lived) label after creating a fresh staging commit for the PR.
 * `M-failed-staging-checks`: Essentially duplicates GitHub "red x" mark
   for the _staging commit_. The bot does not attempt to merge this PR
   again until a human decides that this problem is resolved and removes
@@ -163,10 +171,6 @@ request state:
 * `M-merged`: The PR was successfully merged (and probably closed).
   The bot will not attempt to merge this PR again even if it is
   reopened. The bot never removes this label.
-* `M-abandoned-staging-checks`: The PR state changed, making the
-  still running (or already finished) CI tests stale/inapplicable.
-  The bot removes this label after creating a fresh stage commit for
-  this PR.
 
 All labels, except `M-cleared-for-merge` and `M-merged`, are ignored by
 the bot itself! Humans may find them useful when determining the current
