@@ -269,14 +269,17 @@ class Label
 
     needsAdditionToGitHub() { return !this._presentOnGitHub && this._presentHere; }
 
+    markAsAdded() { this._presentOnGitHub = true; }
+
     markForRemoval() { this._presentHere = false; }
 
     markForAddition() { this._presentHere = true; }
 }
 
 // Pull request labels. Hides the fact that some labels may be kept internally
-// while appearing to be unset for high-level code. Delays synchronization
-// with GitHub to help GitHub aggregate human-readable label change reports.
+// while appearing to be unset for high-level code. By default, delays
+// synchronization with GitHub to help GitHub aggregate human-readable label
+// change reports.
 class Labels
 {
     // the labels parameter is the label array received from GitHub
@@ -287,11 +290,21 @@ class Labels
 
     // adding a previously added or existing label is a no-op
     add(name) {
-        const label = this._find(name);
-        if (label)
+        let label = this._find(name);
+        if (label) {
             label.markForAddition();
-        else
-            this._labels.push(new Label(name, false));
+        } else {
+            label = new Label(name, false);
+            this._labels.push(label);
+        }
+        return label;
+    }
+
+    // adds a label, updating GitHub without waiting for pushToGitHub()
+    async addImmediately(name) {
+        const label = this.add(name);
+        if (label.needsAdditionToGitHub())
+            await this._addToGitHub(label);
     }
 
     // removing a previously removed or missing label is a no-op
@@ -315,7 +328,7 @@ class Labels
                 await this._removeFromGitHub(label.name);
             } else {
                 if (label.needsAdditionToGitHub())
-                    await this._addToGitHub(label.name); // TODO: Optimize to add all labels at once
+                    await this._addToGitHub(label); // TODO: Optimize to add all labels at once
                 // else still unchanged
 
                 syncedLabels.push(label);
@@ -352,13 +365,15 @@ class Labels
     }
 
     // adds a single label to GitHub
-    async _addToGitHub(name) {
+    async _addToGitHub(label) {
         let params = Util.commonParams();
         params.number = this._prNum;
         params.labels = [];
-        params.labels.push(name);
+        params.labels.push(label.name);
 
         await GH.addLabels(params);
+
+        label.markAsAdded();
     }
 
     _find(name) { return this._labels.find(label => label.name === name); }
@@ -958,6 +973,7 @@ class PullRequest {
         }
 
         if (!(await this._stagedCommitIsFresh())) {
+            await this._labels.addImmediately(Config.abandonedStagingChecksLabel());
             await this._enterBrewing();
             return;
         }
@@ -1299,6 +1315,7 @@ class PullRequest {
         this._labels.remove(Config.failedOtherLabel());
         this._labels.remove(Config.passedStagingChecksLabel());
         this._labels.remove(Config.waitingStagingChecksLabel());
+        this._labels.remove(Config.abandonedStagingChecksLabel());
         // final (set after the PR is merged): Config.mergedLabel()
     }
 
