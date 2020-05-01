@@ -145,9 +145,9 @@ request state:
   commits new code) or the staging_branch is unexpectedly modified. After
   labeling the PR, the bot ignores any failed or unfinished tests associated
   with that stale commit. This label was added so that the developer observing
-  the PR page on GitHub can be sure that Anubis had a good reason to ignore
-  failed or unfinished staging tests. The bot removes this (usually
-  short-lived) label after creating a fresh staging commit for the PR.
+  the PR page on GitHub knows why Anubis ignored (failed, unfinished, or
+  successful) staging tests. The bot removes this (usually short-lived) label
+  after creating a fresh staging commit for the PR.
 * `M-failed-staging-checks`: Essentially duplicates GitHub "red x" mark
   for the _staging commit_. The bot does not attempt to merge this PR
   again until a human decides that this problem is resolved and removes
