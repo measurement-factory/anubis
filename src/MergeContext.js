@@ -1235,13 +1235,14 @@ class PullRequest {
     async _doProcess() {
         this._breadcrumbs.push("load");
 
-        await this._loadLabels();
-        this.checkForHumanLabels();
-
         /*
          * Until _loadRawPr(), we must avoid this._rawPr fields except .number.
          * TODO: Refactor to eliminate the risk of too-early this._rawPr use.
          */
+
+        await this._loadLabels();
+        this.checkForHumanLabels();
+
         await this._loadStaged();
         await this._loadRawPr(); // requires this._loadStaged()
         await this._loadPrState(); // requires this._loadRawPr() and this._loadLabels()
