@@ -679,8 +679,7 @@ class PullRequest {
         this._labels = new Labels(labels, this._prNumber());
     }
 
-    // check and throw if there are some human-controlled labels preventing the
-    // PR from further processing
+    // stop processing if it is prohibited by a human-controlled label
     _checkForHumanLabels() {
         if (this._labels.has(Config.failedStagingOtherLabel()))
             throw this._exObviousFailure("an unexpected error during staging some time ago");
@@ -704,7 +703,7 @@ class PullRequest {
 
         // TODO: If multiple failures need labeling, label all of them.
 
-        // must be already checked in _checkForHumanLabels()
+        // already checked in _checkForHumanLabels()
         assert(!this._labels.has(Config.failedStagingOtherLabel()));
 
         if (this._labels.has(Config.failedStagingChecksLabel()))
