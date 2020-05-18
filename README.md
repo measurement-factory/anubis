@@ -144,21 +144,20 @@ request state:
   for the _staging commit_. The bot does not attempt to merge this PR
   again until a human decides that this problem is resolved and removes
   the label manually.
-* `M-failed-staging-other`: A fatal PR-specific error occurred when waiting
-  for staging checks, other than the staging branch test failure (the
-  latter is marked with `M-failed-staging-checks`). It is probably
-  necessary to consult CI logs to determine what happened.  The bot does
-  not attempt to merge this PR again until a human decides that this
-  problem is resolved and removes the label manually.
+* `M-failed-staging-other`: A fatal PR-specific error that occurred while
+  waiting for staging checks but was not classified as
+  `M-failed-staging-checks`. It is probably necessary to consult CI logs to
+  determine what happened.  The bot does not attempt to merge this PR again
+  until a human decides that this problem is resolved and removes the label
+  manually.
 * `M-failed-description`: The PR title and/or description is invalid
   (see below for PR commit message rules). The bot removes this label
   when it revisits the PR and notices that the commit message components
   were fixed.
-* `M-failed-other`: A fatal PR-specific error, not classified as
-  `M-failed-staging-other`. It is probably necessary to consult CI
-  logs to determine what happened. When processing the PR again,
-  the bot automatically removes this label, optimistically assuming
-  that the problem may be solved by that time.
+* `M-failed-other`: All other fatal PR-specific errors. It is probably
+  necessary to consult CI logs to determine what happened. Anubis will process
+  the labeled PR again, optimistically assuming that the problems are
+  resolved. The bot removes the label if the problems are indeed gone.
 * `M-cleared-for-merge`: A human has allowed the bot running in
   `config::guarded_run` mode to perform the final merging step --
   updating the target branch. The label has no effect unless the bot is
@@ -170,9 +169,9 @@ request state:
   The bot will not attempt to merge this PR again even if it is
   reopened. The bot never removes this label.
 
-All labels, except `M-cleared-for-merge` and `M-merged`, are ignored by
-the bot itself! Humans may find them useful when determining the current
-state of a PR.
+All labels except `M-failed-staging-checks`, `M-failed-staging-other`,
+`M-cleared-for-merge`, and `M-merged` are ignored by Anubis! Humans may find
+them useful when determining the current state of a PR.
 
 
 ## Commit message
