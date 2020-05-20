@@ -1257,9 +1257,9 @@ class PullRequest {
 
         await this._loadLabels();
 
-        // We obtained labels and can cleanup now.
-        // In a case of a new error, fresh values for error labels will be calculated.
-        this._labels.remove(Config.failedOtherLabel());
+        // methods below compute fresh labels from scratch without worrying
+        // about stale labels, so we clear all the labels that we must sync
+        this._removeTemporaryLabels();
 
         this._checkForHumanLabels();
 
