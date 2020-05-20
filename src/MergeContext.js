@@ -777,7 +777,7 @@ class PullRequest {
         // Clear any positive labels (there should be no negatives here)
         // because Config.mergedLabel() set below already implies that all
         // intermediate processing steps have succeeded.
-        this._removeTemporaryLabelsSetByAnubis();
+        this._removeTemporaryLabels();
 
         this._labels.remove(Config.clearedForMergeLabel());
         this._labels.add(Config.mergedLabel());
@@ -1207,7 +1207,7 @@ class PullRequest {
         assert(this._prState.brewing());
 
         // methods below compute fresh labels from scratch
-        this._removeTemporaryLabelsSetByAnubis();
+        this._removeTemporaryLabels();
 
         await this._update();
         await this._checkStagingPreconditions();
@@ -1221,7 +1221,7 @@ class PullRequest {
         assert(this._prState.staged());
 
         // methods below compute fresh labels from scratch
-        this._removeTemporaryLabelsSetByAnubis();
+        this._removeTemporaryLabels();
 
         await this._update();
         await this._checkMergePreconditions();
@@ -1316,16 +1316,23 @@ class PullRequest {
         }
     }
 
-    // remove intermediate step labels that may be set by us
-    _removeTemporaryLabelsSetByAnubis() {
-        // Config.clearedForMergeLabel() is not temporary (only set by humans)
-        // Config.failedStagingChecksLabel() is not temporary (only cleared by humans)
-        // Config.failedStagingOtherLabel() is not temporary (only cleared by humans)
+    // Remove all labels that satisfy both criteria:
+    // * We set it. Some labels are only set by humans. A label X qualifies if
+    //   there is a labels.add(X) call somewhere.
+    // * We remove it. Some labels are only removed by humans. Some labels are
+    //   not meant to be removed at all! It is impossible to test this
+    //   criterion by searching Anubis code because some labels are only
+    //   removed by this method. Consult Anubis documentation instead.
+    // TODO: Add these properties to labels and iterate over all labels here.
+    _removeTemporaryLabels() {
+        // Config.clearedForMergeLabel() can only be set by a human
+        // Config.failedStagingChecksLabel() can only be removed by a human
+        // Config.failedStagingOtherLabel() can only be removed by a human
         this._labels.remove(Config.failedDescriptionLabel());
         this._labels.remove(Config.failedOtherLabel());
         this._labels.remove(Config.passedStagingChecksLabel());
         this._labels.remove(Config.waitingStagingChecksLabel());
-        // final (set after the PR is merged): Config.mergedLabel()
+        // Config.mergedLabel() is not meant to be removed by anybody
     }
 
     // remove labels that have no sense for a failed staged PR
