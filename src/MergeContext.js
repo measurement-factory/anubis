@@ -1240,6 +1240,11 @@ class PullRequest {
          */
 
         await this._loadLabels();
+
+        // We obtained labels and can cleanup now.
+        // In a case of a new error, fresh values for error labels will be calculated.
+        this._labels.remove(Config.failedOtherLabel());
+
         this._checkForHumanLabels();
 
         await this._loadStaged();
@@ -1279,19 +1284,10 @@ class PullRequest {
 
             let result = new ProcessResult();
 
-            const wasStaged = this._stagedSha(); // the PR is staged now or was staged some time ago
-
-            if (this._prState && this._prState.staged() && suspended) {
+            if (this._prState && this._prState.staged() && suspended)
                 result.setPrStaged(true);
-            } else if (wasStaged) {
-                // There are several situations:
-                // * the PR is in the 'staged' state and an error occurred - we abandon this staged PR
-                // * an early error occurred before we could determine whether the existing PR is 'staged'
-                //   (i.e., the existing staged commit is not stale).
-                // * an error occurred just after we switched (due to the stale staged commit) from 'staged' to 'brewing'
-                // We need to do cleanup in all these cases.
+            else
                 this._removePositiveStagingLabels();
-            }
 
             if (knownProblem) {
                 result.setDelayMsIfAny(this._delayMs());
@@ -1304,13 +1300,14 @@ class PullRequest {
             if (!this._labels)
                 this._labels = new Labels([], this._prNumber());
 
-            // failedOtherLabel() and failedStagingChecksLabel() are mutually exclusive
-            if (wasStaged) {
-                this._labels.remove(Config.failedOtherLabel());
+            if (this._stagedSha()) { // the PR is staged now or was staged some time ago
                 // avoid livelocking
                 this._labels.add(Config.failedStagingOtherLabel());
             } else {
-                // removed by humans: Config.failedStagingOtherLabel()
+                // Since knownProblem is false, either there was no failedStagingOtherLabel()
+                // or the problem happened before we could check for it. In the latter case,
+                // that label will remain set, and we will add failedOtherLabel(), reflecting the
+                // compound nature of the problem.
                 this._labels.add(Config.failedOtherLabel());
             }
             throw e;
@@ -1321,9 +1318,9 @@ class PullRequest {
 
     // remove intermediate step labels that may be set by us
     _removeTemporaryLabelsSetByAnubis() {
-        // set by humans: Config.clearedForMergeLabel();
-        // set by humans: Config.failedStagingChecksLabel();
-        // set by humans: Config.failedStagingOtherLabel();
+        // Config.clearedForMergeLabel() is not temporary (only set by humans)
+        // Config.failedStagingChecksLabel() is not temporary (only cleared by humans)
+        // Config.failedStagingOtherLabel() is not temporary (only cleared by humans)
         this._labels.remove(Config.failedDescriptionLabel());
         this._labels.remove(Config.failedOtherLabel());
         this._labels.remove(Config.passedStagingChecksLabel());
