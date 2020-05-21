@@ -694,6 +694,12 @@ class PullRequest {
         this._labels = new Labels(labels, this._prNumber());
     }
 
+    // stop processing if it is prohibited by a human-controlled label
+    _checkForHumanLabels() {
+        if (this._labels.has(Config.failedStagingOtherLabel()))
+            throw this._exObviousFailure("an unexpected error during staging some time ago");
+    }
+
     // Checks whether this PR is still open and still wants to be merged.
     // This is a common part of staging and merging precondition checks.
     async _checkActive() {
@@ -711,6 +717,9 @@ class PullRequest {
         await this._checkActive();
 
         // TODO: If multiple failures need labeling, label all of them.
+
+        // already checked in _checkForHumanLabels()
+        assert(!this._labels.has(Config.failedStagingOtherLabel()));
 
         if (this._labels.has(Config.failedStagingChecksLabel()))
             throw this._exObviousFailure("staged commit tests failed");
@@ -783,7 +792,7 @@ class PullRequest {
         // Clear any positive labels (there should be no negatives here)
         // because Config.mergedLabel() set below already implies that all
         // intermediate processing steps have succeeded.
-        this._removeTemporaryLabelsSetByAnubis();
+        this._removeTemporaryLabels();
 
         this._labels.remove(Config.clearedForMergeLabel());
         this._labels.add(Config.mergedLabel());
@@ -1214,7 +1223,7 @@ class PullRequest {
         assert(this._prState.brewing());
 
         // methods below compute fresh labels from scratch
-        this._removeTemporaryLabelsSetByAnubis();
+        this._removeTemporaryLabels();
 
         await this._update();
         await this._checkStagingPreconditions();
@@ -1228,7 +1237,7 @@ class PullRequest {
         assert(this._prState.staged());
 
         // methods below compute fresh labels from scratch
-        this._removeTemporaryLabelsSetByAnubis();
+        this._removeTemporaryLabels();
 
         await this._update();
         await this._checkMergePreconditions();
@@ -1245,9 +1254,17 @@ class PullRequest {
          * Until _loadRawPr(), we must avoid this._rawPr fields except .number.
          * TODO: Refactor to eliminate the risk of too-early this._rawPr use.
          */
+
+        await this._loadLabels();
+
+        // methods below compute fresh labels from scratch without worrying
+        // about stale labels, so we clear all the labels that we must sync
+        this._removeTemporaryLabels();
+
+        this._checkForHumanLabels();
+
         await this._loadStaged();
         await this._loadRawPr(); // requires this._loadStaged()
-        await this._loadLabels();
         await this._loadPrState(); // requires this._loadRawPr() and this._loadLabels()
         this._log("PR state: " + this._prState);
 
@@ -1283,12 +1300,10 @@ class PullRequest {
 
             let result = new ProcessResult();
 
-            if (this._prState && this._prState.staged()) {
-                if (suspended)
-                    result.setPrStaged(true);
-                else
-                    this._removePositiveStagingLabels(); // abandoning this staged PR
-            }
+            if (this._prState && this._prState.staged() && suspended)
+                result.setPrStaged(true);
+            else
+                this._removePositiveStagingLabels();
 
             if (knownProblem) {
                 result.setDelayMsIfAny(this._delayMs());
@@ -1300,23 +1315,41 @@ class PullRequest {
             // TODO: Process Config.failedOtherLabel() PRs last and ignore their failures.
             if (!this._labels)
                 this._labels = new Labels([], this._prNumber());
-            this._labels.add(Config.failedOtherLabel());
+
+            if (this._stagedSha()) { // the PR is staged now or was staged some time ago
+                // avoid livelocking
+                this._labels.add(Config.failedStagingOtherLabel());
+            } else {
+                // Since knownProblem is false, either there was no failedStagingOtherLabel()
+                // or the problem happened before we could check for it. In the latter case,
+                // that label will remain set, and we will add failedOtherLabel(), reflecting the
+                // compound nature of the problem.
+                this._labels.add(Config.failedOtherLabel());
+            }
             throw e;
         } finally {
             await this._pushLabelsToGitHub();
         }
     }
 
-    // remove intermediate step labels that may be set by us
-    _removeTemporaryLabelsSetByAnubis() {
-        // set by humans: Config.clearedForMergeLabel();
-        // set by humans: Config.failedStagingChecksLabel();
+    // Remove all labels that satisfy both criteria:
+    // * We set it. Some labels are only set by humans. A label X qualifies if
+    //   there is a labels.add(X) call somewhere.
+    // * We remove it. Some labels are only removed by humans. Some labels are
+    //   not meant to be removed at all! It is impossible to test this
+    //   criterion by searching Anubis code because some labels are only
+    //   removed by this method. Consult Anubis documentation instead.
+    // TODO: Add these properties to labels and iterate over all labels here.
+    _removeTemporaryLabels() {
+        // Config.clearedForMergeLabel() can only be set by a human
+        // Config.failedStagingChecksLabel() can only be removed by a human
+        // Config.failedStagingOtherLabel() can only be removed by a human
         this._labels.remove(Config.failedDescriptionLabel());
         this._labels.remove(Config.failedOtherLabel());
         this._labels.remove(Config.passedStagingChecksLabel());
         this._labels.remove(Config.waitingStagingChecksLabel());
         this._labels.remove(Config.abandonedStagingChecksLabel());
-        // final (set after the PR is merged): Config.mergedLabel()
+        // Config.mergedLabel() is not meant to be removed by anybody
     }
 
     // remove labels that have no sense for a failed staged PR
