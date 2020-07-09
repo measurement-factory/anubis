@@ -529,6 +529,9 @@ class PullRequest {
         // Reviews are returned in chronological order; the list may contain several
         // reviews from the same reviewer, so the actual 'state' is the most recent one.
         for (let review of reviews) {
+            if (!pushCollaborators.find(el => el.login === review.user.login))
+                continue;
+
             const reviewState = review.state.toLowerCase();
             if (reviewState === 'commented')
                 continue;
