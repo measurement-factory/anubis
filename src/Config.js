@@ -32,6 +32,7 @@ class ConfigOptions {
         this._stagingChecks = conf.staging_checks;
         this._loggerParams = conf.logger_params;
         this._approvalUrl = conf.approval_url;
+        this._automatedMergeUrl = conf.automated_merge_url;
 
         // unused
         this._githubUserNoreplyEmail = null;
@@ -112,6 +113,15 @@ class ConfigOptions {
     approvalContext() { return "PR approval"; }
 
     copiedDescriptionSuffix() { return " (copied from PR by Anubis)"; }
+
+    // an URL of the description of the automated merge test status
+    automatedMergeStatusUrl() { return this._automatedMergeUrl; }
+
+    // the 'context name' of the automated merge test status
+    automatedMergeStatusContext() { return "Merge automatically"; }
+
+    // whether the bot will create the automated merge test statuses for PR and staged commit
+    manageAutomatedMergeStatus() { return this.automatedMergeStatusUrl().length > 0; }
 }
 
 const configFile = process.argv.length > 2 ? process.argv[2] : './config.json';

@@ -298,6 +298,7 @@ All configuration fields are required.
 *voting_delay_max* | The maximum merging age of a PR that has fewer than `config::sufficient_approvals` votes. The PR age string should comply with [timestring](https://github.com/mike182uk/timestring) parser. | "10d"
 *staging_checks*| The expected number of CI tests executed against the staging branch. | 2
 *approval_url*| The URL associated with an approval status test description. | ""
+*automated_merge_url*| The URL associated with an automated merge status test description. | ""
 *logger_params* | A JSON-formatted parameter list for the [Bunyan](https://github.com/trentm/node-bunyan) logging library [constructor](https://github.com/trentm/node-bunyan#constructor-api). | <pre>{<br>    "name": "anubis",<br>    "streams": [ ... ]<br>}</pre>
 
 TODO: Merge all three "mutually exclusive" boolean `*_run` options into one `run_mode` option accepting on of four mode names, including "production". Document individual string values in a separate table (here).
