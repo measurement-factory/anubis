@@ -224,6 +224,7 @@ class StatusChecks
         return this._requiredStatuses.filter(st => st.context !== Config.automatedMergeStatusContext());
     }
 
+    // the 'expected status count' except the 'automated merge test' status
     expectedStatusCount() {
         const hasAutomated = this._requiredStatuses.some(el => el.context.trim() === Config.automatedMergeStatusContext());
         return hasAutomated ? this._expectedStatusCount - 1 : this._expectedStatusCount;
@@ -658,7 +659,7 @@ class PullRequest {
         if (this._dryRun("creating automated merge status"))
             return;
         await GH.createStatus(sha, state, Config.automatedMergeStatusUrl(),
-                this._automatedStatusDescription(), Config.automatedMergeStatusContext());
+                this._automatedMergeStatusDescription(), Config.automatedMergeStatusContext());
     }
 
     _automatedMergeStatusDescription() { return this._prState.toString(); }
