@@ -114,11 +114,12 @@ failed PR if/as needed (see below for PR labels).
 
 ## Automated merge status
 
-The bot adds this status automatically to PR and staging commit, which is
-marked as "required" on GitHub. During PR lifecycle it is "pending",
-preventing the manual merge button on the GitHub PR page from becoming
-green and thus allowing manual merge. Anubis satisfies this check just
-before merging for the staging commit and just after merging for PR.
+The bot adds this required status automatically to PR and staging commit.
+During PR lifecycle the status is "pending", thus preventing the manual
+merge button on the GitHub PR page from becoming green. Anubis uses this
+mechanism to forbid manual merges, which result in wrong commit messages
+and missed staging checks. The bot satisfies this check just before
+merging (for the staging commit) and just after merging (for PR).
 
 ## Pull request labels
 
