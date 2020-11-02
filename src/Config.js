@@ -118,7 +118,7 @@ class ConfigOptions {
     automatedMergeStatusUrl() { return this._automatedMergeUrl; }
 
     // the 'context name' of the automated merge test status
-    automatedMergeStatusContext() { return "Merge automatically"; }
+    automatedMergeStatusContext() { return "Automated merge"; }
 
     // whether the bot will create the automated merge test statuses for PR and staged commit
     manageAutomatedMergeStatus() { return this.automatedMergeStatusUrl().length > 0; }

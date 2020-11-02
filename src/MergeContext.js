@@ -203,9 +203,9 @@ class StatusChecks
 
     hasAutomatedMergeStatus(state, description) {
         return this._requiredStatuses.some(el =>
-                el.context.trim() === Config.automatedMergeStatusContext() &&
+                el.description === description &&
                 el.state === state &&
-                el.description === description);
+                el.context.trim() === Config.automatedMergeStatusContext());
     }
 
     setAutomatedMergeStatus(state, description) {
@@ -349,6 +349,10 @@ class Labels
         const label = this._find(name);
         return label && label.present();
     }
+
+    getFailed() { return this._labels.find(label => label.name.startsWith('M-failed')); }
+
+    getWaiting() { return this._labels.find(label => label.name.startsWith('M-waiting') || label.name.startsWith('M-passed')); }
 
     // brings GitHub labels in sync with ours
     async pushToGitHub() {
@@ -632,37 +636,65 @@ class PullRequest {
     async _setAutomatedMergeStatuses() {
         if (!Config.manageAutomatedMergeStatus())
             return;
+        if (!this._prStatuses)
+            return;
 
-        const state = this._prState.merged() ? "success" : "pending";
-        const description = this._automatedMergeStatusDescription();
+        const details = this._automatedMergeStatusDetails();
 
-        if (!this._prStatuses.hasAutomatedMergeStatus(state, description)) {
-            await this._createAutomatedMergeStatus(this._prHeadSha(), state);
-            this._prStatuses.setAutomatedMergeStatus(state, description);
+        if (!this._prStatuses.hasAutomatedMergeStatus(details.state, details.description)) {
+            await this._createAutomatedMergeStatus(this._prHeadSha(), details);
+            this._prStatuses.setAutomatedMergeStatus(details.state, details.description);
         }
 
-        await this._setAutomatedMergeStatusForStaged(state);
+        await this._setAutomatedMergeStatusForStaged(details);
     }
 
-    async _setAutomatedMergeStatusForStaged(state) {
-        const description = this._automatedMergeStatusDescription();
+    async _setAutomatedMergeStatusForStagedSuccess() {
+        const sha = this._stagedShaBrief();
+        assert(sha);
+        let description = '(will be merged as ' + sha + ')';
+        await this._setAutomatedMergeStatusForStaged({state: 'success', description: description});
+    }
+
+    async _setAutomatedMergeStatusForStaged(details) {
         if (!Config.manageAutomatedMergeStatus())
             return;
 
-        if (this._stagedStatuses && !this._stagedStatuses.hasAutomatedMergeStatus(state, description)) {
-            await this._createAutomatedMergeStatus(this._stagedSha(), state);
-            this._stagedStatuses.setAutomatedMergeStatus(state, description);
+        if (this._stagedStatuses && !this._stagedStatuses.hasAutomatedMergeStatus(details.state, details.description)) {
+            await this._createAutomatedMergeStatus(this._stagedSha(), details);
+            this._stagedStatuses.setAutomatedMergeStatus(details.state, details.description);
         }
     }
 
-    async _createAutomatedMergeStatus(sha, state) {
+    async _createAutomatedMergeStatus(sha, details) {
         if (this._dryRun("creating automated merge status"))
             return;
-        await GH.createStatus(sha, state, Config.automatedMergeStatusUrl(),
-                this._automatedMergeStatusDescription(), Config.automatedMergeStatusContext());
+        await GH.createStatus(sha, details.state, Config.automatedMergeStatusUrl(),
+                details.description, Config.automatedMergeStatusContext());
     }
 
-    _automatedMergeStatusDescription() { return this._prState.toString(); }
+    _automatedMergeStatusDetails() {
+        let state = null;
+        let label = this._labels.getFailed();
+        if (label) {
+            state = "failure";
+        } else if (this._prState.merged()) {
+            state = "success";
+            assert(this._labels.has(Config.mergedLabel()));
+            label = Config.mergedLabel();
+        } else {
+            state = "pending";
+            label = this._labels.getWaiting();
+            // assert(label);
+        }
+
+        let desc = '(' + label.name;
+        if (this._stagedShaBrief())
+            desc += ' for ' + this._stagedShaBrief();
+        desc += ')';
+
+        return {state: state, description: desc};
+    }
 
     async _getRequiredContexts() {
         if (this._requiredContextsCache)
@@ -950,10 +982,14 @@ class PullRequest {
 
     _stagedSha() { return this._stagedCommit ? this._stagedCommit.sha : null; }
 
+    _stagedShaBrief() { return this._stagedSha() ? this._stagedSha().substr(0, this._shaLimit) : ""; }
+
     staged() { return this._prState.staged(); }
 
     _debugString() {
-        const staged = this._stagedSha() ? "staged: " + this._stagedSha().substr(0, this._shaLimit) + ' ' : "";
+        let staged = this._stagedShaBrief();
+        if (staged)
+            staged += ' ';
         const detail =
             "head: " + this._rawPr.head.sha.substr(0, this._shaLimit) + ' ' + staged +
             "history: " + this._breadcrumbs.join();
@@ -1237,7 +1273,7 @@ class PullRequest {
 
         assert(!this._stagingBanned);
 
-        await this._setAutomatedMergeStatusForStaged("success");
+        await this._setAutomatedMergeStatusForStagedSuccess();
 
         try {
             await GH.updateReference(this._prBaseBranchPath(), this._stagedSha(), false);
@@ -1405,6 +1441,7 @@ class PullRequest {
             throw e;
         } finally {
             await this._pushLabelsToGitHub();
+            await this._setAutomatedMergeStatuses();
         }
     }
 
