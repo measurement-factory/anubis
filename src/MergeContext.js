@@ -201,22 +201,16 @@ class StatusChecks
         this.addRequiredStatus(new StatusCheck(raw));
     }
 
-    hasAutomatedMergeStatus(state, description) {
+    hasAutomatedMergeStatus(check) {
         return this._requiredStatuses.some(el =>
-                el.description === description &&
-                el.state === state &&
-                el.context.trim() === Config.automatedMergeStatusContext());
+                el.description === check.description &&
+                el.state === check.state &&
+                el.context.trim() === check.context.trim());
     }
 
-    setAutomatedMergeStatus(state, description) {
-        this._requiredStatuses = this._requiredStatuses.filter(st => st.context !== Config.automatedMergeStatusContext());
-        let raw = {
-            state: state,
-            target_url: Config.automatedMergeStatusUrl(),
-            description: description,
-            context: Config.automatedMergeStatusContext()
-        };
-        this.addRequiredStatus(new StatusCheck(raw));
+    setAutomatedMergeStatus(check) {
+        this._requiredStatuses = this._requiredStatuses.filter(st => st.context !== check.context);
+        this.addRequiredStatus(check);
     }
 
     // all required statuses except the 'automated merge test' status
@@ -352,7 +346,7 @@ class Labels
 
     getFailed() { return this._labels.find(label => label.name.startsWith('M-failed')); }
 
-    getWaiting() { return this._labels.find(label => label.name.startsWith('M-waiting') || label.name.startsWith('M-passed')); }
+    getWaiting() { return this._labels.find(label => label.name.startsWith('M-waiting')); }
 
     // brings GitHub labels in sync with ours
     async pushToGitHub() {
@@ -503,6 +497,9 @@ class PullRequest {
         // this PR staged commit received from GitHub, if any
         this._stagedCommit = null;
 
+        // whether _stagedCommit exists and is fresh
+        this._stagedCommitFreshness = null;
+
         // major methods we have called, in the call order (for debugging only)
         this._breadcrumbs = [];
 
@@ -525,6 +522,9 @@ class PullRequest {
 
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
         this._labelPushBan = false;
+
+        // an PR processing error message, if any
+        this._problemMessage = null;
     }
 
     // this PR will need to be reprocessed in this many milliseconds
@@ -639,61 +639,105 @@ class PullRequest {
         if (!this._prStatuses)
             return;
 
-        const details = this._automatedMergeStatusDetails();
+        const check = this._getAutomatedMergeCheck();
 
-        if (!this._prStatuses.hasAutomatedMergeStatus(details.state, details.description)) {
-            await this._createAutomatedMergeStatus(this._prHeadSha(), details);
-            this._prStatuses.setAutomatedMergeStatus(details.state, details.description);
+        if (!this._prStatuses.hasAutomatedMergeStatus(check)) {
+            await this._applyAutomatedMergeStatus(this._prHeadSha(), check);
+            this._prStatuses.setAutomatedMergeStatus(check);
         }
 
-        await this._setAutomatedMergeStatusForStaged(details);
+        await this._setAutomatedMergeStatusForStaged(check);
     }
 
     async _setAutomatedMergeStatusForStagedSuccess() {
-        const sha = this._stagedShaBrief();
-        assert(sha);
-        let description = '(will be merged as ' + sha + ')';
-        await this._setAutomatedMergeStatusForStaged({state: 'success', description: description});
+        const description = 'will be merged as';
+        const check = this._createAutomatedStatusCheck("success", description);
+        await this._setAutomatedMergeStatusForStaged(check);
     }
 
-    async _setAutomatedMergeStatusForStaged(details) {
+    async _setAutomatedMergeStatusForStaged(check) {
         if (!Config.manageAutomatedMergeStatus())
             return;
 
-        if (this._stagedStatuses && !this._stagedStatuses.hasAutomatedMergeStatus(details.state, details.description)) {
-            await this._createAutomatedMergeStatus(this._stagedSha(), details);
-            this._stagedStatuses.setAutomatedMergeStatus(details.state, details.description);
+        if (this._stagedStatuses && !this._stagedStatuses.hasAutomatedMergeStatus(check)) {
+            await this._applyAutomatedMergeStatus(this._stagedSha(), check);
+            this._stagedStatuses.setAutomatedMergeStatus(check);
         }
     }
 
-    async _createAutomatedMergeStatus(sha, details) {
+    async _applyAutomatedMergeStatus(sha, check) {
         if (this._dryRun("creating automated merge status"))
             return;
-        await GH.createStatus(sha, details.state, Config.automatedMergeStatusUrl(),
-                details.description, Config.automatedMergeStatusContext());
+        await GH.createStatus(sha, check.state, check.target_url, check.description, check.context);
     }
 
-    _automatedMergeStatusDetails() {
-        let state = null;
-        let label = this._labels.getFailed();
-        if (label) {
-            state = "failure";
-        } else if (this._prState.merged()) {
-            state = "success";
-            assert(this._labels.has(Config.mergedLabel()));
-            label = Config.mergedLabel();
-        } else {
-            state = "pending";
-            label = this._labels.getWaiting();
-            // assert(label);
-        }
-
-        let desc = '(' + label.name;
-        if (this._stagedShaBrief())
+    _createAutomatedStatusCheck(state, description) {
+        let desc = '(' + description;
+        if (this._stagedCommitFreshness && this._stagedShaBrief())
             desc += ' for ' + this._stagedShaBrief();
         desc += ')';
+        let raw = {
+            state: state,
+            target_url: Config.automatedMergeStatusUrl(),
+            description: desc,
+            context: Config.automatedMergeStatusContext()
+        };
+        return new StatusCheck(raw);
+    }
 
-        return {state: state, description: desc};
+    _getAutomatedMergeFailedCheck() {
+        const label = this._labels.getFailed();
+        if (label)
+            return this._createAutomatedStatusCheck("failure", label.name);
+        return null;
+    }
+
+    _getAutomatedMergeSuccessCheck() {
+        if (!this._prState.merged())
+            return null;
+        assert(this._labels.has(Config.mergedLabel()));
+        return this._createAutomatedStatusCheck("success", Config.mergedLabel());
+    }
+
+    _automatedMergeCheckProblem() {
+        if (this._problemMessage && !this._problemMessage.startsWith('waiting'))
+            return 'because ' + this._problemMessage;
+        return this._problemMessage;
+    }
+
+    _getAutomatedMergePendingCheck() {
+        // assert(state != success && state != failure)
+        const state = "pending";
+        let label = this._labels.getWaiting();
+        if (label)
+            return this._createAutomatedStatusCheck(state, label.name);
+
+        let problem = this._automatedMergeCheckProblem();
+        if (this._prState.brewing() && problem) {
+            // these are problem messages generated in _checkStagingPreconditions()
+            return this._createAutomatedStatusCheck(state, problem);
+        }
+
+        if (this._guardedRunActive())
+            return this._createAutomatedStatusCheck(state, "waiting for " + Config.clearedForMergeLabel());
+
+        // we get here, e.g., 'staged_run' is enabled
+        assert(this._prState.staged() && problem);
+        return this._createAutomatedStatusCheck(state, problem);
+    }
+
+    _getAutomatedMergeCheck() {
+        let statusCheck = this._getAutomatedMergeFailedCheck();
+        if (statusCheck)
+            return statusCheck;
+
+        statusCheck = this._getAutomatedMergeSuccessCheck();
+        if (statusCheck)
+            return statusCheck;
+
+        statusCheck = this._getAutomatedMergePendingCheck();
+        assert(statusCheck);
+        return statusCheck;
     }
 
     async _getRequiredContexts() {
@@ -769,10 +813,12 @@ class PullRequest {
             // whether the PR branch has not changed
             if (this._stagedCommit.tree.sha === prCommit.tree.sha) {
                 this._log("the staged commit is fresh");
+                this._stagedCommitFreshness = true;
                 return true;
             }
         }
         this._log("the staged commit is stale");
+        this._stagedCommitFreshness = false;
         return false;
     }
 
@@ -862,8 +908,6 @@ class PullRequest {
 
         assert(!this._prState.merged());
 
-        await this._setAutomatedMergeStatuses();
-
         this._messageValid = this._prMessageValid();
         this._log("messageValid: " + this._messageValid);
 
@@ -892,8 +936,6 @@ class PullRequest {
         this._breadcrumbs.push("finalize");
 
         assert(this._prState.merged());
-
-        await this._setAutomatedMergeStatuses();
 
         // Clear any positive labels (there should be no negatives here)
         // because Config.mergedLabel() set below already implies that all
@@ -982,7 +1024,7 @@ class PullRequest {
 
     _stagedSha() { return this._stagedCommit ? this._stagedCommit.sha : null; }
 
-    _stagedShaBrief() { return this._stagedSha() ? this._stagedSha().substr(0, this._shaLimit) : ""; }
+    _stagedShaBrief() { return this._stagedSha() ? this._stagedSha().substr(0, this._shaLimit) : null; }
 
     staged() { return this._prState.staged(); }
 
@@ -1183,6 +1225,10 @@ class PullRequest {
                 this._log("_supplyStagingWithPrRequired: skip existing " + requiredContext);
                 continue;
             }
+
+            if (requiredContext === Config.automatedMergeStatusContext())
+                continue;
+
             const requiredPrStatus = this._prStatuses.requiredStatuses().find(el => el.context.trim() === requiredContext.trim());
             assert(requiredPrStatus);
             assert(!requiredPrStatus.description.endsWith(Config.copiedDescriptionSuffix()));
@@ -1204,6 +1250,8 @@ class PullRequest {
         }
     }
 
+    _guardedRunActive() { return Config.guardedRun() && !this._labels.has(Config.clearedForMergeLabel()); }
+
     // whether target branch changes are prohibited
     _stagingOnly() {
         // TODO: The caller should not have to remember to call _dryRun() first
@@ -1216,12 +1264,11 @@ class PullRequest {
         }
 
         if (Config.guardedRun()) {
-            if (this._labels.has(Config.clearedForMergeLabel())) {
-                this._log("allow " + msg + " due to " + Config.clearedForMergeLabel() + " overruling guarded_run option");
-                return false;
+            if (this._guardedRunActive()) {
+                this._log("skip " + msg + " due to guarded_run option");
+                return true;
             }
-            this._log("skip " + msg + " due to guarded_run option");
-            return true;
+            this._log("allow " + msg + " due to " + Config.clearedForMergeLabel() + " overruling guarded_run option");
         }
 
         return false; // no staging-only mode by default
@@ -1317,6 +1364,7 @@ class PullRequest {
             throw this._exObviousFailure("dryRun");
 
         this._stagedCommit = await GH.createCommit(mergeCommit.tree.sha, this._prMessage(), [baseSha], mergeCommit.author, committer);
+        this._stagedCommitFreshness = true;
 
         assert(!this._stagingBanned);
         await GH.updateReference(Config.stagingBranchPath(), this._stagedSha(), true);
@@ -1403,10 +1451,12 @@ class PullRequest {
         } catch (e) {
             const knownProblem = e instanceof PrProblem;
 
-            if (knownProblem)
+            if (knownProblem) {
                 this._log("did not merge: " + e.message);
-            else
+                this._problemMessage = e.message;
+            } else {
                 this._logEx(e, "process() failure");
+            }
 
             const suspended = knownProblem && e.keepStagedRequested(); // whether _exSuspend() occured
 
