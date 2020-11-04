@@ -497,9 +497,6 @@ class PullRequest {
         // this PR staged commit received from GitHub, if any
         this._stagedCommit = null;
 
-        // whether _stagedCommit exists and is fresh
-        this._stagedCommitFreshness = null;
-
         // major methods we have called, in the call order (for debugging only)
         this._breadcrumbs = [];
 
@@ -650,7 +647,8 @@ class PullRequest {
     }
 
     async _setAutomatedMergeStatusForStagedSuccess() {
-        const description = 'will be merged as';
+        assert(this._stagedShaBrief());
+        const description = 'will be merged as ' + this._stagedShaBrief();
         const check = this._createAutomatedStatusCheck("success", description);
         await this._setAutomatedMergeStatusForStaged(check);
     }
@@ -672,10 +670,7 @@ class PullRequest {
     }
 
     _createAutomatedStatusCheck(state, description) {
-        let desc = '(' + description;
-        if (this._stagedCommitFreshness && this._stagedShaBrief())
-            desc += ' for ' + this._stagedShaBrief();
-        desc += ')';
+        let desc = '(' + description + ')';
         let raw = {
             state: state,
             target_url: Config.automatedMergeStatusUrl(),
@@ -709,8 +704,14 @@ class PullRequest {
         // assert(state != success && state != failure)
         const state = "pending";
         let label = this._labels.getWaiting();
-        if (label)
-            return this._createAutomatedStatusCheck(state, label.name);
+        if (label) {
+            let desc = label.name;
+            if (label.name === Config.waitingStagingChecksLabel()) {
+                assert(this._stagedShaBrief());
+                desc += ' for ' + this._stagedShaBrief();
+            }
+            return this._createAutomatedStatusCheck(state, desc);
+        }
 
         let problem = this._automatedMergeCheckProblem();
         if (this._prState.brewing() && problem) {
@@ -813,12 +814,10 @@ class PullRequest {
             // whether the PR branch has not changed
             if (this._stagedCommit.tree.sha === prCommit.tree.sha) {
                 this._log("the staged commit is fresh");
-                this._stagedCommitFreshness = true;
                 return true;
             }
         }
         this._log("the staged commit is stale");
-        this._stagedCommitFreshness = false;
         return false;
     }
 
@@ -1364,7 +1363,6 @@ class PullRequest {
             throw this._exObviousFailure("dryRun");
 
         this._stagedCommit = await GH.createCommit(mergeCommit.tree.sha, this._prMessage(), [baseSha], mergeCommit.author, committer);
-        this._stagedCommitFreshness = true;
 
         assert(!this._stagingBanned);
         await GH.updateReference(Config.stagingBranchPath(), this._stagedSha(), true);
