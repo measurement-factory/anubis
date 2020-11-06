@@ -218,7 +218,7 @@ class StatusChecks
         return this._requiredStatuses.filter(st => st.context !== Config.automatedMergeStatusContext());
     }
 
-    // the 'expected status count' except the 'automated merge test' status
+    // the number of expected statuses excluding the 'automated merge test' status (if any)
     expectedStatusCount() {
         const hasAutomated = this._requiredStatuses.some(el => el.context.trim() === Config.automatedMergeStatusContext());
         return hasAutomated ? this._expectedStatusCount - 1 : this._expectedStatusCount;
@@ -670,6 +670,8 @@ class PullRequest {
     }
 
     _createAutomatedStatusCheck(state, description) {
+        assert(state);
+        assert(description);
         let desc = '(' + description + ')';
         let raw = {
             state: state,
@@ -678,6 +680,12 @@ class PullRequest {
             context: Config.automatedMergeStatusContext()
         };
         return new StatusCheck(raw);
+    }
+
+    _automatedMergeCheckProblem() {
+        if (this._problemMessage && !this._problemMessage.startsWith('waiting'))
+            return 'because ' + this._problemMessage;
+        return this._problemMessage;
     }
 
     _getAutomatedMergeFailedCheck() {
@@ -692,12 +700,6 @@ class PullRequest {
             return null;
         assert(this._labels.has(Config.mergedLabel()));
         return this._createAutomatedStatusCheck("success", Config.mergedLabel());
-    }
-
-    _automatedMergeCheckProblem() {
-        if (this._problemMessage && !this._problemMessage.startsWith('waiting'))
-            return 'because ' + this._problemMessage;
-        return this._problemMessage;
     }
 
     _getAutomatedMergePendingCheck() {
@@ -723,7 +725,7 @@ class PullRequest {
             return this._createAutomatedStatusCheck(state, "waiting for " + Config.clearedForMergeLabel());
 
         // we get here, e.g., 'staged_run' is enabled
-        assert(this._prState.staged() && problem);
+        assert(this._prState.staged());
         return this._createAutomatedStatusCheck(state, problem);
     }
 
@@ -1028,9 +1030,8 @@ class PullRequest {
     staged() { return this._prState.staged(); }
 
     _debugString() {
-        let staged = this._stagedShaBrief();
-        if (staged)
-            staged += ' ';
+        const sha = this._stagedShaBrief();
+        const staged = sha ? "staged: " + sha + ' ' : "";
         const detail =
             "head: " + this._rawPr.head.sha.substr(0, this._shaLimit) + ' ' + staged +
             "history: " + this._breadcrumbs.join();
