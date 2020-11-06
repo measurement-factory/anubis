@@ -36,10 +36,10 @@ are satisfied:
   text displayed by GitHub for these so called "mergeable" PRs varies
   depending on whether the changes are approved and whether the PR
   branch is out of date with its target branch.
-* All the _required_ checks have succeeded on the PR branch:
-  * If _all_ checks have succeeded, then GitHub says "All checks have
-    passed" next to a green check mark:
-    ![](./docs/images/all_passed.png)
+* All the _required_ checks have succeeded on the PR branch.
+  * _all_ checks, except for the special-purpose "automated merge status"
+    test (see below) have succeeded:
+    ![](./docs/images/merge_automatically_status.png)
   * If any _optional_ checks have failed, then GitHub will show "Some
     checks were not successful" message:
     ![](./docs/images/required_passed.png)
@@ -112,6 +112,14 @@ If a PR processing step fails for PR-specific reasons (e.g., a CI test
 failure), then the bot moves on to the next pull request, labeling the
 failed PR if/as needed (see below for PR labels).
 
+## Automated merge status
+
+The bot adds this required status automatically to PR and staging commit.
+During PR lifecycle the status is "pending", thus preventing the manual
+merge button on the GitHub PR page from becoming green. Anubis uses this
+mechanism to forbid manual merges, which result in wrong commit messages
+and missed staging checks. The bot satisfies this check just before
+merging (for the staging commit) and just after merging (for PR).
 
 ## Pull request labels
 
@@ -298,6 +306,7 @@ All configuration fields are required.
 *voting_delay_max* | The maximum merging age of a PR that has fewer than `config::sufficient_approvals` votes. The PR age string should comply with [timestring](https://github.com/mike182uk/timestring) parser. | "10d"
 *staging_checks*| The expected number of CI tests executed against the staging branch. | 2
 *approval_url*| The URL associated with an approval status test description. | ""
+*automated_merge_url*| The URL associated with an automated merge status test description. | ""
 *logger_params* | A JSON-formatted parameter list for the [Bunyan](https://github.com/trentm/node-bunyan) logging library [constructor](https://github.com/trentm/node-bunyan#constructor-api). | <pre>{<br>    "name": "anubis",<br>    "streams": [ ... ]<br>}</pre>
 
 TODO: Merge all three "mutually exclusive" boolean `*_run` options into one `run_mode` option accepting on of four mode names, including "production". Document individual string values in a separate table (here).
