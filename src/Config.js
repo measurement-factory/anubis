@@ -112,6 +112,10 @@ class ConfigOptions {
     approvalContext() { return "PR approval"; }
 
     copiedDescriptionSuffix() { return " (copied from PR by Anubis)"; }
+
+    // GitHub transaction timeout, ms
+    // GitHub library default is 0 which is interpreted as infinity (i.e. no timeout)
+    requestTimeout() { return 3 * 60000; }
 }
 
 const configFile = process.argv.length > 2 ? process.argv[2] : './config.json';
