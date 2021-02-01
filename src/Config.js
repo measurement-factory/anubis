@@ -112,6 +112,9 @@ class ConfigOptions {
     approvalContext() { return "PR approval"; }
 
     copiedDescriptionSuffix() { return " (copied from PR by Anubis)"; }
+
+    // GitHub request timeout, ms
+    requestTimeout() { return 60000; }
 }
 
 const configFile = process.argv.length > 2 ? process.argv[2] : './config.json';

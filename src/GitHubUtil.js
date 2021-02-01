@@ -1,9 +1,10 @@
 const assert = require('assert');
+const Config = require('./Config.js');
 const GitHub = require('@octokit/rest')({
+    timeout: Config.requestTimeout(),
     host: 'api.github.com',
     version: '3.0.0'
 });
-const Config = require('./Config.js');
 const Util = require('./Util.js');
 const Log = require('./Logger.js');
 
