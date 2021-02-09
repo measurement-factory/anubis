@@ -1051,6 +1051,9 @@ class PullRequest {
         if (this._stagedStatuses.failed())
             throw this._exLabeledFailure("staging tests failed", Config.failedStagingChecksLabel());
 
+        // remove a stale label, if any
+        this._labels.remove(Config.failedStagingChecksLabel());
+
         if (!this._stagedStatuses.final()) {
             this._labels.add(Config.waitingStagingChecksLabel());
             throw this._exSuspend("waiting for staging tests completion");
@@ -1149,10 +1152,6 @@ class PullRequest {
             throw this._exSuspend("waiting for PR branch tests that appeared after staging");
 
         assert(this._prStatuses.succeeded());
-
-        // All statuses are OK now, but they could be failed before (for the same staged commit).
-        // In this case, we should remove the (no longer actual) label.
-        this._labels.remove(Config.failedStagingChecksLabel());
 
         await this._processStagingStatuses();
     }
