@@ -150,11 +150,11 @@ request state:
   after creating a fresh staging commit for the PR.
 * `M-failed-staging-checks`: Essentially duplicates GitHub "red x" mark
   for the _staging commit_. The bot does not attempt to merge this PR
-  again until either of two conditions:
+  again until at least one of the following events happens:
   * A human decides that this problem is resolved and removes the label
-  manually.
-  * This staging commit checks restart and succeed. In this case
-  Anubis proceeds with the PR, removing the label.
+    manually.
+  * The failed checks for the staging commit are restarted or removed.
+  * The staging commit becomes stale. See `M-abandoned-staging-checks`.
 * `M-failed-staging-other`: A fatal PR-specific error that occurred while
   waiting for staging checks but was not classified as
   `M-failed-staging-checks`. It is probably necessary to consult CI logs to
