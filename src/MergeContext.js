@@ -1336,8 +1336,8 @@ class PullRequest {
     }
 
     // Remove all labels that satisfy both criteria:
-    // * We set it. This exclude labels that are only set by humans. A label X
-    //   qualifies if there is a labels.add(X) call somewhere.
+    // * We set it. This excludes labels that are only set by humans. A label
+    //   X qualifies if there is a labels.add(X) call somewhere.
     // * We remove it. This includes labels that are also removed by humans.
     //   This excludes labels that are only removed by humans and labels that
     //   are not meant to be removed at all. It is impossible to test this
