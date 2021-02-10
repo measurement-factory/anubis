@@ -1336,21 +1336,22 @@ class PullRequest {
     }
 
     // Remove all labels that satisfy both criteria:
-    // * We set it. Some labels are only set by humans. A label X qualifies if
-    //   there is a labels.add(X) call somewhere.
-    // * We remove it. Some labels are only removed by humans. Some labels are
-    //   not meant to be removed at all! It is impossible to test this
+    // * We set it. This excludes labels that are only set by humans. A label
+    //   X qualifies if there is a labels.add(X) call somewhere.
+    // * We remove it. This includes labels that are also removed by humans.
+    //   This excludes labels that are only removed by humans and labels that
+    //   are not meant to be removed at all. It is impossible to test this
     //   criterion by searching Anubis code because some labels are only
     //   removed by this method. Consult Anubis documentation instead.
     // TODO: Add these properties to labels and iterate over all labels here.
     _removeTemporaryLabels() {
         // Config.clearedForMergeLabel() can only be set by a human
-        // Config.failedStagingChecksLabel() can only be removed by a human
         // Config.failedStagingOtherLabel() can only be removed by a human
         this._labels.remove(Config.failedDescriptionLabel());
         this._labels.remove(Config.failedOtherLabel());
         this._labels.remove(Config.passedStagingChecksLabel());
         this._labels.remove(Config.waitingStagingChecksLabel());
+        this._labels.remove(Config.failedStagingChecksLabel());
         this._labels.remove(Config.abandonedStagingChecksLabel());
         // Config.mergedLabel() is not meant to be removed by anybody
     }
