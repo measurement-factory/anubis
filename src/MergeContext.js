@@ -937,20 +937,7 @@ class PullRequest {
     /// Checks whether the PR base branch has this PR's staged commit merged.
     async _mergedSomeTimeAgo() {
         const dateSince = this._dateForDaysAgo(100);
-        let commits = null;
-
-        if (this._prBaseBranch() === this._defaultRepoBranch()) {
-            // Optimization: GitHub can search the default repository branch (which is usually master)
-            // by commit message substring
-            const query = 'repo:' + Config.owner() + "/" + Config.repo() +
-                '+ (#' + this._prNumber() + ')' +
-                '+author:' + this._prAuthor() +
-                '+committer-date:>' + dateSince;
-            commits = await GH.searchCommits(query); // searches the default branch
-        } else {
-            commits = await GH.getCommits(this._prBaseBranch(), dateSince, this._prAuthor()); // searches any branch
-        }
-
+        let commits = await GH.getCommits(this._prBaseBranch(), dateSince, this._prAuthor());
         let mergedSha = null;
         for (let commit of commits) {
             const num = Util.ParsePrNumber(commit.commit.message);
