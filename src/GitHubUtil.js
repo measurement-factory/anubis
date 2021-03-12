@@ -218,6 +218,7 @@ function getCommits(branch, since, author) {
     let params = commonParams();
     params.sha = branch; // sha or branch to start listing commits from
     params.since = since;
+    params.author = author;
     return new Promise( (resolve, reject) => {
         GitHub.authenticate(GitHubAuthentication);
         GitHub.repos.getCommits(params, async (err, res) => {
