@@ -937,8 +937,8 @@ class PullRequest {
     /// Checks whether the PR base branch has this PR's staged commit merged.
     async _mergedSomeTimeAgo() {
         const dateSince = this._dateForDaysAgo(100);
-        let commits = await GH.getCommits(this._prBaseBranch(), dateSince, this._prAuthor());
         let mergedSha = null;
+        let commits = await GH.getCommits(this._prBaseBranch(), dateSince, this._prAuthor());
         for (let commit of commits) {
             const num = Util.ParsePrNumber(commit.commit.message);
             if (num && num === this._prNumber().toString()) {
