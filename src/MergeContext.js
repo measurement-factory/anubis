@@ -491,6 +491,10 @@ class PullRequest {
 
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
         this._labelPushBan = false;
+
+        // whether this PR has or had a staged commit with failed checks
+        // it is meaningful only when _stagedStatuses is nil
+        this._stagingFailedSomeTimeAgo = false;
     }
 
     // this PR will need to be reprocessed in this many milliseconds
@@ -695,6 +699,7 @@ class PullRequest {
         let labels = await GH.getLabels(this._prNumber());
         assert(!this._labels);
         this._labels = new Labels(labels, this._prNumber());
+        this._stagingFailedSomeTimeAgo = this._labels.has(Config.failedStagingChecksLabel());
     }
 
     // stop processing if it is prohibited by a human-controlled label
@@ -724,8 +729,8 @@ class PullRequest {
         // already checked in _checkForHumanLabels()
         assert(!this._labels.has(Config.failedStagingOtherLabel()));
 
-        if (this._labels.has(Config.failedStagingChecksLabel()))
-            throw this._exObviousFailure("staged commit tests failed");
+        if (this._stagedStatusesFailed())
+            throw this._exLabeledFailure("staged commit tests failed", Config.failedStagingChecksLabel());
 
         if (this._wipPr())
             throw this._exObviousFailure("work-in-progress");
@@ -954,8 +959,18 @@ class PullRequest {
         return false;
     }
 
+    /// whether this PR has or had a staged commit with failed checks
+    _stagedStatusesFailed() {
+        return this._stagedStatuses === null ?
+            this._stagingFailedSomeTimeAgo : this._stagedStatuses.failed();
+    }
+
     async _loadPrState() {
+
         if (!this._stagedSha()) {
+            // Leave this._stagingFailedSomeTimeAgo intact here,
+            // because cleaning it up could cause a livelocking
+            // between two PRs with broken staging checks.
             if (await this._mergedSomeTimeAgo())
                 this._enterMerged();
             else
@@ -967,12 +982,16 @@ class PullRequest {
 
         if (this._stagedPosition.merged()) {
             this._log("already merged into base some time ago");
+            // just in case - it should be false here
+            this._stagingFailedSomeTimeAgo = false;
             this._enterMerged();
             return;
         }
 
         if (!(await this._stagedCommitIsFresh())) {
             await this._labels.addImmediately(Config.abandonedStagingChecksLabel());
+            // the statuses of the abandoned commit do not matter now
+            this._stagingFailedSomeTimeAgo = false;
             await this._enterBrewing();
             return;
         }
@@ -980,10 +999,10 @@ class PullRequest {
         assert(this._stagedPosition.ahead());
 
         const stagedStatuses = await this._getStagingStatuses();
+        this._stagingFailedSomeTimeAgo = stagedStatuses.failed();
         // Do not vainly recreate staged commit which will definitely fail again,
         // since the PR+base code is yet unchanged and the existing errors still persist
-        if (stagedStatuses.failed()) {
-            this._labels.add(Config.failedStagingChecksLabel());
+        if (this._stagingFailedSomeTimeAgo) {
             await this._enterBrewing();
             return;
         }
@@ -1295,6 +1314,9 @@ class PullRequest {
             else
                 this._removePositiveStagingLabels();
 
+            // some of these labels may be set already in the exception
+            this._addPrStateLabels();
+
             if (knownProblem) {
                 result.setDelayMsIfAny(this._delayMs());
                 return result;
@@ -1347,6 +1369,12 @@ class PullRequest {
     _removePositiveStagingLabels() {
         this._labels.remove(Config.passedStagingChecksLabel());
         this._labels.remove(Config.waitingStagingChecksLabel());
+    }
+
+    // add labels based on the current PR state
+    _addPrStateLabels() {
+        if (this._stagedStatusesFailed())
+            this._labels.add(Config.failedStagingChecksLabel());
     }
 
     /* _ex*() methods below are mutually exclusive: first match wins */
