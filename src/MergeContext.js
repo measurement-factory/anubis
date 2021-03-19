@@ -492,9 +492,10 @@ class PullRequest {
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
         this._labelPushBan = false;
 
-        // whether this PR has or had a staged commit with failed checks
-        // it is meaningful only when _stagedStatuses is nil
-        this._stagingFailedSomeTimeAgo = false;
+        // Whether this PR has or had a staged commit with failed checks.
+        // Starts as M-failed-staging-checks and then acquires its value
+        // from loaded staging statuses.
+        this._stagingFailed = false;
     }
 
     // this PR will need to be reprocessed in this many milliseconds
@@ -654,6 +655,7 @@ class PullRequest {
         for (let st of optionalStatuses)
             statusChecks.addOptionalStatus(new StatusCheck(st));
 
+        this._stagingFailed = statusChecks.failed(); // overwrites label-based info
         this._log("staging status details: " + statusChecks);
         return statusChecks;
     }
@@ -699,7 +701,7 @@ class PullRequest {
         let labels = await GH.getLabels(this._prNumber());
         assert(!this._labels);
         this._labels = new Labels(labels, this._prNumber());
-        this._stagingFailedSomeTimeAgo = this._labels.has(Config.failedStagingChecksLabel());
+        this._stagingFailed = this._labels.has(Config.failedStagingChecksLabel());
     }
 
     // stop processing if it is prohibited by a human-controlled label
@@ -731,7 +733,7 @@ class PullRequest {
 
         // Do not vainly recreate staged commit which will definitely fail again,
         // since the PR+base code is yet unchanged and the existing errors still persist
-        if (this._stagedStatusesFailed())
+        if (this._stagingFailed)
             throw this._exLabeledFailure("staged commit tests failed", Config.failedStagingChecksLabel());
 
         if (this._wipPr())
@@ -961,22 +963,16 @@ class PullRequest {
         return false;
     }
 
-    /// whether this PR has or had a staged commit with failed checks
-    _stagedStatusesFailed() {
-        return this._stagedStatuses === null ?
-            this._stagingFailedSomeTimeAgo : this._stagedStatuses.failed();
-    }
-
     async _loadPrState() {
 
         if (!this._stagedSha()) {
             if (await this._mergedSomeTimeAgo()) {
-                // leave this._stagingFailedSomeTimeAgo intact here to
+                // leave this._stagingFailed intact here to
                 // keep labeling of manually merged PRs with failed commits
                 this._enterMerged();
                 return;
             }
-            // leave this._stagingFailedSomeTimeAgo intact here to
+            // leave this._stagingFailed intact here to
             // prevent a failed staged PR (that lost its staging to another PR)
             // from restaging and failing again, creating a live lock with that other PR
             await this._enterBrewing();
@@ -988,7 +984,7 @@ class PullRequest {
         if (this._stagedPosition.merged()) {
             this._log("already merged into base some time ago");
             // cleanup if this interrupted merge left a stale label behind
-            this._stagingFailedSomeTimeAgo = false; // probably already false
+            this._stagingFailed = false; // probably already false
             this._enterMerged();
             return;
         }
@@ -996,7 +992,7 @@ class PullRequest {
         if (!(await this._stagedCommitIsFresh())) {
             await this._labels.addImmediately(Config.abandonedStagingChecksLabel());
             // forget label-based info derived from a now-stale staged commit
-            this._stagingFailedSomeTimeAgo = false;
+            this._stagingFailed = false;
             await this._enterBrewing();
             return;
         }
@@ -1004,9 +1000,8 @@ class PullRequest {
         assert(this._stagedPosition.ahead());
 
         const stagedStatuses = await this._getStagingStatuses();
-        this._stagingFailedSomeTimeAgo = stagedStatuses.failed(); // overwrites label-based info
         // if staging failed, enter the "brewing (with failed staging tests)" state
-        if (this._stagingFailedSomeTimeAgo) {
+        if (this._stagingFailed) {
             await this._enterBrewing();
             return;
         }
@@ -1058,7 +1053,7 @@ class PullRequest {
 
     async _processStagingStatuses() {
         assert(this._stagedStatuses);
-        if (this._stagedStatuses.failed())
+        if (this._stagingFailed)
             throw this._exLabeledFailure("staging tests failed", Config.failedStagingChecksLabel());
 
         if (!this._stagedStatuses.final()) {
@@ -1321,7 +1316,7 @@ class PullRequest {
             else
                 this._removePositiveStagingLabels();
 
-            if (this._stagedStatusesFailed())
+            if (this._stagingFailed)
                 this._labels.add(Config.failedStagingChecksLabel()); // may be set already in the exception
 
             if (knownProblem) {
