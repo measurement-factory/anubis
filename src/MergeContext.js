@@ -729,6 +729,8 @@ class PullRequest {
         // already checked in _checkForHumanLabels()
         assert(!this._labels.has(Config.failedStagingOtherLabel()));
 
+        // Do not vainly recreate staged commit which will definitely fail again,
+        // since the PR+base code is yet unchanged and the existing errors still persist
         if (this._stagedStatusesFailed())
             throw this._exLabeledFailure("staged commit tests failed", Config.failedStagingChecksLabel());
 
@@ -968,13 +970,16 @@ class PullRequest {
     async _loadPrState() {
 
         if (!this._stagedSha()) {
-            // Leave this._stagingFailedSomeTimeAgo intact here,
-            // because cleaning it up could cause a livelocking
-            // between two PRs with broken staging checks.
-            if (await this._mergedSomeTimeAgo())
+            if (await this._mergedSomeTimeAgo()) {
+                // leave this._stagingFailedSomeTimeAgo intact here to
+                // keep labeling of manually merged PRs with failed commits
                 this._enterMerged();
-            else
-                await this._enterBrewing();
+                return;
+            }
+            // leave this._stagingFailedSomeTimeAgo intact here to
+            // prevent a failed staged PR (that lost its staging to another PR)
+            // from restaging and failing again, creating a live lock with that other PR
+            await this._enterBrewing();
             return;
         }
 
@@ -982,15 +987,15 @@ class PullRequest {
 
         if (this._stagedPosition.merged()) {
             this._log("already merged into base some time ago");
-            // just in case - it should be false here
-            this._stagingFailedSomeTimeAgo = false;
+            // cleanup if this interrupted merge left a stale label behind
+            this._stagingFailedSomeTimeAgo = false; // probably already false
             this._enterMerged();
             return;
         }
 
         if (!(await this._stagedCommitIsFresh())) {
             await this._labels.addImmediately(Config.abandonedStagingChecksLabel());
-            // the statuses of the abandoned commit do not matter now
+            // forget label-based info derived from a now-stale staged commit
             this._stagingFailedSomeTimeAgo = false;
             await this._enterBrewing();
             return;
@@ -999,9 +1004,8 @@ class PullRequest {
         assert(this._stagedPosition.ahead());
 
         const stagedStatuses = await this._getStagingStatuses();
-        this._stagingFailedSomeTimeAgo = stagedStatuses.failed();
-        // Do not vainly recreate staged commit which will definitely fail again,
-        // since the PR+base code is yet unchanged and the existing errors still persist
+        this._stagingFailedSomeTimeAgo = stagedStatuses.failed(); // overwrites label-based info
+        // if staging failed, enter the "brewing (with failed staging tests)" state
         if (this._stagingFailedSomeTimeAgo) {
             await this._enterBrewing();
             return;
@@ -1309,13 +1313,16 @@ class PullRequest {
 
             let result = new ProcessResult();
 
+            if (!this._labels)
+                this._labels = new Labels([], this._prNumber());
+
             if (this._prState && this._prState.staged() && suspended)
                 result.setPrStaged(true);
             else
                 this._removePositiveStagingLabels();
 
-            // some of these labels may be set already in the exception
-            this._addPrStateLabels();
+            if (this._stagedStatusesFailed())
+                this._labels.add(Config.failedStagingChecksLabel()); // may be set already in the exception
 
             if (knownProblem) {
                 result.setDelayMsIfAny(this._delayMs());
@@ -1325,8 +1332,6 @@ class PullRequest {
             // report this unknown but probably PR-specific problem on GitHub
             // XXX: We may keep redoing this PR every run() step forever, without any GitHub events.
             // TODO: Process Config.failedOtherLabel() PRs last and ignore their failures.
-            if (!this._labels)
-                this._labels = new Labels([], this._prNumber());
 
             if (this._stagedSha()) { // the PR is staged now or was staged some time ago
                 // avoid livelocking
@@ -1369,12 +1374,6 @@ class PullRequest {
     _removePositiveStagingLabels() {
         this._labels.remove(Config.passedStagingChecksLabel());
         this._labels.remove(Config.waitingStagingChecksLabel());
-    }
-
-    // add labels based on the current PR state
-    _addPrStateLabels() {
-        if (this._stagedStatusesFailed())
-            this._labels.add(Config.failedStagingChecksLabel());
     }
 
     /* _ex*() methods below are mutually exclusive: first match wins */
