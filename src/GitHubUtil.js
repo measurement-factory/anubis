@@ -86,6 +86,24 @@ function getLabels(prNum) {
     });
 }
 
+function getIssueEvents(prNum) {
+    let params = commonParams();
+    params.issue_number = prNum;
+    return new Promise( (resolve, reject) => {
+        GitHub.authenticate(GitHubAuthentication);
+        GitHub.issues.getEvents(params, async (err, res) => {
+            if (err) {
+                reject(new ErrorContext(err, getIssueEvents.name, params));
+                return;
+            }
+            res = await pager(res);
+            const result = res.data.length;
+            logApiResult(getIssueEvents.name, params, result);
+            resolve(res.data);
+        });
+    });
+}
+
 // Gets PR metadata from GitHub
 // If requested and needed, retries until GitHub calculates PR mergeable flag.
 // Those retries, if any, are limited to a few minutes.
@@ -445,6 +463,7 @@ function getUserEmails() {
 module.exports = {
     getOpenPrs: getOpenPrs,
     getLabels: getLabels,
+    getIssueEvents: getIssueEvents,
     getPR: getPR,
     getReviews: getReviews,
     getStatuses: getStatuses,

@@ -491,6 +491,11 @@ class PullRequest {
 
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
         this._labelPushBan = false;
+
+        // Whether this PR has or had a staged commit with failed checks.
+        // Starts as M-failed-staging-checks and then acquires its value
+        // from loaded staging statuses.
+        this._stagingFailed = false;
     }
 
     // this PR will need to be reprocessed in this many milliseconds
@@ -637,8 +642,9 @@ class PullRequest {
     }
 
     // returns filled StatusChecks object
-    async _getStagingStatuses() {
-        const combinedStagingStatuses = await GH.getStatuses(this._stagedSha());
+    async _getStagingStatuses(stagedSha) {
+        assert(stagedSha);
+        const combinedStagingStatuses = await GH.getStatuses(stagedSha);
         const genuineStatuses = combinedStagingStatuses.statuses.filter(st => !st.description.endsWith(Config.copiedDescriptionSuffix()));
         assert(genuineStatuses.length <= Config.stagingChecks());
         let statusChecks = new StatusChecks(Config.stagingChecks(), "Staging");
@@ -650,6 +656,7 @@ class PullRequest {
         for (let st of optionalStatuses)
             statusChecks.addOptionalStatus(new StatusCheck(st));
 
+        this._stagingFailed = statusChecks.failed(); // overwrites label-based info
         this._log("staging status details: " + statusChecks);
         return statusChecks;
     }
@@ -695,6 +702,7 @@ class PullRequest {
         let labels = await GH.getLabels(this._prNumber());
         assert(!this._labels);
         this._labels = new Labels(labels, this._prNumber());
+        this._stagingFailed = this._labels.has(Config.failedStagingChecksLabel());
     }
 
     // stop processing if it is prohibited by a human-controlled label
@@ -724,8 +732,10 @@ class PullRequest {
         // already checked in _checkForHumanLabels()
         assert(!this._labels.has(Config.failedStagingOtherLabel()));
 
-        if (this._labels.has(Config.failedStagingChecksLabel()))
-            throw this._exObviousFailure("staged commit tests failed");
+        // Do not vainly recreate staged commit which will definitely fail again,
+        // since the PR+base code is yet unchanged and the existing errors still persist
+        if (this._stagingFailed)
+            throw this._exLabeledFailure("staged commit tests failed", Config.failedStagingChecksLabel());
 
         if (this._wipPr())
             throw this._exObviousFailure("work-in-progress");
@@ -954,12 +964,51 @@ class PullRequest {
         return false;
     }
 
+    async _getMergeCommit() {
+        const mergeSha = await GH.getReference("pull/" + this._prNumber() + "/merge");
+        return await GH.getCommit(mergeSha);
+    }
+
+    // whether we should prevent the failed staged PR (that lost its staging to another PR)
+    // from restaging and failing again, creating a live lock with that other PR
+    async _recalculateStagingFailed() {
+        assert(!this._stagedSha());
+        assert(this._stagingFailed);
+
+        const allEvents = await GH.getIssueEvents(this._prNumber());
+        // we consider all commits created by the bot user and referencing this PR as staged commits
+        let stagedEvents = allEvents.filter(ev => ev.event === "referenced" && ev.actor.login === Config.githubUserLogin());
+        if (!stagedEvents.length)
+            return false;
+
+        // just in case: events should be already sorted by date
+        stagedEvents = stagedEvents.sort((ev1, ev2) => Date.parse(ev1.created_at) - Date.parse(ev2.created_at));
+        const lastStaged = stagedEvents[stagedEvents.length - 1];
+        const mergeCommit = await this._getMergeCommit();
+        const mergeCommitCreatedAt = Date.parse(mergeCommit.author.date);
+        const stagedCommitCreatedAt = Date.parse(lastStaged.created_at);
+        assert(mergeCommitCreatedAt);
+        // whether the merge commit is fresher than the last staged commit
+        if (stagedCommitCreatedAt < mergeCommitCreatedAt)
+            return false;
+
+        const stagedStatuses = await this._getStagingStatuses(lastStaged.commit_id);
+        // TODO: If something made this (previously failed) commit succeed, then
+        // we should use it further, if possible.
+        return stagedStatuses.failed();
+    }
+
     async _loadPrState() {
         if (!this._stagedSha()) {
-            if (await this._mergedSomeTimeAgo())
+            if (await this._mergedSomeTimeAgo()) {
+                // leave this._stagingFailed intact here to
+                // keep labeling of manually merged PRs with failed commits
                 this._enterMerged();
-            else
-                await this._enterBrewing();
+                return;
+            }
+            if (this._stagingFailed)
+                this._stagingFailed = await this._recalculateStagingFailed();
+            await this._enterBrewing();
             return;
         }
 
@@ -967,23 +1016,25 @@ class PullRequest {
 
         if (this._stagedPosition.merged()) {
             this._log("already merged into base some time ago");
+            // cleanup if this interrupted merge left a stale label behind
+            this._stagingFailed = false; // probably already false
             this._enterMerged();
             return;
         }
 
         if (!(await this._stagedCommitIsFresh())) {
             await this._labels.addImmediately(Config.abandonedStagingChecksLabel());
+            // forget label-based info derived from a now-stale staged commit
+            this._stagingFailed = false;
             await this._enterBrewing();
             return;
         }
 
         assert(this._stagedPosition.ahead());
 
-        const stagedStatuses = await this._getStagingStatuses();
-        // Do not vainly recreate staged commit which will definitely fail again,
-        // since the PR+base code is yet unchanged and the existing errors still persist
-        if (stagedStatuses.failed()) {
-            this._labels.add(Config.failedStagingChecksLabel());
+        const stagedStatuses = await this._getStagingStatuses(this._stagedSha());
+        // if staging failed, enter the "brewing (with failed staging tests)" state
+        if (this._stagingFailed) {
             await this._enterBrewing();
             return;
         }
@@ -1003,7 +1054,7 @@ class PullRequest {
         if (stagedStatuses)
             this._stagedStatuses = stagedStatuses;
         else
-            this._stagedStatuses = await this._getStagingStatuses();
+            this._stagedStatuses = await this._getStagingStatuses(this._stagedSha());
         this._prStatuses = await this._getPrStatuses();
     }
 
@@ -1035,7 +1086,7 @@ class PullRequest {
 
     async _processStagingStatuses() {
         assert(this._stagedStatuses);
-        if (this._stagedStatuses.failed())
+        if (this._stagingFailed)
             throw this._exLabeledFailure("staging tests failed", Config.failedStagingChecksLabel());
 
         if (!this._stagedStatuses.final()) {
@@ -1182,10 +1233,10 @@ class PullRequest {
         assert(Config.githubUserName());
     }
 
+
     async _createStaged() {
         const baseSha = await GH.getReference(this._prBaseBranchPath());
-        const mergeSha = await GH.getReference("pull/" + this._prNumber() + "/merge");
-        const mergeCommit = await GH.getCommit(mergeSha);
+        const mergeCommit = await this._getMergeCommit();
         if (!Config.githubUserName())
             await this._acquireUserProperties();
         let now = new Date();
@@ -1290,10 +1341,16 @@ class PullRequest {
 
             let result = new ProcessResult();
 
+            if (!this._labels)
+                this._labels = new Labels([], this._prNumber());
+
             if (this._prState && this._prState.staged() && suspended)
                 result.setPrStaged(true);
             else
                 this._removePositiveStagingLabels();
+
+            if (this._stagingFailed)
+                this._labels.add(Config.failedStagingChecksLabel()); // may be set already in the exception
 
             if (knownProblem) {
                 result.setDelayMsIfAny(this._delayMs());
@@ -1303,8 +1360,6 @@ class PullRequest {
             // report this unknown but probably PR-specific problem on GitHub
             // XXX: We may keep redoing this PR every run() step forever, without any GitHub events.
             // TODO: Process Config.failedOtherLabel() PRs last and ignore their failures.
-            if (!this._labels)
-                this._labels = new Labels([], this._prNumber());
 
             if (this._stagedSha()) { // the PR is staged now or was staged some time ago
                 // avoid livelocking
