@@ -36,6 +36,9 @@ are satisfied:
   text displayed by GitHub for these so called "mergeable" PRs varies
   depending on whether the changes are approved and whether the PR
   branch is out of date with its target branch.
+* The PR is not marked as being "in progress", which can be done either
+  with the "Draft pull request" GitHub setting (preferred) or prefixing
+  the PR title with "WIP:" (deprecated).
 * All the _required_ checks have succeeded on the PR branch:
   * If _all_ checks have succeeded, then GitHub says "All checks have
     passed" next to a green check mark:

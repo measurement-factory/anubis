@@ -727,6 +727,9 @@ class PullRequest {
         if (this._labels.has(Config.failedStagingChecksLabel()))
             throw this._exObviousFailure("staged commit tests failed");
 
+        if (this._draftPr())
+            throw this._exObviousFailure("draft PR");
+
         if (this._wipPr())
             throw this._exObviousFailure("work-in-progress");
 
@@ -841,6 +844,8 @@ class PullRequest {
     }
 
     _wipPr() { return this._rawPr.title.startsWith('WIP:'); }
+
+    _draftPr() { return this._rawPr.draft; }
 
     _prRequestedReviewers() {
         let reviewers = [];
@@ -1118,7 +1123,11 @@ class PullRequest {
         if (!this._messageValid)
             throw this._exLabeledFailure("commit message is now considered invalid", Config.failedDescriptionLabel());
 
-        assert(!this._wipPr());
+        if (this._draftPr())
+            throw this._exObviousFailure("restart due to draft PR");
+
+        if (this._wipPr())
+            throw this._exObviousFailure("restart due to work-in-progress");
 
         // TODO: unstage only if there is competition for being staged
 
