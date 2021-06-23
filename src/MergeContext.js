@@ -727,11 +727,9 @@ class PullRequest {
         if (this._labels.has(Config.failedStagingChecksLabel()))
             throw this._exObviousFailure("staged commit tests failed");
 
-        if (this._draftPr())
-            throw this._exObviousFailure("draft PR");
-
-        if (this._wipPr())
-            throw this._exObviousFailure("work-in-progress");
+        const draft = this._draftPr();
+        if (draft)
+            throw this._exObviousFailure(draft);
 
         if (!this._messageValid)
             throw this._exLabeledFailure("invalid commit message", Config.failedDescriptionLabel());
@@ -843,9 +841,13 @@ class PullRequest {
         return true;
     }
 
-    _wipPr() { return this._rawPr.title.startsWith('WIP:'); }
-
-    _draftPr() { return this._rawPr.draft; }
+    _draftPr() {
+        if (this._rawPr.draft)
+            return "draft";
+        if (this._rawPr.title.startsWith('WIP:'))
+            return "work-in-progress";
+        return null;
+    }
 
     _prRequestedReviewers() {
         let reviewers = [];
@@ -1123,11 +1125,9 @@ class PullRequest {
         if (!this._messageValid)
             throw this._exLabeledFailure("commit message is now considered invalid", Config.failedDescriptionLabel());
 
-        if (this._draftPr())
-            throw this._exObviousFailure("restart due to draft PR");
-
-        if (this._wipPr())
-            throw this._exObviousFailure("restart due to work-in-progress");
+        const draft = this._draftPr();
+        if (draft)
+            throw this._exObviousFailure("restart due to " + draft);
 
         // TODO: unstage only if there is competition for being staged
 
