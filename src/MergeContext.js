@@ -727,9 +727,8 @@ class PullRequest {
         if (this._labels.has(Config.failedStagingChecksLabel()))
             throw this._exObviousFailure("staged commit tests failed");
 
-        const draft = this._draftPr();
-        if (draft)
-            throw this._exObviousFailure(draft);
+        if (this._draftPr())
+            throw this._exObviousFailure("just a draft");
 
         if (!this._messageValid)
             throw this._exLabeledFailure("invalid commit message", Config.failedDescriptionLabel());
@@ -842,11 +841,11 @@ class PullRequest {
     }
 
     _draftPr() {
-        if (this._rawPr.draft)
-            return "draft";
+        // TODO: Remove this backward compatibility code after 2021-12-24.
         if (this._rawPr.title.startsWith('WIP:'))
-            return "work-in-progress";
-        return null;
+            return true;
+
+        return this._rawPr.draft;
     }
 
     _prRequestedReviewers() {
@@ -1125,9 +1124,11 @@ class PullRequest {
         if (!this._messageValid)
             throw this._exLabeledFailure("commit message is now considered invalid", Config.failedDescriptionLabel());
 
-        const draft = this._draftPr();
-        if (draft)
-            throw this._exObviousFailure("restart due to " + draft);
+        // yes, _checkStagingPreconditions() has checked this already, but
+        // humans may have changed the PR stage since that check, and our
+        // checking code might have changed as well
+        if (this._draftPr())
+            throw this._exObviousFailure("became a draft");
 
         // TODO: unstage only if there is competition for being staged
 
