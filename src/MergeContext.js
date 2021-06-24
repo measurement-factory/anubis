@@ -669,8 +669,14 @@ class PullRequest {
             const prCommit = await GH.getCommit(prMergeSha);
             // whether the PR branch has not changed
             if (this._stagedCommit.tree.sha === prCommit.tree.sha) {
-                this._log("the staged commit is fresh");
-                return true;
+                const stagedCommitDate = new Date(this._stagedCommit.committer.date);
+                const prCommitDate = new Date(prCommit.committer.date);
+                // check that a 'no-change' PR commit did not update the merge commit
+                // (which keeps the old tree object in this case)
+                if (stagedCommitDate >= prCommitDate) {
+                    this._log("the staged commit is fresh");
+                    return true;
+                }
             }
         }
         this._log("the staged commit is stale");
