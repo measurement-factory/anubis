@@ -1305,6 +1305,9 @@ class PullRequest {
             else
                 this._logEx(e, "process() failure");
 
+            if (this._signalAbandonmentOfStagingChecks)
+                this._labels.add(Config.abandonedStagingChecksLabel());
+
             const suspended = knownProblem && e.keepStagedRequested(); // whether _exSuspend() occured
 
             let result = new ProcessResult();
@@ -1313,9 +1316,6 @@ class PullRequest {
                 result.setPrStaged(true);
             else
                 this._removePositiveStagingLabels();
-
-            if (this._signalAbandonmentOfStagingChecks)
-                this._labels.add(Config.abandonedStagingChecksLabel());
 
             if (knownProblem) {
                 result.setDelayMsIfAny(this._delayMs());
