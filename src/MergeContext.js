@@ -489,6 +489,8 @@ class PullRequest {
 
         this._updated = false; // _update() has been called
 
+        this._abandoned = false; // abandonedStagingChecksLabel() has been set
+
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
         this._labelPushBan = false;
     }
@@ -985,6 +987,7 @@ class PullRequest {
 
         if (!(await this._stagedCommitIsFresh())) {
             await this._labels.addImmediately(Config.abandonedStagingChecksLabel());
+            this._abandoned = true;
             await this._enterBrewing();
             return;
         }
@@ -1010,6 +1013,7 @@ class PullRequest {
     }
 
     async _enterStaged(stagedStatuses) {
+        this._abandoned = false;
         this._prState = PrState.Staged();
         assert(this._stagedStatuses === null);
         if (stagedStatuses)
@@ -1310,6 +1314,9 @@ class PullRequest {
                 result.setPrStaged(true);
             else
                 this._removePositiveStagingLabels();
+
+            if (this._prState && this._prState.brewing() && this._abandoned)
+                this._labels.add(Config.abandonedStagingChecksLabel());
 
             if (knownProblem) {
                 result.setDelayMsIfAny(this._delayMs());
