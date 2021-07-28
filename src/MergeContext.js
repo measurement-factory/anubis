@@ -300,13 +300,6 @@ class Labels
         return label;
     }
 
-    // adds a label, updating GitHub without waiting for pushToGitHub()
-    async addImmediately(name) {
-        const label = this.add(name);
-        if (label.needsAdditionToGitHub())
-            await this._addToGitHub(label);
-    }
-
     // removing a previously removed or missing label is a no-op
     remove(name) {
         const label = this._find(name);
@@ -488,6 +481,9 @@ class PullRequest {
         this._prStatuses = null;
 
         this._updated = false; // _update() has been called
+
+        // the user should see abandonedStagingChecksLabel()
+        this._signalAbandonmentOfStagingChecks = false;
 
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
         this._labelPushBan = false;
@@ -984,7 +980,7 @@ class PullRequest {
         }
 
         if (!(await this._stagedCommitIsFresh())) {
-            await this._labels.addImmediately(Config.abandonedStagingChecksLabel());
+            this._signalAbandonmentOfStagingChecks = true;
             await this._enterBrewing();
             return;
         }
@@ -1011,6 +1007,10 @@ class PullRequest {
 
     async _enterStaged(stagedStatuses) {
         this._prState = PrState.Staged();
+
+        // do not signal about the old staged commit when we have a new one
+        this._signalAbandonmentOfStagingChecks = false; // may already be false
+
         assert(this._stagedStatuses === null);
         if (stagedStatuses)
             this._stagedStatuses = stagedStatuses;
@@ -1021,6 +1021,9 @@ class PullRequest {
 
     _enterMerged() {
         this._prState = PrState.Merged();
+
+        // do not signal about the old staged commit when we have a merged one
+        this._signalAbandonmentOfStagingChecks = false; // may already be false
     }
 
     // loads raw PR metadata from GitHub
@@ -1301,6 +1304,9 @@ class PullRequest {
                 this._log("did not merge: " + e.message);
             else
                 this._logEx(e, "process() failure");
+
+            if (this._signalAbandonmentOfStagingChecks)
+                this._labels.add(Config.abandonedStagingChecksLabel());
 
             const suspended = knownProblem && e.keepStagedRequested(); // whether _exSuspend() occured
 
