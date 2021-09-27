@@ -501,13 +501,11 @@ class PullRequest {
     async _checkApproval() {
         assert(this._approval === null);
 
-        const collaborators = await GH.getCollaborators();
-        const pushCollaborators = collaborators.filter(c => c.permissions.push === true);
         const requestedReviewers = this._prRequestedReviewers();
 
-        for (let collaborator of pushCollaborators) {
-            if (requestedReviewers.includes(collaborator.login)) {
-                this._log("requested core reviewer: " + collaborator.login);
+        for (let collaborator of Config.coreDeveloperIds()) {
+            if (requestedReviewers.includes(collaborator)) {
+                this._log("requested core reviewer: " + collaborator);
                 return Approval.Suspend("waiting for requested reviews");
             }
         }
@@ -519,13 +517,13 @@ class PullRequest {
         // 'approved' or 'changes_requested'.
         let usersVoted = [];
         // add the author if needed
-        if (pushCollaborators.find(el => el.login === this._prAuthor()))
+        if (Config.coreDeveloperIds().find(el => el === this._prAuthorId()))
             usersVoted.push({reviewer: this._prAuthor(), date: this._createdAt(), state: 'approved'});
 
         // Reviews are returned in chronological order; the list may contain several
         // reviews from the same reviewer, so the actual 'state' is the most recent one.
         for (let review of reviews) {
-            if (!pushCollaborators.find(el => el.login === review.user.login))
+            if (!Config.coreDeveloperIds().find(el => el === review.user.id))
                 continue;
 
             const reviewState = review.state.toLowerCase();
@@ -854,12 +852,14 @@ class PullRequest {
         let reviewers = [];
         if (this._rawPr.requested_reviewers) {
             for (let r of this._rawPr.requested_reviewers)
-               reviewers.push(r.login);
+               reviewers.push(r.id);
         }
         return reviewers;
     }
 
     _prAuthor() { return this._rawPr.user.login; }
+
+    _prAuthorId() { return this._rawPr.user.id; }
 
     _defaultRepoBranch() { return this._rawPr.base.repo.default_branch; }
 

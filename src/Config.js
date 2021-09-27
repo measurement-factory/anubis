@@ -32,6 +32,7 @@ class ConfigOptions {
         this._stagingChecks = conf.staging_checks;
         this._loggerParams = conf.logger_params;
         this._approvalUrl = conf.approval_url;
+        this._coreDevelopers = conf.core_developers;
 
         // unused
         this._githubUserNoreplyEmail = null;
@@ -43,6 +44,11 @@ class ConfigOptions {
         for (let v of allOptions) {
             assert(v !== undefined );
         }
+
+        this._coreDeveloperIds = this._coreDevelopers.split(',').map(i => Number(i.trim()));
+        const uniqDevelopers = [ ...new Set(this._coreDeveloperIds) ];
+        assert(uniqDevelopers.length === this._coreDeveloperIds.length);
+        assert(this._sufficientApprovals <= this._coreDeveloperIds.length);
     }
 
     githubUserLogin() { return this._githubUserLogin; }
@@ -82,6 +88,7 @@ class ConfigOptions {
     votingDelayMin() { return this._votingDelayMin; }
     stagingChecks() { return this._stagingChecks; }
     loggerParams() { return this._loggerParams; }
+    coreDeveloperIds() { return this._coreDeveloperIds; }
 
     // an unexpected error occurred outside the "staged" phase
     failedOtherLabel() { return "M-failed-other"; }
