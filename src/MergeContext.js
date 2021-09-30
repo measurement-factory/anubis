@@ -503,9 +503,13 @@ class PullRequest {
 
         const requestedReviewers = this._prRequestedReviewers();
 
-        for (let collaborator of Config.coreDeveloperIds()) {
-            if (requestedReviewers.includes(collaborator)) {
-                this._log("requested core reviewer: " + collaborator);
+        for (let reviewerPair of requestedReviewers.entries()) {
+            const reviewer = reviewerPair[0];
+            const requestedReviewerIsCore = Config.coreDeveloperIds().get(reviewer);
+            if (requestedReviewerIsCore) {
+                const reviewerId = reviewerPair[1];
+                assert(requestedReviewerIsCore === reviewerId);
+                this._log("requested core reviewer: " + reviewer);
                 return Approval.Suspend("waiting for requested reviews");
             }
         }
@@ -517,14 +521,20 @@ class PullRequest {
         // 'approved' or 'changes_requested'.
         let usersVoted = [];
         // add the author if needed
-        if (Config.coreDeveloperIds().find(el => el === this._prAuthorId()))
+        const authorIsCore = Config.coreDeveloperIds().get(this._prAuthor());
+        if (authorIsCore) {
+            assert(authorIsCore === this._prAuthorId());
             usersVoted.push({reviewer: this._prAuthor(), date: this._createdAt(), state: 'approved'});
+        }
 
         // Reviews are returned in chronological order; the list may contain several
         // reviews from the same reviewer, so the actual 'state' is the most recent one.
         for (let review of reviews) {
-            if (!Config.coreDeveloperIds().find(el => el === review.user.id))
+            const reviewerIsCore = Config.coreDeveloperIds().get(review.user.login);
+            if (!reviewerIsCore)
                 continue;
+
+            assert(reviewerIsCore === review.user.id);
 
             const reviewState = review.state.toLowerCase();
             if (reviewState === 'commented')
@@ -849,10 +859,10 @@ class PullRequest {
     }
 
     _prRequestedReviewers() {
-        let reviewers = [];
+        let reviewers = new Map();
         if (this._rawPr.requested_reviewers) {
             for (let r of this._rawPr.requested_reviewers)
-               reviewers.push(r.id);
+               reviewers.set(r.login, r.id);
         }
         return reviewers;
     }

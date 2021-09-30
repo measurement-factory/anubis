@@ -45,10 +45,15 @@ class ConfigOptions {
             assert(v !== undefined );
         }
 
-        this._coreDeveloperIds = this._coreDevelopers.split(',').map(i => Number(i.trim()));
-        const uniqDevelopers = [ ...new Set(this._coreDeveloperIds) ];
-        assert(uniqDevelopers.length === this._coreDeveloperIds.length);
-        assert(this._sufficientApprovals <= this._coreDeveloperIds.length);
+        let developerPairs = this._coreDevelopers.split(',').map(i => i.trim());
+        this._coreDeveloperIds = new Map();
+        for (let pair of developerPairs) {
+            let p = pair.split('=').map(i => i.trim());
+            assert(p.length === 2);
+            assert(!this._coreDeveloperIds.has(p[0]));
+            this._coreDeveloperIds.set(p[0], Number(p[1]));
+        }
+        assert(this._sufficientApprovals <= this._coreDeveloperIds.size);
     }
 
     githubUserLogin() { return this._githubUserLogin; }
@@ -88,6 +93,7 @@ class ConfigOptions {
     votingDelayMin() { return this._votingDelayMin; }
     stagingChecks() { return this._stagingChecks; }
     loggerParams() { return this._loggerParams; }
+    // returns a Map of (login,id) pairs
     coreDeveloperIds() { return this._coreDeveloperIds; }
 
     // an unexpected error occurred outside the "staged" phase

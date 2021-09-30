@@ -296,7 +296,7 @@ All configuration fields are required.
 *staging_branch* | The name of the bot-maintained git branch used for testing PR changes as if they were merged into their target branch. | auto
 *necessary_approvals* | The minimal number of core developers required for a PR to be merged. PRs with fewer votes are not merged, regardless of their age. | 1
 *sufficient_approvals* | The minimal number of core developers required for a PR to be merged fast (i.e., without waiting for `config::voting_delay_max`) | 2
-*core_developers* | The comma-separated list of GitHub account IDs representing core developers (collaborators with push access rights) | ""
+*core_developers* | The comma-separated list of login=id pairs representing GitHub core developers. | ""
 *voting_delay_min*| The minimum merging age of a PR. Younger PRs are not merged, regardless of the number of votes. The PR age string should comply with [timestring](https://github.com/mike182uk/timestring) parser. | "2d"
 *voting_delay_max* | The maximum merging age of a PR that has fewer than `config::sufficient_approvals` votes. The PR age string should comply with [timestring](https://github.com/mike182uk/timestring) parser. | "10d"
 *staging_checks*| The expected number of CI tests executed against the staging branch. | 2
