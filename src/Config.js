@@ -45,15 +45,18 @@ class ConfigOptions {
             assert(v !== undefined );
         }
 
-        let developerPairs = this._coreDevelopers.split(',').map(i => i.trim());
         this._coreDeveloperIds = new Map();
+        const developerPairs = this._coreDevelopers.split(',').map(i => i.trim());
         for (let pair of developerPairs) {
-            let p = pair.split('=').map(i => i.trim());
+            assert(pair);
+            const p = pair.split('=').map(i => i.trim()).filter(i => i);
             assert(p.length === 2);
             assert(!this._coreDeveloperIds.has(p[0]));
             this._coreDeveloperIds.set(p[0], Number(p[1]));
         }
+        // check that it is actually possible to get all the configured votes
         assert(this._sufficientApprovals <= this._coreDeveloperIds.size);
+        assert(this._necessaryApprovals <= this._coreDeveloperIds.size);
     }
 
     githubUserLogin() { return this._githubUserLogin; }

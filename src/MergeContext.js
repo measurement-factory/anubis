@@ -497,21 +497,26 @@ class PullRequest {
         return null;
     }
 
+    // whether the given GitHub user is a core developer
+    _coreDeveloper(role, userLogin, userId) {
+        const coreId = Config.coreDeveloperIds().get(userLogin);
+        if (!coreId)
+            return false;
+        this._log(`found core ${role}: ${userLogin}={userId}`);
+        // die if we are misconfigured and/or the userLogin has moved to another user
+        assert.strictEqual(coreId, userId);
+        return true;
+    }
+
     // creates and returns filled Approval object
     async _checkApproval() {
         assert(this._approval === null);
 
         const requestedReviewers = this._prRequestedReviewers();
 
-        for (let reviewerPair of requestedReviewers.entries()) {
-            const reviewer = reviewerPair[0];
-            const requestedReviewerIsCore = Config.coreDeveloperIds().get(reviewer);
-            if (requestedReviewerIsCore) {
-                const reviewerId = reviewerPair[1];
-                assert(requestedReviewerIsCore === reviewerId);
-                this._log("requested core reviewer: " + reviewer);
+        for (let reviewerEntry of requestedReviewers.entries()) {
+            if (this._coreDeveloper('requested reviewer', reviewerEntry[0], reviewerEntry[1]))
                 return Approval.Suspend("waiting for requested reviews");
-            }
         }
 
         let reviews = await GH.getReviews(this._prNumber());
@@ -521,20 +526,14 @@ class PullRequest {
         // 'approved' or 'changes_requested'.
         let usersVoted = [];
         // add the author if needed
-        const authorIsCore = Config.coreDeveloperIds().get(this._prAuthor());
-        if (authorIsCore) {
-            assert(authorIsCore === this._prAuthorId());
+        if (this._coreDeveloper('PR author', this._prAuthor(), this._prAuthorId()))
             usersVoted.push({reviewer: this._prAuthor(), date: this._createdAt(), state: 'approved'});
-        }
 
         // Reviews are returned in chronological order; the list may contain several
         // reviews from the same reviewer, so the actual 'state' is the most recent one.
         for (let review of reviews) {
-            const reviewerIsCore = Config.coreDeveloperIds().get(review.user.login);
-            if (!reviewerIsCore)
+            if (!this._coreDeveloper('reviewer', review.user.login, review.user.id))
                 continue;
-
-            assert(reviewerIsCore === review.user.id);
 
             const reviewState = review.state.toLowerCase();
             if (reviewState === 'commented')
