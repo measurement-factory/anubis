@@ -497,19 +497,27 @@ class PullRequest {
         return null;
     }
 
+    // whether the given GitHub user is a core developer
+    _coreDeveloper(role, userLogin, userId) {
+        const coreId = Config.coreDeveloperIds().get(userLogin);
+        if (!coreId)
+            return false;
+        this._log(`found core ${role}: ${userLogin}={userId}`);
+        this._log(`${role} is a core developer: ${userLogin}=${userId}`);
+        // die if we are misconfigured and/or the userLogin has moved to another user
+        assert.strictEqual(coreId, userId);
+        return true;
+    }
+
     // creates and returns filled Approval object
     async _checkApproval() {
         assert(this._approval === null);
 
-        const collaborators = await GH.getCollaborators();
-        const pushCollaborators = collaborators.filter(c => c.permissions.push === true);
         const requestedReviewers = this._prRequestedReviewers();
 
-        for (let collaborator of pushCollaborators) {
-            if (requestedReviewers.includes(collaborator.login)) {
-                this._log("requested core reviewer: " + collaborator.login);
+        for (let reviewerEntry of requestedReviewers.entries()) {
+            if (this._coreDeveloper('requested reviewer', reviewerEntry[0], reviewerEntry[1]))
                 return Approval.Suspend("waiting for requested reviews");
-            }
         }
 
         let reviews = await GH.getReviews(this._prNumber());
@@ -519,13 +527,13 @@ class PullRequest {
         // 'approved' or 'changes_requested'.
         let usersVoted = [];
         // add the author if needed
-        if (pushCollaborators.find(el => el.login === this._prAuthor()))
+        if (this._coreDeveloper('PR author', this._prAuthor(), this._prAuthorId()))
             usersVoted.push({reviewer: this._prAuthor(), date: this._createdAt(), state: 'approved'});
 
         // Reviews are returned in chronological order; the list may contain several
         // reviews from the same reviewer, so the actual 'state' is the most recent one.
         for (let review of reviews) {
-            if (!pushCollaborators.find(el => el.login === review.user.login))
+            if (!this._coreDeveloper('reviewer', review.user.login, review.user.id))
                 continue;
 
             const reviewState = review.state.toLowerCase();
@@ -851,15 +859,17 @@ class PullRequest {
     }
 
     _prRequestedReviewers() {
-        let reviewers = [];
+        let reviewers = new Map();
         if (this._rawPr.requested_reviewers) {
             for (let r of this._rawPr.requested_reviewers)
-               reviewers.push(r.login);
+               reviewers.set(r.login, r.id);
         }
         return reviewers;
     }
 
     _prAuthor() { return this._rawPr.user.login; }
+
+    _prAuthorId() { return this._rawPr.user.id; }
 
     _defaultRepoBranch() { return this._rawPr.base.repo.default_branch; }
 

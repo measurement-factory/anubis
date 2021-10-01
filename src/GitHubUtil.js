@@ -392,23 +392,6 @@ function getProtectedBranchRequiredStatusChecks(branch) {
     });
 }
 
-function getCollaborators() {
-    const params = commonParams();
-    return new Promise( (resolve, reject) => {
-      GitHub.authenticate(GitHubAuthentication);
-      GitHub.repos.getCollaborators(params, async (err, res) => {
-          if (err) {
-             reject(new ErrorContext(err, getCollaborators.name, params));
-             return;
-          }
-          res = await pager(res);
-          const result = {collaborators: res.data.length};
-          logApiResult(getCollaborators.name, params, result);
-          resolve(res.data);
-      });
-    });
-}
-
 function getUser(username) {
     const params = commonParams();
     params.username = username;
@@ -459,7 +442,6 @@ module.exports = {
     removeLabel: removeLabel,
     createStatus: createStatus,
     getProtectedBranchRequiredStatusChecks: getProtectedBranchRequiredStatusChecks,
-    getCollaborators: getCollaborators,
     getUser: getUser,
     getUserEmails: getUserEmails
 };
