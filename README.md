@@ -20,7 +20,7 @@ below.
   confuse this general/imprecise term with the atomic action of merging
   one git branch into another.
 
-* _Core developer_: A GitHub user listed in the config::core_developers
+* _Core developer_: A GitHub user listed in the `config::core_developers`
   configuration parameter.
 
 

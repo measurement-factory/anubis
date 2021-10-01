@@ -503,6 +503,7 @@ class PullRequest {
         if (!coreId)
             return false;
         this._log(`found core ${role}: ${userLogin}={userId}`);
+        this._log(`${role} is a core developer: ${userLogin}=${userId}`);
         // die if we are misconfigured and/or the userLogin has moved to another user
         assert.strictEqual(coreId, userId);
         return true;
