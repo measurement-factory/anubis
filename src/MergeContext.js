@@ -156,7 +156,8 @@ class StatusChecks
     //   for staged commits: the bot-configured number of required checks (Config.stagingChecks()),
     //   for PR commits: GitHub configured number of required checks (requested from GitHub)
     // context: either "PR" or "Staging";
-    constructor(expectedStatusCount, context) {
+    // approvalRequired: whether the Config.approvalContext() status check is required
+    constructor(expectedStatusCount, context, approvalRequired) {
         assert(expectedStatusCount !== undefined);
         assert(expectedStatusCount !== null);
         assert(context);
@@ -164,6 +165,7 @@ class StatusChecks
         this.context = context;
         this.requiredStatuses = [];
         this.optionalStatuses = [];
+        this.statusesForApproval = approvalRequired ? this.requiredStatuses : this.optionalStatuses;
     }
 
     addRequiredStatus(requiredStatus) {
@@ -184,14 +186,14 @@ class StatusChecks
     }
 
     hasApprovalStatus(approval) {
-        return this.requiredStatuses.some(el =>
+        return this.statusesForApproval.some(el =>
                 el.context.trim() === Config.approvalContext() &&
                 el.state === approval.state &&
                 el.description === approval.description);
     }
 
     setApprovalStatus(approval) {
-        this.requiredStatuses = this.requiredStatuses.filter(st => st.context !== Config.approvalContext());
+        this.requiredStatuses = this.statusesForApproval.filter(st => st.context !== Config.approvalContext());
         let raw = {
             state: approval.state,
             target_url: Config.approvalUrl(),
@@ -628,7 +630,8 @@ class PullRequest {
     async _getPrStatuses() {
         const requiredContexts = await this._getRequiredContexts();
         const combinedPrStatus = await GH.getStatuses(this._prHeadSha());
-        let statusChecks = new StatusChecks(requiredContexts.length, "PR");
+        const approvalContextRequired = requiredContexts.some(el => el.trim() === Config.approvalContext());
+        let statusChecks = new StatusChecks(requiredContexts.length, "PR", approvalContextRequired);
         // fill with required status checks
         for (let st of combinedPrStatus.statuses) {
             if (requiredContexts.some(el => el.trim() === st.context.trim()))
