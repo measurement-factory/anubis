@@ -156,28 +156,32 @@ class StatusChecks
     //   for staged commits: the bot-configured number of required checks (Config.stagingChecks()),
     //   for PR commits: GitHub configured number of required checks (requested from GitHub)
     // context: either "PR" or "Staging";
-    // approvalRequired: whether the Config.approvalContext() status check is required
-    constructor(expectedStatusCount, context, approvalRequired) {
+    // checksRequiredByGitHubConfig: the GitHub protected branch checks in a format of a list of string contexts
+    constructor(expectedStatusCount, context, checksRequiredByGitHubConfig) {
         assert(expectedStatusCount !== undefined);
         assert(expectedStatusCount !== null);
         assert(context);
+        assert(checksRequiredByGitHubConfig);
         this.expectedStatusCount = expectedStatusCount;
         this.context = context;
+        this._approvalIsRequired =  checksRequiredByGitHubConfig.some(el => el.trim() === Config.approvalContext());
         this.requiredStatuses = [];
         this.optionalStatuses = [];
-        this.statusesForApproval = approvalRequired ? this.requiredStatuses : this.optionalStatuses;
+        this._approvalStatusCache = null;
     }
 
     addRequiredStatus(requiredStatus) {
         assert(requiredStatus);
         assert(!this.hasStatus(requiredStatus.context));
         this.requiredStatuses.push(requiredStatus);
+        this._maybeCacheApproval(requiredStatus, this._approvalIsRequired);
     }
 
     addOptionalStatus(optionalStatus) {
         assert(optionalStatus);
         assert(!this.hasStatus(optionalStatus.context));
         this.optionalStatuses.push(optionalStatus);
+        this._maybeCacheApproval(optionalStatus, !this._approvalIsRequired);
     }
 
     hasStatus(context) {
@@ -186,21 +190,33 @@ class StatusChecks
     }
 
     hasApprovalStatus(approval) {
-        return this.statusesForApproval.some(el =>
-                el.context.trim() === Config.approvalContext() &&
-                el.state === approval.state &&
-                el.description === approval.description);
+        return this._approvalStatusCache &&
+               this._approvalStatusCache.context.trim() === Config.approvalContext() &&
+               this._approvalStatusCache.state === approval.state &&
+               this._approvalStatusCache.description === approval.description;
+    }
+
+    _maybeCacheApproval(aStatus, cond) {
+        if (aStatus.context.trim() === Config.approvalContext() && cond) {
+            this._approvalStatusCache = aStatus;
+        }
     }
 
     setApprovalStatus(approval) {
-        this.requiredStatuses = this.statusesForApproval.filter(st => st.context !== Config.approvalContext());
         let raw = {
             state: approval.state,
             target_url: Config.approvalUrl(),
             description: approval.description,
             context: Config.approvalContext()
         };
-        this.addRequiredStatus(new StatusCheck(raw));
+        const check = new StatusCheck(raw);
+        if (this._approvalIsRequired) {
+            this.requiredStatuses = this.requiredStatuses.filter(st => st.context !== Config.approvalContext());
+            this.addRequiredStatus(check);
+        } else {
+            this.optionalStatuses = this.optionalStatuses.filter(st => st.context !== Config.approvalContext());
+            this.addOptionalStatus(check);
+        }
     }
 
     // no more required status changes or additions are expected
@@ -628,13 +644,11 @@ class PullRequest {
 
     // returns filled StatusChecks object
     async _getPrStatuses() {
-        const requiredContexts = await this._getRequiredContexts();
         const combinedPrStatus = await GH.getStatuses(this._prHeadSha());
-        const approvalContextRequired = requiredContexts.some(el => el.trim() === Config.approvalContext());
-        let statusChecks = new StatusChecks(requiredContexts.length, "PR", approvalContextRequired);
+        let statusChecks = new StatusChecks(this._requiredContextsCache.length, "PR", this._requiredContextsCache);
         // fill with required status checks
         for (let st of combinedPrStatus.statuses) {
-            if (requiredContexts.some(el => el.trim() === st.context.trim()))
+            if (this._requiredContextsCache.some(el => el.trim() === st.context.trim()))
                 statusChecks.addRequiredStatus(new StatusCheck(st));
             else
                 statusChecks.addOptionalStatus(new StatusCheck(st));
@@ -648,10 +662,15 @@ class PullRequest {
         const combinedStagingStatuses = await GH.getStatuses(this._stagedSha());
         const genuineStatuses = combinedStagingStatuses.statuses.filter(st => !st.description.endsWith(Config.copiedDescriptionSuffix()));
         assert(genuineStatuses.length <= Config.stagingChecks());
-        let statusChecks = new StatusChecks(Config.stagingChecks(), "Staging");
+        let statusChecks = new StatusChecks(Config.stagingChecks(), "Staging", this._requiredContextsCache);
         // all genuine checks are 'required'
-        for (let st of genuineStatuses)
-            statusChecks.addRequiredStatus(new StatusCheck(st));
+        for (let st of genuineStatuses) {
+            const check = new StatusCheck(st);
+            if (check.context.trim() === Config.approvalContext())
+                statusChecks.setApprovalStatus(check); // PR approval may be optional
+            else
+                statusChecks.addRequiredStatus(check);
+        }
 
         const optionalStatuses = combinedStagingStatuses.statuses.filter(st => st.description.endsWith(Config.copiedDescriptionSuffix()));
         for (let st of optionalStatuses)
@@ -1084,9 +1103,7 @@ class PullRequest {
     async _supplyStagingWithPrRequired() {
         assert(this._stagedStatuses.succeeded());
 
-        const requiredContexts = await this._getRequiredContexts();
-
-        for (let requiredContext of requiredContexts) {
+        for (let requiredContext of this._requiredContextsCache) {
             if (this._stagedStatuses.hasStatus(requiredContext)) {
                 this._log("_supplyStagingWithPrRequired: skip existing " + requiredContext);
                 continue;
@@ -1287,7 +1304,8 @@ class PullRequest {
 
         await this._loadStaged();
         await this._loadRawPr(); // requires this._loadStaged()
-        await this._loadPrState(); // requires this._loadRawPr() and this._loadLabels()
+        await this._getRequiredContexts();
+        await this._loadPrState(); // requires this._loadRawPr(), this._getRequiredContexts and this._loadLabels()
         this._log("PR state: " + this._prState);
 
         if (this._prState.brewing()) {
