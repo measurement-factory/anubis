@@ -653,7 +653,7 @@ class PullRequest {
         const genuineStatuses = combinedStagingStatuses.statuses.filter(st => !st.description.endsWith(Config.copiedDescriptionSuffix()));
         assert(genuineStatuses.length <= Config.stagingChecks());
         let statusChecks = new StatusChecks(Config.stagingChecks(), "Staging", this._contextsRequiredByGitHubConfig);
-        // all genuine checks, expcept PR approval, are 'required'
+        // all genuine checks, except for PR approval, are 'required'
         // PR approval may be either 'required' or 'optional' (depending on the GitHub settings)
         for (let st of genuineStatuses) {
             const check = new StatusCheck(st);
