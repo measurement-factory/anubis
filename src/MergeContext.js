@@ -164,7 +164,7 @@ class StatusChecks
         assert(checksRequiredByGitHubConfig);
         this.expectedStatusCount = expectedStatusCount;
         this.context = context;
-        this._approvalIsRequired =  checksRequiredByGitHubConfig.some(el => el.trim() === Config.approvalContext());
+        this._approvalIsRequired = checksRequiredByGitHubConfig.some(el => el.trim() === Config.approvalContext());
         this.requiredStatuses = [];
         this.optionalStatuses = [];
         this._approvalStatusCache = null;
@@ -174,14 +174,14 @@ class StatusChecks
         assert(requiredStatus);
         assert(!this.hasStatus(requiredStatus.context));
         this.requiredStatuses.push(requiredStatus);
-        this._maybeCacheApproval(requiredStatus, this._approvalIsRequired);
+        this._maybeCacheApproval(requiredStatus);
     }
 
     addOptionalStatus(optionalStatus) {
         assert(optionalStatus);
         assert(!this.hasStatus(optionalStatus.context));
         this.optionalStatuses.push(optionalStatus);
-        this._maybeCacheApproval(optionalStatus, !this._approvalIsRequired);
+        this._maybeCacheApproval(optionalStatus);
     }
 
     hasStatus(context) {
@@ -191,15 +191,13 @@ class StatusChecks
 
     hasApprovalStatus(approval) {
         return this._approvalStatusCache &&
-               this._approvalStatusCache.context.trim() === Config.approvalContext() &&
                this._approvalStatusCache.state === approval.state &&
                this._approvalStatusCache.description === approval.description;
     }
 
-    _maybeCacheApproval(aStatus, cond) {
-        if (aStatus.context.trim() === Config.approvalContext() && cond) {
+    _maybeCacheApproval(aStatus) {
+        if (aStatus.context.trim() === Config.approvalContext())
             this._approvalStatusCache = aStatus;
-        }
     }
 
     setApprovalStatus(approval) {
@@ -217,6 +215,7 @@ class StatusChecks
             this.optionalStatuses = this.optionalStatuses.filter(st => st.context !== Config.approvalContext());
             this.addOptionalStatus(check);
         }
+        assert(this._approvalStatusCache === check);
     }
 
     // no more required status changes or additions are expected
@@ -663,18 +662,22 @@ class PullRequest {
         const genuineStatuses = combinedStagingStatuses.statuses.filter(st => !st.description.endsWith(Config.copiedDescriptionSuffix()));
         assert(genuineStatuses.length <= Config.stagingChecks());
         let statusChecks = new StatusChecks(Config.stagingChecks(), "Staging", this._requiredContextsCache);
-        // all genuine checks are 'required'
+        // all genuine checks, expcept PR approval, are 'required'
+        // PR approval may be either 'required' or 'optional' (depending on the GitHub settings)
         for (let st of genuineStatuses) {
             const check = new StatusCheck(st);
             if (check.context.trim() === Config.approvalContext())
-                statusChecks.setApprovalStatus(check); // PR approval may be optional
+                statusChecks.setApprovalStatus(check);
             else
                 statusChecks.addRequiredStatus(check);
         }
 
         const optionalStatuses = combinedStagingStatuses.statuses.filter(st => st.description.endsWith(Config.copiedDescriptionSuffix()));
-        for (let st of optionalStatuses)
+        for (let st of optionalStatuses) {
+            // PR approval status must be 'genuine' (it is never copied)
+            assert(st.context.trim() !== Config.approvalContext());
             statusChecks.addOptionalStatus(new StatusCheck(st));
+        }
 
         this._log("staging status details: " + statusChecks);
         return statusChecks;
