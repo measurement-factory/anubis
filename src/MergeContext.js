@@ -156,12 +156,15 @@ class StatusChecks
     //   for staged commits: the bot-configured number of required checks (Config.stagingChecks()),
     //   for PR commits: GitHub configured number of required checks (requested from GitHub)
     // context: either "PR" or "Staging";
-    constructor(expectedStatusCount, context) {
+    // contextsRequiredByGitHubConfig: the GitHub protected branch checks in a format of a list of string contexts
+    constructor(expectedStatusCount, context, contextsRequiredByGitHubConfig) {
         assert(expectedStatusCount !== undefined);
         assert(expectedStatusCount !== null);
         assert(context);
+        assert(contextsRequiredByGitHubConfig);
         this.expectedStatusCount = expectedStatusCount;
         this.context = context;
+        this._approvalIsRequired = contextsRequiredByGitHubConfig.some(el => el.trim() === Config.approvalContext());
         this.requiredStatuses = [];
         this.optionalStatuses = [];
     }
@@ -184,21 +187,28 @@ class StatusChecks
     }
 
     hasApprovalStatus(approval) {
-        return this.requiredStatuses.some(el =>
+        const statusesToSearch = this._approvalIsRequired ? this.requiredStatuses : this.optionalStatuses;
+        return statusesToSearch.some(el =>
                 el.context.trim() === Config.approvalContext() &&
                 el.state === approval.state &&
                 el.description === approval.description);
     }
 
     setApprovalStatus(approval) {
-        this.requiredStatuses = this.requiredStatuses.filter(st => st.context !== Config.approvalContext());
         let raw = {
             state: approval.state,
             target_url: Config.approvalUrl(),
             description: approval.description,
             context: Config.approvalContext()
         };
-        this.addRequiredStatus(new StatusCheck(raw));
+        const check = new StatusCheck(raw);
+        if (this._approvalIsRequired) {
+            this.requiredStatuses = this.requiredStatuses.filter(st => st.context !== Config.approvalContext());
+            this.addRequiredStatus(check);
+        } else {
+            this.optionalStatuses = this.optionalStatuses.filter(st => st.context !== Config.approvalContext());
+            this.addOptionalStatus(check);
+        }
     }
 
     // no more required status changes or additions are expected
@@ -454,8 +464,8 @@ class PullRequest {
 
         this._approval = null; // future Approval object
 
-        // optimization: cached _getRequiredContexts() result
-        this._requiredContextsCache = null;
+        // a list of proteced branch contexts received from GitHub
+        this._contextsRequiredByGitHubConfig = null;
 
         this._stagedPosition = null;
 
@@ -502,7 +512,6 @@ class PullRequest {
         const coreId = Config.coreDeveloperIds().get(userLogin);
         if (!coreId)
             return false;
-        this._log(`found core ${role}: ${userLogin}={userId}`);
         this._log(`${role} is a core developer: ${userLogin}=${userId}`);
         // die if we are misconfigured and/or the userLogin has moved to another user
         assert.strictEqual(coreId, userId);
@@ -603,12 +612,11 @@ class PullRequest {
         await GH.createStatus(sha, this._approval.state, Config.approvalUrl(), this._approval.description, Config.approvalContext());
     }
 
-    async _getRequiredContexts() {
-        if (this._requiredContextsCache)
-            return this._requiredContextsCache;
+    async _loadRequiredContexts() {
+        assert(!this._contextsRequiredByGitHubConfig);
 
         try {
-            this._requiredContextsCache = await GH.getProtectedBranchRequiredStatusChecks(this._prBaseBranch());
+            this._contextsRequiredByGitHubConfig = await GH.getProtectedBranchRequiredStatusChecks(this._prBaseBranch());
         } catch (e) {
            if (e.name === 'ErrorContext' && e.notFound())
                this._logEx(e, "no status checks are required");
@@ -616,22 +624,20 @@ class PullRequest {
                throw e;
         }
 
-        if (this._requiredContextsCache === undefined)
-            this._requiredContextsCache = [];
+        if (this._contextsRequiredByGitHubConfig === undefined)
+            this._contextsRequiredByGitHubConfig = [];
 
-        assert(this._requiredContextsCache);
-        this._log("required contexts found: " + this._requiredContextsCache.length);
-        return this._requiredContextsCache;
+        assert(this._contextsRequiredByGitHubConfig);
+        this._log("required contexts found: " + this._contextsRequiredByGitHubConfig.length);
     }
 
     // returns filled StatusChecks object
     async _getPrStatuses() {
-        const requiredContexts = await this._getRequiredContexts();
         const combinedPrStatus = await GH.getStatuses(this._prHeadSha());
-        let statusChecks = new StatusChecks(requiredContexts.length, "PR");
+        let statusChecks = new StatusChecks(this._contextsRequiredByGitHubConfig.length, "PR", this._contextsRequiredByGitHubConfig);
         // fill with required status checks
         for (let st of combinedPrStatus.statuses) {
-            if (requiredContexts.some(el => el.trim() === st.context.trim()))
+            if (this._contextsRequiredByGitHubConfig.some(el => el.trim() === st.context.trim()))
                 statusChecks.addRequiredStatus(new StatusCheck(st));
             else
                 statusChecks.addOptionalStatus(new StatusCheck(st));
@@ -645,14 +651,23 @@ class PullRequest {
         const combinedStagingStatuses = await GH.getStatuses(this._stagedSha());
         const genuineStatuses = combinedStagingStatuses.statuses.filter(st => !st.description.endsWith(Config.copiedDescriptionSuffix()));
         assert(genuineStatuses.length <= Config.stagingChecks());
-        let statusChecks = new StatusChecks(Config.stagingChecks(), "Staging");
-        // all genuine checks are 'required'
-        for (let st of genuineStatuses)
-            statusChecks.addRequiredStatus(new StatusCheck(st));
+        let statusChecks = new StatusChecks(Config.stagingChecks(), "Staging", this._contextsRequiredByGitHubConfig);
+        // all genuine checks, except for PR approval, are 'required'
+        // PR approval may be either 'required' or 'optional' (depending on the GitHub settings)
+        for (let st of genuineStatuses) {
+            const check = new StatusCheck(st);
+            if (check.context.trim() === Config.approvalContext())
+                statusChecks.setApprovalStatus(check);
+            else
+                statusChecks.addRequiredStatus(check);
+        }
 
         const optionalStatuses = combinedStagingStatuses.statuses.filter(st => st.description.endsWith(Config.copiedDescriptionSuffix()));
-        for (let st of optionalStatuses)
+        for (let st of optionalStatuses) {
+            // PR approval status must be 'genuine' (it is never copied)
+            assert(st.context.trim() !== Config.approvalContext());
             statusChecks.addOptionalStatus(new StatusCheck(st));
+        }
 
         this._log("staging status details: " + statusChecks);
         return statusChecks;
@@ -1081,9 +1096,7 @@ class PullRequest {
     async _supplyStagingWithPrRequired() {
         assert(this._stagedStatuses.succeeded());
 
-        const requiredContexts = await this._getRequiredContexts();
-
-        for (let requiredContext of requiredContexts) {
+        for (let requiredContext of this._contextsRequiredByGitHubConfig) {
             if (this._stagedStatuses.hasStatus(requiredContext)) {
                 this._log("_supplyStagingWithPrRequired: skip existing " + requiredContext);
                 continue;
@@ -1284,7 +1297,8 @@ class PullRequest {
 
         await this._loadStaged();
         await this._loadRawPr(); // requires this._loadStaged()
-        await this._loadPrState(); // requires this._loadRawPr() and this._loadLabels()
+        await this._loadRequiredContexts();
+        await this._loadPrState(); // requires this._loadRawPr(), this._loadRequiredContexts() and this._loadLabels()
         this._log("PR state: " + this._prState);
 
         if (this._prState.brewing()) {
