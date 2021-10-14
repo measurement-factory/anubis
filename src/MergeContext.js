@@ -495,6 +495,11 @@ class PullRequest {
         // Whether this PR has or had a staged commit with failed checks.
         // Starts as M-failed-staging-checks and then acquires its value
         // from loaded staging statuses.
+
+        // Whether the PR has a relevant staged commit that failed its checks.
+        // The relevant commit can be either a fresh staged commit or an abandoned
+        // staged commit, if it is equivalent to a staged commit that would be
+        // created right now.
         this._stagingFailed = false;
     }
 
@@ -969,8 +974,9 @@ class PullRequest {
         return await GH.getCommit(mergeSha);
     }
 
-    // whether we should prevent the failed staged PR (that lost its staging to another PR)
-    // from restaging and failing again, creating a live lock with that other PR
+    // Returns a fresh value for a true this._stagingFailed field.
+    // Is used only on the path where staging commit does not exist (for existing staging commit,
+    // this._stagingFailed is calculated in _getStagingStatuses()
     async _recalculateStagingFailed() {
         assert(!this._stagedSha());
         assert(this._stagingFailed);
@@ -978,8 +984,11 @@ class PullRequest {
         const allEvents = await GH.getIssueEvents(this._prNumber());
         // we consider all commits created by the bot user and referencing this PR as staged commits
         let stagedEvents = allEvents.filter(ev => ev.event === "referenced" && ev.actor.login === Config.githubUserLogin());
+        // The stagedEvents should contain at least the failed staged commit.
+        // Keep the current (true) value if we could not even find that commit.
+        // The lack of commits might be a temporary communication problem.
         if (!stagedEvents.length)
-            return false;
+            return this._stagingFailed;
 
         // just in case: events should be already sorted by date
         stagedEvents = stagedEvents.sort((ev1, ev2) => Date.parse(ev1.created_at) - Date.parse(ev2.created_at));
@@ -988,6 +997,7 @@ class PullRequest {
         const mergeCommitCreatedAt = Date.parse(mergeCommit.author.date);
         const stagedCommitCreatedAt = Date.parse(lastStaged.created_at);
         assert(mergeCommitCreatedAt);
+        assert(stagedCommitCreatedAt);
         // whether the merge commit is fresher than the last staged commit
         if (stagedCommitCreatedAt < mergeCommitCreatedAt)
             return false;
@@ -1016,16 +1026,14 @@ class PullRequest {
 
         if (this._stagedPosition.merged()) {
             this._log("already merged into base some time ago");
-            // cleanup if this interrupted merge left a stale label behind
-            this._stagingFailed = false; // probably already false
             this._enterMerged();
             return;
         }
 
         if (!(await this._stagedCommitIsFresh())) {
             await this._labels.addImmediately(Config.abandonedStagingChecksLabel());
-            // forget label-based info derived from a now-stale staged commit
-            this._stagingFailed = false;
+            // we have no fresh staged commit
+            this._stagingFailed = false; // may already be false
             await this._enterBrewing();
             return;
         }
@@ -1232,7 +1240,6 @@ class PullRequest {
         Config.githubUserName(user.name);
         assert(Config.githubUserName());
     }
-
 
     async _createStaged() {
         const baseSha = await GH.getReference(this._prBaseBranchPath());
