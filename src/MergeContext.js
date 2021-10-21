@@ -497,9 +497,9 @@ class PullRequest {
         // from loaded staging statuses.
 
         // Whether the PR has a relevant staged commit that failed its checks.
-        // The relevant commit can be either a fresh staged commit or an abandoned
-        // staged commit, if it is equivalent to a staged commit that would be
-        // created right now.
+        // The relevant commit can be a fresh staged commit, a merged commit (for
+        // still-open PRs) or an abandoned staged commit, if it is equivalent
+        // to a staged commit that would have been created right now.
         this._stagingFailed = false;
     }
 
@@ -661,7 +661,7 @@ class PullRequest {
         for (let st of optionalStatuses)
             statusChecks.addOptionalStatus(new StatusCheck(st));
 
-        this._stagingFailed = statusChecks.failed(); // overwrites label-based info
+        this._stagingFailed = statusChecks.failed();
         this._log("staging status details: " + statusChecks);
         return statusChecks;
     }
@@ -707,7 +707,6 @@ class PullRequest {
         let labels = await GH.getLabels(this._prNumber());
         assert(!this._labels);
         this._labels = new Labels(labels, this._prNumber());
-        this._stagingFailed = this._labels.has(Config.failedStagingChecksLabel());
     }
 
     // stop processing if it is prohibited by a human-controlled label
@@ -974,21 +973,15 @@ class PullRequest {
         return await GH.getCommit(mergeSha);
     }
 
-    // Returns a fresh value for a true this._stagingFailed field.
-    // Is used only on the path where staging commit does not exist (for existing staging commit,
-    // this._stagingFailed is calculated in _getStagingStatuses()
+    // recalculates this._stagingFailed value for PRs without staging commit
     async _recalculateStagingFailed() {
         assert(!this._stagedSha());
-        assert(this._stagingFailed);
 
         const allEvents = await GH.getIssueEvents(this._prNumber());
         // we consider all commits created by the bot user and referencing this PR as staged commits
         let stagedEvents = allEvents.filter(ev => ev.event === "referenced" && ev.actor.login === Config.githubUserLogin());
-        // The stagedEvents should contain at least the failed staged commit.
-        // Keep the current (true) value if we could not even find that commit.
-        // The lack of commits might be a temporary communication problem.
         if (!stagedEvents.length)
-            return this._stagingFailed;
+            return;
 
         // just in case: events should be already sorted by date
         stagedEvents = stagedEvents.sort((ev1, ev2) => Date.parse(ev1.created_at) - Date.parse(ev2.created_at));
@@ -1002,22 +995,19 @@ class PullRequest {
         if (stagedCommitCreatedAt < mergeCommitCreatedAt)
             return false;
 
-        const stagedStatuses = await this._getStagingStatuses(lastStaged.commit_id);
+        // recalculates this._stagingFailed value
+        await this._getStagingStatuses(lastStaged.commit_id);
         // TODO: If something made this (previously failed) commit succeed, then
         // we should use it further, if possible.
-        return stagedStatuses.failed();
     }
 
     async _loadPrState() {
         if (!this._stagedSha()) {
+            await this._recalculateStagingFailed();
             if (await this._mergedSomeTimeAgo()) {
-                // leave this._stagingFailed intact here to
-                // keep labeling of manually merged PRs with failed commits
                 this._enterMerged();
                 return;
             }
-            if (this._stagingFailed)
-                this._stagingFailed = await this._recalculateStagingFailed();
             await this._enterBrewing();
             return;
         }
