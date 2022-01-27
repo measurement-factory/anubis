@@ -150,19 +150,109 @@ class StatusCheck
     success() { return this.state === 'success'; }
 
     pending() { return this.state === 'pending'; }
+
+    equals(check) {
+        return this.description === check.description &&
+               this.state === check.state &&
+               this.context.trim() === check.context.trim();
+    }
 }
 
-// aggregates status checks for a PR or commit
+// aggregates 'internal' (i.e., bot-reported) status checks for a PR or commit
+class DerivedStatusChecks
+{
+    constructor() {
+        this._approvalPR = null;
+        this._approvalStaged = null;
+        this._automatedPR = null;
+        this._automatedStaged = null;
+    }
+
+    addApproval(approval, scope) {
+        let oldCheck = this._select(Config.approvalContext(), scope);
+        let newCheck = DerivedStatusChecks.CreateApproval(approval);
+
+        if (!oldCheck) {
+            oldCheck = newCheck;
+            return true;
+        }
+
+        if (oldCheck.equals(newCheck))
+            return false;
+
+        oldCheck = newCheck;
+        return true;
+    }
+
+    add(newCheck, scope) {
+        if (!DerivedStatusChecks.Has(newCheck.context))
+            return false;
+
+        let oldCheck = this._select(newCheck.context, scope);
+        if (!oldCheck) {
+            oldCheck = newCheck;
+            return true;
+        }
+
+        if (oldCheck.equals(newCheck))
+            return false;
+
+        oldCheck = newCheck;
+        return true;
+    }
+
+    // scope: "staged" or "PR"
+    _select(context, scope) {
+        assert(DerivedStatusChecks.Has(context));
+        if (context === Config.automatedMergeStatusContext()) {
+            assert(scope);
+            if (scope === "staged")
+                return this._automatedStaged;
+            else
+                return this._automatedPR;
+        } else {
+            assert(context === Config.approvalContext());
+            if (scope === "staged")
+                return this._approvalPR;
+            else
+                return this._approvalStaged;
+        }
+    }
+
+    static CreateAutomated(state, description) {
+        assert(state);
+        assert(description);
+        let raw = {
+            state: state,
+            target_url: Config.automatedMergeStatusUrl(),
+            description: description,
+            context: Config.automatedMergeStatusContext()
+        };
+        return new StatusCheck(raw);
+    }
+
+    static CreateApproval(approval) {
+        return {
+            state: approval.state,
+            target_url: Config.approvalUrl(),
+            description: approval.description,
+            context: Config.approvalContext()
+        };
+    }
+
+    static Has(context) {
+        return context === Config.approvalContext() ||
+               context === Config.automatedMergeStatusContext();
+    }
+}
+
+// aggregates 'external' (i.e., reported by a CI) status checks for a PR or commit
+// does not include bot-reported 'internal' checks (approvals, etc.)
 class StatusChecks
 {
-    // TODO: we should distinguish CI-reported (genuine) statuses from
-    // bot-reported (derivative) statuses, such as approvals.
-    // For example, failed() should count only genuine statuses, whereas
-    // final() should count all statuses.
-
     // expectedStatusCount:
-    //   for staged commits: the bot-configured number of required checks (Config.stagingChecks()),
-    //   for PR commits: GitHub configured number of required checks (requested from GitHub)
+    //   for staged commits: the bot-configured number of required(external) checks (Config.stagingChecksCI()),
+    //   for PR commits: GitHub configured number of required(external) checks (requested from GitHub)
     // context: either "PR" or "Staging";
     constructor(expectedStatusCount, context) {
         assert(expectedStatusCount !== undefined);
@@ -170,14 +260,14 @@ class StatusChecks
         assert(context);
         this._expectedStatusCount = expectedStatusCount;
         this.context = context;
-        this._requiredStatuses = [];
+        this.requiredStatuses = [];
         this.optionalStatuses = [];
     }
 
     addRequiredStatus(requiredStatus) {
         assert(requiredStatus);
         assert(!this.hasStatus(requiredStatus.context));
-        this._requiredStatuses.push(requiredStatus);
+        this.requiredStatuses.push(requiredStatus);
     }
 
     addOptionalStatus(optionalStatus) {
@@ -187,81 +277,36 @@ class StatusChecks
     }
 
     hasStatus(context) {
-        return this.requiredStatuses().some(el => el.context.trim() === context.trim()) ||
+        return this.requiredStatuses.some(el => el.context.trim() === context.trim()) ||
             this.optionalStatuses.some(el => el.context.trim() === context.trim());
-    }
-
-    hasApprovalStatus(approval) {
-        return this.requiredStatuses().some(el =>
-                el.context.trim() === Config.approvalContext() &&
-                el.state === approval.state &&
-                el.description === approval.description);
-    }
-
-    setApprovalStatus(approval) {
-        this._requiredStatuses = this._requiredStatuses.filter(st => st.context !== Config.approvalContext());
-        let raw = {
-            state: approval.state,
-            target_url: Config.approvalUrl(),
-            description: approval.description,
-            context: Config.approvalContext()
-        };
-        this.addRequiredStatus(new StatusCheck(raw));
-    }
-
-    hasExactStatus(check) {
-        return this._requiredStatuses.some(el =>
-                el.description === check.description &&
-                el.state === check.state &&
-                el.context.trim() === check.context.trim());
-    }
-
-    // all required statuses except the 'automated merge test' status
-    requiredStatuses() {
-        return this._requiredStatuses.filter(st => st.context !== Config.automatedMergeStatusContext());
-    }
-
-    // the number of expected statuses excluding the 'automated merge test' status (if any)
-    expectedStatusCount() {
-        const hasAutomated = this._requiredStatuses.some(el => el.context.trim() === Config.automatedMergeStatusContext());
-        return hasAutomated ? this._expectedStatusCount - 1 : this._expectedStatusCount;
     }
 
     // no more required status changes or additions are expected
     final() {
-        const required = this.requiredStatuses();
-        return (required.length >= this.expectedStatusCount()) &&
-            required.every(check => !check.pending());
+        return (this.requiredStatuses.length >= this._expectedStatusCount) &&
+            this.requiredStatuses.every(check => !check.pending());
     }
 
     // something went wrong with at least one of the required status checks
     failed() {
-        return this._failedExcept(Config.approvalContext());
-    }
-
-    // Whether at least one of the required status checks failed.
-    // Ignores checks with the given context, when searching.
-    _failedExcept(context) {
-        const filteredChecks = this.requiredStatuses().filter(st => context ? st.context !== context : true);
-        return filteredChecks.some(check => check.failed());
+        return this.requiredStatuses.some(check => check.failed());
     }
 
     // the results are final and all checks were a success
     succeeded() {
-        return this.final() && this.requiredStatuses().every(check => check.success());
+        return this.final() && this.requiredStatuses.every(check => check.success());
     }
 
     progressString() {
-        const required = this.requiredStatuses();
-        const succeeded = required.filter(check => check.success());
-        const pending = required.filter(check => check.pending());
-        const failed = required.filter(check => check.failed());
-        return succeeded.length + " succeeded, " + pending.length + " pending, " + failed.length + " failed out of " + this.expectedStatusCount();
+        const succeeded = this.requiredStatuses.filter(check => check.success());
+        const pending = this.requiredStatuses.filter(check => check.pending());
+        const failed = this.requiredStatuses.filter(check => check.failed());
+        return succeeded.length + " succeeded, " + pending.length + " pending, " + failed.length + " failed out of " + this._expectedStatusCount;
     }
 
     toString() {
-        let combinedStatus = "context: " + this.context + " expected/required/optional: " + this.expectedStatusCount() + "/" +
-            this.requiredStatuses().length + "/" + this.optionalStatuses.length + ", combined: ";
+        let combinedStatus = "context: " + this.context + " expected/required/optional: " + this._expectedStatusCount + "/" +
+            this.requiredStatuses.length + "/" + this.optionalStatuses.length + ", combined: ";
         if (this.failed())
             combinedStatus += "failure";
         else if (this.succeeded())
@@ -272,7 +317,7 @@ class StatusChecks
             combinedStatus += "to-be-determined";
 
         let requiredDetail = "";
-        for (let st of this.requiredStatuses()) {
+        for (let st of this.requiredStatuses) {
             if (requiredDetail !== "")
                 requiredDetail += ", ";
             requiredDetail += st.context + ": " + st.state;
@@ -527,6 +572,8 @@ class PullRequest {
         // GitHub statuses of the PR branch head commit
         this._prStatuses = null;
 
+        this._derivedStatuses = null;
+
         this._updated = false; // _update() has been called
 
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
@@ -625,93 +672,83 @@ class PullRequest {
 
         assert(this._prStatuses);
 
-        if (!this._prStatuses.hasApprovalStatus(this._approval)) {
-            await this._createApprovalStatus(this._prHeadSha());
-            this._prStatuses.setApprovalStatus(this._approval);
-        }
-
-        if (this._stagedStatuses && !this._stagedStatuses.hasApprovalStatus(this._approval)) {
-            await this._createApprovalStatus(this._stagedSha());
-            this._stagedStatuses.setApprovalStatus(this._approval);
-        }
+        await this._createApprovalStatus("PR");
+        if (this._stagedSha())
+            await this._createApprovalStatus("staged");
     }
 
-    async _createApprovalStatus(sha) {
+    async _createApprovalStatus(scope) {
         if (this._dryRun("creating approval status"))
             return;
-        await GH.createStatus(sha, this._approval.state, Config.approvalUrl(), this._approval.description, Config.approvalContext());
+        if (this.derivedStatuses().addApproval(this._approval, scope)) {
+            const sha = (scope === "staged") ? this._stagedSha() : this._prHeadSha();
+            await GH.createStatus(sha, this._approval.state, Config.approvalUrl(), this._approval.description, Config.approvalContext());
+        }
     }
 
-    _createAutomatedStatus(state, description) {
-        assert(state);
-        assert(description);
-        let raw = {
-            state: state,
-            target_url: Config.automatedMergeStatusUrl(),
-            description: description,
-            context: Config.automatedMergeStatusContext()
-        };
-        return new StatusCheck(raw);
-    }
-
-    _createAutomatedPR() {
+    _createAutomatedForPR() {
         assert(Config.manageAutomatedMergeStatus());
 
         if (this._labels.has(Config.mergedLabel()))
-            return this._createStatus("success", Config.mergedLabel());
+            return DerivedStatusChecks.CreateAutomated("success", Config.mergedLabel());
 
         if (this._stagedSha())
-            return this._createAutomatedStatus("pending", "staged at " + this._stagedShaBrief());
+            return DerivedStatusChecks.CreateAutomated("pending", "staged at " + this._stagedShaBrief());
 
         return this._currentKnownProblem ?
-            this._createAutomatedStatus(this._currentKnownProblem._status, this._currentKnownProblem.toString()) :
-            this._createAutomatedStatus("pending", "not staged yet");
+            DerivedStatusChecks.CreateAutomated(this._currentKnownProblem._status, this._currentKnownProblem.toString()) :
+            DerivedStatusChecks.CreateAutomated("pending", "not staged yet");
     }
 
-    _createAutomatedStaged() {
+    _createAutomatedForStaged() {
         assert(Config.manageAutomatedMergeStatus());
 
         if (this._labels.has(Config.mergedLabel()))
-            return this._createStatus("success", Config.mergedLabel());
+            return DerivedStatusChecks.CreateAutomated("success", Config.mergedLabel());
 
         if (!this._stagedSha())
             return null;
 
         return this._currentKnownProblem ?
-            this._createAutomatedStatus(this._currentKnownProblem._status, this._currentKnownProblem.toString()) :
-            this._createAutomatedStatus("pending", "staging in process");
+            DerivedStatusChecks.CreateAutomated(this._currentKnownProblem._status, this._currentKnownProblem.toString()) :
+            DerivedStatusChecks.CreateAutomated("pending", "staging in process");
     }
 
     async _setAutomatedStatuses() {
         if (!Config.manageAutomatedMergeStatus())
             return;
 
-        const prCheck = this._createAutomatedPR();
+        const prCheck = this._createAutomatedForPR();
         if (prCheck)
-            await this._applyAutomatedStatus(prCheck, this._prStatuses);
+            await this._applyAutomatedStatus(prCheck, "PR");
 
-        const stagedCheck = this._createAutomatedStaged();
+        const stagedCheck = this._createAutomatedForStaged();
         if (stagedCheck)
-            await this._applyAutomatedStatus(stagedCheck, this._stagedStatuses);
+            await this._applyAutomatedStatus(stagedCheck, "staged");
     }
 
-    async _setAutomatedStagedSuccess() {
+    async _setAutomatedForStagedSuccess() {
         assert(this._stagedSha);
         const description = 'will be merged as ' + this._stagedShaBrief();
         const check = this._createAutomatedStatus("success", description);
         assert(this._stagedStatuses);
-        await this._applyAutomatedStatus(check, this._stagedStatuses);
+        await this._applyAutomatedStatus(check, "staged");
     }
 
-    async _applyAutomatedStatus(check, statuses) {
-        if (!statuses)
-            return;
+    async _applyAutomatedStatus(check, scope) {
         if (this._dryRun("creating automated merge status"))
             return;
-        const sha = (statuses === this._stagedStatuses) ? this._stagedSha() : this._prHeadSha();
-        if (!statuses.hasExactStatus(check))
+        assert(DerivedStatusChecks.Has(check.context));
+        if (this.derivedStatuses().add(check, scope)) {
+            const sha = (scope === "staged") ? this._stagedSha() : this._prHeadSha();
             await GH.createStatus(sha, check.state, check.targetUrl, check.description, check.context);
-        statuses.addRequiredStatus(check);
+        }
+    }
+
+    derivedStatuses() {
+        if (!this._derivedStatuses)
+            this._derivedStatuses = new DerivedStatusChecks();
+        return this._derivedStatuses;
     }
 
     async _getRequiredContexts() {
@@ -739,9 +776,13 @@ class PullRequest {
     async _getPrStatuses() {
         const requiredContexts = await this._getRequiredContexts();
         const combinedPrStatus = await GH.getStatuses(this._prHeadSha());
-        let statusChecks = new StatusChecks(requiredContexts.length, "PR");
+        let statusChecks = new StatusChecks(requiredContexts.length - Config.derivativeRequiredChecks(), "PR");
         // fill with required status checks
         for (let st of combinedPrStatus.statuses) {
+            if (DerivedStatusChecks.Has(st.context)) {
+                this.derivedStatuses().add(st, "PR");
+                continue;
+            }
             if (requiredContexts.some(el => el.trim() === st.context.trim()))
                 statusChecks.addRequiredStatus(new StatusCheck(st));
             else
@@ -755,17 +796,24 @@ class PullRequest {
     async _getStagingStatuses() {
         const combinedStagingStatuses = await GH.getStatuses(this._stagedSha());
         const genuineStatuses = combinedStagingStatuses.statuses.filter(st =>
-                !st.description.endsWith(Config.copiedDescriptionSuffix()) &&
-                st.context !== Config.automatedMergeStatusContext());
-        assert(genuineStatuses.length <= Config.stagingChecks());
-        let statusChecks = new StatusChecks(Config.stagingChecks(), "Staging");
+                !st.description.endsWith(Config.copiedDescriptionSuffix()));
+        assert(genuineStatuses.length <= Config.stagingChecks()); // PR approval
+        let statusChecks = new StatusChecks(Config.stagingChecksCI(), "Staging");
         // all genuine checks are 'required'
-        for (let st of genuineStatuses)
-            statusChecks.addRequiredStatus(new StatusCheck(st));
+        for (let st of genuineStatuses) {
+            if (DerivedStatusChecks.Has(st.context))
+                this.derivedStatuses().add(st, "staged");
+            else
+                statusChecks.addRequiredStatus(new StatusCheck(st));
+        }
 
         const optionalStatuses = combinedStagingStatuses.statuses.filter(st => st.description.endsWith(Config.copiedDescriptionSuffix()));
-        for (let st of optionalStatuses)
-            statusChecks.addOptionalStatus(new StatusCheck(st));
+        for (let st of optionalStatuses) {
+            if (DerivedStatusChecks.Has(st.context))
+                this.derivedStatuses().add(st, "staged");
+            else
+                statusChecks.addOptionalStatus(new StatusCheck(st));
+        }
 
         this._log("staging status details: " + statusChecks);
         return statusChecks;
@@ -1198,10 +1246,12 @@ class PullRequest {
                 continue;
             }
 
-            if (requiredContext === Config.automatedMergeStatusContext())
+            if (DerivedStatusChecks.Has(requiredContext)) {
+                this._log("_supplyStagingWithPrRequired: skip derived " + requiredContext);
                 continue;
+            }
 
-            const requiredPrStatus = this._prStatuses.requiredStatuses().find(el => el.context.trim() === requiredContext.trim());
+            const requiredPrStatus = this._prStatuses.requiredStatuses.find(el => el.context.trim() === requiredContext.trim());
             assert(requiredPrStatus);
             assert(!requiredPrStatus.description.endsWith(Config.copiedDescriptionSuffix()));
 
@@ -1292,7 +1342,7 @@ class PullRequest {
 
         assert(!this._stagingBanned);
 
-        await this._setAutomatedStagedSuccess();
+        await this._setAutomatedForStagedSuccess();
 
         try {
             await GH.updateReference(this._prBaseBranchPath(), this._stagedSha(), false);
@@ -1510,14 +1560,14 @@ class PullRequest {
         assert(arguments.length === 1);
         this._labelPushBan = why;
         assert(this._labelPushBan); // paranoid: `why` is truthy
-        return new PrProblem("fail", why);
+        return new PrProblem("failure", why);
     }
 
     // a problem that humans can discern via GitHub-maintained PR state
     // reprocessing will be required after the problem is fixed
     _exObviousFailure(why) {
         assert(arguments.length === 1);
-        return new PrProblem("fail", why);
+        return new PrProblem("failure", why);
     }
 
     // like _exObviousFailure() but indicates an event which this PR is waiting for
@@ -1533,7 +1583,7 @@ class PullRequest {
         assert(arguments.length === 2);
         assert(!this._labelPushBan);
         this._labels.add(label);
-        let problem = new PrProblem("fail", why);
+        let problem = new PrProblem("failure", why);
         problem._label = label;
     }
 }

@@ -82,6 +82,8 @@ class ConfigOptions {
     votingDelayMax() { return this._votingDelayMax; }
     votingDelayMin() { return this._votingDelayMin; }
     stagingChecks() { return this._stagingChecks; }
+    stagingChecksCI() { return this._stagingChecks - this.derivativeRequiredChecks(); }
+    derivativeRequiredChecks() { return 2; }
     loggerParams() { return this._loggerParams; }
 
     // an unexpected error occurred outside the "staged" phase
