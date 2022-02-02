@@ -46,6 +46,7 @@ class ProcessResult
 // Exception          Abandon  Push-Labels  Result-of-process()
 // _exLostControl()     yes      no           approval delay (if any)
 // _exObviousFailure()  yes      yes          approval delay (if any)
+// _exObviousWaiting()  yes      yes          approval delay (if any)
 // _exLabeledFailure()  yes      yes          approval delay (if any)
 // _exSuspend()         no       yes          approval delay (if any)
 // any-unlisted-above   yes      yes          exception + M-failed-other
@@ -902,7 +903,7 @@ class PullRequest {
         assert(!this._labels.has(Config.failedStagingOtherLabel()));
 
         if (this._labels.has(Config.failedStagingChecksLabel()))
-            throw this._exLabeledFailure("staged commit tests failed", Config.failedStagingChecksLabel());
+            throw this._exLabeledFailure("staged commit tests failed some time ago", Config.failedStagingChecksLabel());
 
         if (this._wipPr())
             throw this._exObviousWaiting("waiting on WIP");
@@ -926,7 +927,7 @@ class PullRequest {
             throw this._exObviousFailure("failed PR tests");
 
         if (!this._prStatuses.final())
-            throw this._exObviousWaiting("waiting for PR checks");
+            throw this._exObviousWaiting("waiting for PR tests");
 
         assert(this._prStatuses.succeeded());
     }
@@ -1228,7 +1229,7 @@ class PullRequest {
     async _processStagingStatuses() {
         assert(this._stagedStatuses);
         if (this._stagedStatuses.failed())
-            throw this._exLabeledFailure("staging tests failed", Config.failedStagingChecksLabel());
+            throw this._exLabeledFailure("staged commit tests have failed", Config.failedStagingChecksLabel());
 
         if (!this._stagedStatuses.final()) {
             this._labels.add(Config.waitingStagingChecksLabel());
@@ -1325,15 +1326,15 @@ class PullRequest {
         // yes, _checkStagingPreconditions() has checked approval already, but
         // humans may have changed their mind since that check
         if (!this._approval.granted())
-            throw this._exObviousWaiting("lost approval");
+            throw this._exObviousWaiting("waiting for approval (again after staging)");
         if (this._approval.grantedTimeout())
-            throw this._exObviousWaiting("restart waiting for objections");
+            throw this._exObviousWaiting("waiting for objections (again after staging)");
 
         if (this._prStatuses.failed())
-            throw this._exObviousFailure("new PR branch tests appeared/failed after staging");
+            throw this._exObviousFailure("PR branch tests failed after staging");
 
         if (!this._prStatuses.final())
-            throw this._exSuspend("waiting for PR branch tests that appeared after staging");
+            throw this._exSuspend("waiting for PR branch tests (again after staging)");
 
         assert(this._prStatuses.succeeded());
 
@@ -1346,7 +1347,7 @@ class PullRequest {
         this._log("merging to base...");
 
         if (this._dryRun("merging to base"))
-            throw this._exSuspend("waiting for dry-run mode to end");
+            throw this._exSuspend("waiting for the dry-run mode to end (after staging)");
 
         if (this._stagingOnly())
             throw this._exSuspend("waiting for staging-only mode to end");
@@ -1394,7 +1395,7 @@ class PullRequest {
         const committer = {name: Config.githubUserName(), email: Config.githubUserEmail(), date: now.toISOString()};
 
         if (this._dryRun("create staged commit"))
-            throw this._exObviousWaiting("dryRun");
+            throw this._exObviousWaiting("waiting for the dry-run mode to end");
 
         this._stagedCommit = await GH.createCommit(mergeCommit.tree.sha, this._prMessage(), [baseSha], mergeCommit.author, committer);
 
@@ -1581,8 +1582,8 @@ class PullRequest {
         return new PrProblem("failure", why);
     }
 
-    // like _exObviousFailure() but indicates an event which this PR is waiting for
-    // rather than some problem/error
+    // Indicates an event which this PR is waiting for. Differs from _exSuspend()
+    // that reprocessing from scratch will be required after eceiving the event.
     _exObviousWaiting(why) {
         assert(arguments.length === 1);
         return new PrProblem("pending", why);
