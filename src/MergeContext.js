@@ -46,7 +46,7 @@ class ProcessResult
 // Exception          Abandon  Push-Labels  Result-of-process()
 // _exLostControl()     yes      no           approval delay (if any)
 // _exObviousFailure()  yes      yes          approval delay (if any)
-// _exObviousWaiting()  yes      yes          approval delay (if any)
+// _exWaiting()         yes      yes          approval delay (if any)
 // _exLabeledFailure()  yes      yes          approval delay (if any)
 // _exSuspend()         no       yes          approval delay (if any)
 // any-unlisted-above   yes      yes          exception + M-failed-other
@@ -695,10 +695,24 @@ class PullRequest {
     async _createApprovalStatus(sha) {
         if (this._dryRun("creating approval status"))
             return;
-        let statuses = (sha === this._prHeadSha()) ? this._derivedPrStatuses : this._derivedStagedStatuses;
-        assert(statuses);
-        if (statuses.addApproval(this._approval))
+        if (this._getDerivedStatuses(sha).addApproval(this._approval))
             await GH.createStatus(sha, this._approval.state, Config.approvalUrl(), this._approval.description, Config.approvalContext());
+    }
+
+    _getDerivedPrStatuses() {
+        if (!this._derivedPrStatuses)
+            this._derivedPrStatuses = new DerivedStatusChecks("PR");
+        return this._derivedPrStatuses;
+    }
+
+    _getDerivedStagedStatuses() {
+        if (!this._derivedStagedStatuses)
+            this._derivedStagedStatuses = new DerivedStatusChecks("Staging");
+        return this._derivedStagedStatuses;
+    }
+
+    _getDerivedStatuses(sha) {
+        return (sha === this._prHeadSha()) ? this._getDerivedPrStatuses() : this._getDerivedStagedStatuses();
     }
 
     _createAutomatedForPR() {
@@ -753,10 +767,8 @@ class PullRequest {
     async _applyAutomatedStatus(check, sha) {
         if (this._dryRun("creating automated merge status"))
             return;
-        let statuses = (sha === this._prHeadSha()) ? this._derivedPrStatuses : this._derivedStagedStatuses;
         assert(DerivedStatusChecks.Has(check.context));
-        if (!statuses)
-            statuses = new DerivedStatusChecks(sha === this._prHeadSha() ? "PR" : "Staging");
+        let statuses = this._getDerivedStatuses(sha);
         if (statuses.add(check))
             await GH.createStatus(sha, check.state, check.targetUrl, check.description, check.context);
     }
@@ -786,12 +798,11 @@ class PullRequest {
         const requiredContexts = await this._getRequiredContexts();
         const combinedPrStatus = await GH.getStatuses(this._prHeadSha());
         this._prStatuses = new StatusChecks(requiredContexts.length - Config.derivativeRequiredChecks(), "PR");
-        this._derivedPrStatuses = new DerivedStatusChecks("PR");
         // fill with required status checks
         for (let st of combinedPrStatus.statuses) {
             const check = new StatusCheck(st);
             if (DerivedStatusChecks.Has(st.context)) {
-                this._derivedPrStatuses.add(check, "PR");
+                this._getDerivedPrStatuses().add(check, "PR");
                 continue;
             }
             if (requiredContexts.some(el => el.trim() === st.context.trim()))
@@ -809,12 +820,11 @@ class PullRequest {
                 !st.description.endsWith(Config.copiedDescriptionSuffix()));
         assert(genuineStatuses.length <= Config.stagingChecks()); // PR approval
         this._stagedStatuses = new StatusChecks(Config.stagingChecksCI(), "Staging");
-        this._derivedStagedStatuses = new DerivedStatusChecks("Staging");
         // all genuine checks are 'required'
         for (let st of genuineStatuses) {
             const check = new StatusCheck(st);
             if (DerivedStatusChecks.Has(st.context))
-                this._derivedStagedStatuses.add(check, "staged");
+                this._getDerivedStagedStatuses().add(check, "staged");
             else
                 this._stagedStatuses.addRequiredStatus(check);
         }
@@ -823,7 +833,7 @@ class PullRequest {
         for (let st of optionalStatuses) {
             const check = new StatusCheck(st);
             if (DerivedStatusChecks.Has(st.context))
-                this._derivedStagedStatuses.add(check, "staged");
+                this._getDerivedStagedStatuses().add(check, "staged");
             else
                 this._stagedStatuses.addOptionalStatus(check);
         }
@@ -906,7 +916,7 @@ class PullRequest {
             throw this._exLabeledFailure("staged commit tests failed some time ago", Config.failedStagingChecksLabel());
 
         if (this._wipPr())
-            throw this._exObviousWaiting("waiting on WIP");
+            throw this._exWaiting("waiting on WIP");
 
         if (!this._messageValid)
             throw this._exLabeledFailure("invalid commit message", Config.failedDescriptionLabel());
@@ -915,19 +925,19 @@ class PullRequest {
             throw this._exObviousFailure("GitHub will not be able to merge");
 
         if (!this._approval.granted())
-            throw this._exObviousWaiting("waiting for approval");
+            throw this._exWaiting("waiting for approval");
 
         if (this._approval.grantedTimeout())
-            throw this._exObviousWaiting("waiting for objections");
+            throw this._exWaiting("waiting for objections");
 
         if (this._stagingBanned)
-            throw this._exObviousWaiting("waiting for another staged PR");
+            throw this._exWaiting("waiting for another staged PR");
 
         if (this._prStatuses.failed())
             throw this._exObviousFailure("failed PR tests");
 
         if (!this._prStatuses.final())
-            throw this._exObviousWaiting("waiting for PR tests");
+            throw this._exWaiting("waiting for PR tests");
 
         assert(this._prStatuses.succeeded());
     }
@@ -1227,11 +1237,10 @@ class PullRequest {
     }
 
     async _processStagingStatuses() {
-        assert(this._stagedStatuses);
-        if (this._stagedStatuses.failed())
+        if (this._stagedStatuses && this._stagedStatuses.failed())
             throw this._exLabeledFailure("staged commit tests have failed", Config.failedStagingChecksLabel());
 
-        if (!this._stagedStatuses.final()) {
+        if (!this._stagedStatuses || !this._stagedStatuses.final()) {
             this._labels.add(Config.waitingStagingChecksLabel());
             const msg = "waiting for staging tests (" + this._stagedStatuses.progressString() + ")";
             throw this._exSuspend(msg);
@@ -1317,24 +1326,25 @@ class PullRequest {
         // yes, _checkStagingPreconditions() has checked the same message
         // already, but our _criteria_ might have changed since that check
         if (!this._messageValid)
-            throw this._exLabeledFailure("commit message is now considered invalid", Config.failedDescriptionLabel());
+            throw this._exLabeledFailure("invalid commit message (during staging)", Config.failedDescriptionLabel());
 
-        assert(!this._wipPr());
+        if (this._wipPr())
+            throw this._exWaiting("waiting on WIP (during staging");
 
         // TODO: unstage only if there is competition for being staged
 
         // yes, _checkStagingPreconditions() has checked approval already, but
         // humans may have changed their mind since that check
         if (!this._approval.granted())
-            throw this._exObviousWaiting("waiting for approval (again after staging)");
+            throw this._exWaiting("waiting for approval (during staging)");
         if (this._approval.grantedTimeout())
-            throw this._exObviousWaiting("waiting for objections (again after staging)");
+            throw this._exWaiting("waiting for objections (during staging)");
 
         if (this._prStatuses.failed())
-            throw this._exObviousFailure("PR branch tests failed after staging");
+            throw this._exObviousFailure("failed PR tests (during staging)");
 
         if (!this._prStatuses.final())
-            throw this._exSuspend("waiting for PR branch tests (again after staging)");
+            throw this._exSuspend("waiting for PR tests (during staging)");
 
         assert(this._prStatuses.succeeded());
 
@@ -1347,7 +1357,7 @@ class PullRequest {
         this._log("merging to base...");
 
         if (this._dryRun("merging to base"))
-            throw this._exSuspend("waiting for the dry-run mode to end (after staging)");
+            throw this._exSuspend("waiting for the dry-run mode to end (during staging)");
 
         if (this._stagingOnly())
             throw this._exSuspend("waiting for staging-only mode to end");
@@ -1395,7 +1405,7 @@ class PullRequest {
         const committer = {name: Config.githubUserName(), email: Config.githubUserEmail(), date: now.toISOString()};
 
         if (this._dryRun("create staged commit"))
-            throw this._exObviousWaiting("waiting for the dry-run mode to end");
+            throw this._exWaiting("waiting for the dry-run mode to end");
 
         this._stagedCommit = await GH.createCommit(mergeCommit.tree.sha, this._prMessage(), [baseSha], mergeCommit.author, committer);
 
@@ -1503,6 +1513,7 @@ class PullRequest {
 
             if (knownProblem) {
                 result.setDelayMsIfAny(this._delayMs());
+                assert(this._currentKnownProblem);
                 return result;
             }
 
@@ -1515,13 +1526,18 @@ class PullRequest {
             if (this._stagedSha()) { // the PR is staged now or was staged some time ago
                 // avoid livelocking
                 this._labels.add(Config.failedStagingOtherLabel());
+                this._currentKnownProblem = this._exLabeledFailure("an unexpected error during staging",
+                        Config.failedStagingOtherLabel());
             } else {
                 // Since knownProblem is false, either there was no failedStagingOtherLabel()
                 // or the problem happened before we could check for it. In the latter case,
                 // that label will remain set, and we will add failedOtherLabel(), reflecting the
                 // compound nature of the problem.
                 this._labels.add(Config.failedOtherLabel());
+                this._currentKnownProblem = this._exLabeledFailure("an unexpected error",
+                        Config.failedOtherLabel());
             }
+            assert(this._currentKnownProblem);
             throw e;
         } finally {
             await this._pushLabelsToGitHub();
@@ -1584,7 +1600,7 @@ class PullRequest {
 
     // Indicates an event which this PR is waiting for. Differs from _exSuspend()
     // that reprocessing from scratch will be required after eceiving the event.
-    _exObviousWaiting(why) {
+    _exWaiting(why) {
         assert(arguments.length === 1);
         return new PrProblem("pending", why);
     }

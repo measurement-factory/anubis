@@ -39,7 +39,7 @@ are satisfied:
 * All the _required_ checks have succeeded on the PR branch.
   * _all_ checks, except for the special-purpose "automated merge status"
     test (see below) have succeeded:
-    ![](./docs/images/merge_automatically_status.png)
+    ![](./docs/images/automated_status_pending.png)
   * If any _optional_ checks have failed, then GitHub will show "Some
     checks were not successful" message:
     ![](./docs/images/required_passed.png)
@@ -115,11 +115,51 @@ failed PR if/as needed (see below for PR labels).
 ## Automated merge status
 
 The bot adds this required status automatically to PR and staging commit.
-During PR lifecycle the status is "pending", thus preventing the manual
-merge button on the GitHub PR page from becoming green. Anubis uses this
-mechanism to forbid manual merges, which result in wrong commit messages
-and missed staging checks. The bot satisfies this check just before
+During PR lifecycle the status is "pending" or "failure", thus preventing
+the manual merge button on the GitHub PR page from becoming green. Anubis
+uses this mechanism to forbid manual merges, which result in wrong commit
+messages and missed staging checks. The bot satisfies this check just before
 merging (for the staging commit) and just after merging (for PR).
+
+Depending on the current PR merging step, an encountered problem or event
+(such as approval), the automated status is assigned a status (failure, pending, or
+success) and is supplied with a description, consisting of the problem-specific
+PR label[^1] and the message, detailing it:
+
+*state* | *label* | *message* | *step* |
+--- | --- | --- | ---
+failure | - | GitHub will not be able to merge | pre-staging
+failure | - | failed PR tests | pre-staging
+failure | - | failed PR tests (during staging) | staging
+failure | M-failed-staging-other | an unexpected error during staging some time ago | pre-staging
+failure | M-failed-staging-other | an unexpected error during staging | staging
+failure | M-failed-staging-checks | staged commit tests failed some time ago | pre-staging
+failure | M-failed-staging-checks | staged commit tests have failed | staging
+failure | M-failed-description | invalid commit message | pre-staging
+failure | M-failed-description | invalid commit message (during staging) | staging
+pending | - | waiting on WIP | pre-staging
+pending | - | waiting on WIP (during staging) | staging
+pending | - | waiting for approval | pre-staging
+pending | - | waiting for approval (during staging) | staging
+pending | - | waiting for objections | pre-staging
+pending | - | waiting for objections (during staging) | staging
+pending | - | waiting for PR tests | pre-staging
+pending | - | waiting for PR tests (during staging) | staging
+pending | - | waiting for the dry-run mode to end | pre-staging
+pending | - | waiting for the dry-run mode to end (during staging) | staging
+pending | - | waiting for another staged PR | pre-staging
+pending | - | waiting for staging-only mode to end | staging
+pending | - | waiting for staging tests ( ... )[^2] | staging
+pending | - | staged at SHA[^3] | staging
+success | - | will be merged as SHA | staging
+success | M-merged | - | merged
+
+[^1] the label is shown only in a case of a problem, e.g.:
+![](./docs/images/automated_status_problem.png)
+[^2]: additional information about the number of tests succeeded/pending/failed so far:
+![](./docs/images/automated_status_details.png)
+[^3]: 6-digit commit SHA
+
 
 ## Pull request labels
 
