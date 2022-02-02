@@ -124,7 +124,7 @@ merging (for the staging commit) and just after merging (for PR).
 Depending on the current PR merging step, an encountered problem or event
 (such as approval), the automated status is assigned a status (failure, pending, or
 success) and is supplied with a description, consisting of the problem-specific
-PR label[^1] and the message, detailing it:
+PR label and the message, detailing it:
 
 *state* | *label* | *message* | *step* |
 --- | --- | --- | ---
@@ -149,16 +149,17 @@ pending | - | waiting for the dry-run mode to end | pre-staging
 pending | - | waiting for the dry-run mode to end (during staging) | staging
 pending | - | waiting for another staged PR | pre-staging
 pending | - | waiting for staging-only mode to end | staging
-pending | - | waiting for staging tests ( ... )[^2] | staging
-pending | - | staged at SHA[^3] | staging
+pending | - | waiting for staging tests (...) | staging
+pending | - | staged at SHA | staging
 success | - | will be merged as SHA | staging
 success | M-merged | - | merged
 
-[^1] the label is shown only in a case of a problem, e.g.:
+The label is shown only in a case of a problem, e.g.:
 ![](./docs/images/automated_status_problem.png)
-[^2]: additional information about the number of tests succeeded/pending/failed so far:
+
+The (...) in the table above denotes specific information about the number of tests
+succeeded/pending/failed so far, e.g.:
 ![](./docs/images/automated_status_details.png)
-[^3]: 6-digit commit SHA
 
 
 ## Pull request labels
