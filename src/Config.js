@@ -82,8 +82,12 @@ class ConfigOptions {
     votingDelayMax() { return this._votingDelayMax; }
     votingDelayMin() { return this._votingDelayMin; }
     stagingChecks() { return this._stagingChecks; }
-    stagingChecksCI() { return this._stagingChecks - this.derivativeRequiredChecks(); }
-    derivativeRequiredChecks() { return 2; }
+    // the number of staged commit checks supplied by CIs
+    stagingChecksCI() { return this._stagingChecks - this.derivativeRequiredChecks() - this.copiedRequiredChecks(); }
+    // the number of 'internal' checks
+    derivativeRequiredChecks() { return this.manageApprovalStatus() + this.manageAutomatedMergeStatus(); }
+    // the number of checks copied from PR commit to staged commit
+    copiedRequiredChecks() { return 1; }
     loggerParams() { return this._loggerParams; }
 
     // an unexpected error occurred outside the "staged" phase

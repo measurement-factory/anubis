@@ -171,6 +171,9 @@ class DerivedStatusChecks
     // returns true if the approval check was successfully created from Approval
     // returns false otherwise (such approval check already exists)
     addApproval(approval) {
+        if (!Config.manageApprovalStatus())
+            return;
+
         let newCheck = DerivedStatusChecks.CreateApproval(approval);
 
         if (!this._approval) {
@@ -221,7 +224,7 @@ class DerivedStatusChecks
     static CreateAutomated(state, description) {
         assert(state);
         assert(description);
-        let raw = {
+        const raw = {
             state: state,
             target_url: Config.automatedMergeStatusUrl(),
             description: description,
@@ -231,17 +234,19 @@ class DerivedStatusChecks
     }
 
     static CreateApproval(approval) {
-        return {
+        assert(approval);
+        const raw = {
             state: approval.state,
             target_url: Config.approvalUrl(),
             description: approval.description,
             context: Config.approvalContext()
         };
+        return new StatusCheck(raw);
     }
 
     static Has(context) {
-        return context === Config.approvalContext() ||
-               context === Config.automatedMergeStatusContext();
+        return (Config.manageApprovalStatus() && context === Config.approvalContext()) ||
+               (Config.manageAutomatedMergeStatus() && context === Config.automatedMergeStatusContext());
     }
 
     toString() {
@@ -716,8 +721,6 @@ class PullRequest {
     }
 
     _createAutomatedForPR() {
-        assert(Config.manageAutomatedMergeStatus());
-
         if (this._labels.has(Config.mergedLabel()))
             return DerivedStatusChecks.CreateAutomated("success", Config.mergedLabel());
 
@@ -730,8 +733,6 @@ class PullRequest {
     }
 
     _createAutomatedForStaged() {
-        assert(Config.manageAutomatedMergeStatus());
-
         if (this._labels.has(Config.mergedLabel()))
             return DerivedStatusChecks.CreateAutomated("success", Config.mergedLabel());
 
@@ -757,11 +758,12 @@ class PullRequest {
     }
 
     async _setAutomatedForStagedSuccess() {
+        if (!Config.manageAutomatedMergeStatus())
+            return;
         assert(this._stagedSha);
         const description = 'will be merged as ' + this._stagedShaBrief();
-        const check = this._createAutomatedStatus("success", description);
-        assert(this._stagedStatuses);
-        await this._applyAutomatedStatus(check, "staged");
+        const check = DerivedStatusChecks.CreateAutomated("success", description);
+        await this._applyAutomatedStatus(check, this._stagedSha());
     }
 
     async _applyAutomatedStatus(check, sha) {
@@ -1237,10 +1239,13 @@ class PullRequest {
     }
 
     async _processStagingStatuses() {
-        if (this._stagedStatuses && this._stagedStatuses.failed())
+        if (!this._stagedStatuses)
+           this._stagedStatuses = new StatusChecks(Config.stagingChecksCI(), "Staging");
+
+        if (this._stagedStatuses.failed())
             throw this._exLabeledFailure("staged commit tests have failed", Config.failedStagingChecksLabel());
 
-        if (!this._stagedStatuses || !this._stagedStatuses.final()) {
+        if (!this._stagedStatuses.final()) {
             this._labels.add(Config.waitingStagingChecksLabel());
             const msg = "waiting for staging tests (" + this._stagedStatuses.progressString() + ")";
             throw this._exSuspend(msg);

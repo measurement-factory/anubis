@@ -345,7 +345,7 @@ All configuration fields are required.
 *sufficient_approvals* | The minimal number of core developers required for a PR to be merged fast (i.e., without waiting for `config::voting_delay_max`) | 2
 *voting_delay_min*| The minimum merging age of a PR. Younger PRs are not merged, regardless of the number of votes. The PR age string should comply with [timestring](https://github.com/mike182uk/timestring) parser. | "2d"
 *voting_delay_max* | The maximum merging age of a PR that has fewer than `config::sufficient_approvals` votes. The PR age string should comply with [timestring](https://github.com/mike182uk/timestring) parser. | "10d"
-*staging_checks*| The expected number of CI tests executed against the staging branch. | 2
+*staging_checks*| The expected number of checks executed against the staging branch. This includes CI checks and bot-generated checks. | 2
 *approval_url*| The URL associated with an approval status test description. | ""
 *automated_merge_url*| The URL associated with an automated merge status test description. | ""
 *logger_params* | A JSON-formatted parameter list for the [Bunyan](https://github.com/trentm/node-bunyan) logging library [constructor](https://github.com/trentm/node-bunyan#constructor-api). | <pre>{<br>    "name": "anubis",<br>    "streams": [ ... ]<br>}</pre>
