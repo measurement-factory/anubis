@@ -707,6 +707,9 @@ class PullRequest {
     async _createApprovalStatus(sha) {
         if (this._dryRun("creating approval status"))
             return;
+        // XXX: statuses may be still empty on some early stages or due to an error.
+        // We should probably request statuses in this case (as a last resort) to avoid
+        // creating duplicates on GitHub.
         if (this._getDerivedStatuses(sha).addApproval(this._approval))
             await GH.createStatus(sha, this._approval.state, Config.approvalUrl(), this._approval.description, Config.approvalContext());
     }
@@ -777,8 +780,10 @@ class PullRequest {
         if (this._dryRun("creating automated merge status"))
             return;
         assert(DerivedStatusChecks.Has(check.context));
-        let statuses = this._getDerivedStatuses(sha);
-        if (statuses.add(check))
+        // XXX: statuses may be still empty on some early stages or due to an error.
+        // We should probably request statuses in this case (as a last resort) to avoid
+        // creating duplicates on GitHub.
+        if (this._getDerivedStatuses(sha).add(check))
             await GH.createStatus(sha, check.state, check.targetUrl, check.description, check.context);
     }
 
