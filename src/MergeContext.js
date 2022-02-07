@@ -63,14 +63,20 @@ class PrProblem extends Error {
     constructor(aStatus, message, ...params) {
         super(message, ...params);
         this.name = this.constructor.name;
+        // the automated merge status associated with this problem,
+        // "failure", "pending" or "success"
         this._status = aStatus;
         Error.captureStackTrace(this, this.constructor);
 
         this._keepStaged = false; // catcher should preserve the staged commit
-        this._label = null;
+        this._label = null; // the label associated with this problem
     }
 
     keepStagedRequested() { return this._keepStaged; }
+
+    status() { return this._status; }
+
+    setLabel(aLabel) { this._label = aLabel; }
 
     requestToKeepStaged() {
         assert(!this.keepStagedRequested());
@@ -153,9 +159,10 @@ class StatusCheck
     pending() { return this.state === 'pending'; }
 
     equals(check) {
-        return this.description === check.description &&
-               this.state === check.state &&
-               this.context.trim() === check.context.trim();
+        return this.context.trim() === check.context.trim() &&
+            this.state === check.state &&
+            this.targetUrl === check.targetUrl &&
+            this.description === check.description;
     }
 }
 
@@ -168,8 +175,9 @@ class DerivedStatusChecks
         this._automated = null;
     }
 
-    // returns true if the approval check was successfully created from Approval
-    // returns false otherwise (such approval check already exists)
+    // creates a StatusCheck from Approval
+    // returns true if the check was successfully created
+    // does nothing (returning false) if the check already exists
     addApproval(approval) {
         if (!Config.manageApprovalStatus())
             return;
@@ -188,8 +196,9 @@ class DerivedStatusChecks
         return true;
     }
 
-    // returns true if the check was successfully added to the list
-    // returns false otherwise (the check is not internal or already exists)
+    // adds an existing StatusCheck
+    // returns true if the check was successfully added
+    // does nothing (returningfalse) if the check is not internal or already exists
     add(newCheck) {
         if (!DerivedStatusChecks.Has(newCheck.context))
             return false;
@@ -221,6 +230,7 @@ class DerivedStatusChecks
             this._approval = check;
     }
 
+    // creates the 'automated merge' status check
     static CreateAutomated(state, description) {
         assert(state);
         assert(description);
@@ -233,6 +243,7 @@ class DerivedStatusChecks
         return new StatusCheck(raw);
     }
 
+    // creates the 'approval' status check from Approval
     static CreateApproval(approval) {
         assert(approval);
         const raw = {
@@ -244,6 +255,7 @@ class DerivedStatusChecks
         return new StatusCheck(raw);
     }
 
+    // whether the context belongs to an internal status check
     static Has(context) {
         return (Config.manageApprovalStatus() && context === Config.approvalContext()) ||
                (Config.manageAutomatedMergeStatus() && context === Config.automatedMergeStatusContext());
@@ -262,7 +274,7 @@ class DerivedStatusChecks
     }
 }
 
-// aggregates 'external' (i.e., reported by a CI) status checks for a PR or commit
+// aggregates 'external' (i.e., reported by a CI) status checks for a PR or staged commit
 // does not include bot-reported 'internal' checks (approvals, etc.)
 class StatusChecks
 {
@@ -416,10 +428,6 @@ class Labels
         return label && label.present();
     }
 
-    getFailed() { return this._labels.find(label => label.name.startsWith('M-failed')); }
-
-    getWaiting() { return this._labels.find(label => label.name.startsWith('M-waiting')); }
-
     // brings GitHub labels in sync with ours
     async pushToGitHub() {
         let syncedLabels = [];
@@ -478,7 +486,6 @@ class Labels
 
     _find(name) { return this._labels.find(label => label.name === name); }
 }
-
 
 // A state of an open pull request (with regard to merging progress). One of:
 // brewing: neither staged nor merged;
@@ -599,7 +606,7 @@ class PullRequest {
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
         this._labelPushBan = false;
 
-        // the current PR-specific error, if any
+        // the current PrProblem, if any
         this._currentKnownProblem = null;
     }
 
@@ -728,7 +735,7 @@ class PullRequest {
             return DerivedStatusChecks.CreateAutomated("pending", "staged at " + this._stagedShaBrief());
 
         return this._currentKnownProblem ?
-            DerivedStatusChecks.CreateAutomated(this._currentKnownProblem._status, this._currentKnownProblem.toString()) :
+            DerivedStatusChecks.CreateAutomated(this._currentKnownProblem.status(), this._currentKnownProblem.toString()) :
             DerivedStatusChecks.CreateAutomated("pending", "not staged yet");
     }
 
@@ -740,7 +747,7 @@ class PullRequest {
             return null;
 
         return this._currentKnownProblem ?
-            DerivedStatusChecks.CreateAutomated(this._currentKnownProblem._status, this._currentKnownProblem.toString()) :
+            DerivedStatusChecks.CreateAutomated(this._currentKnownProblem.status(), this._currentKnownProblem.toString()) :
             DerivedStatusChecks.CreateAutomated("pending", "staging in process");
     }
 
@@ -1273,7 +1280,7 @@ class PullRequest {
             }
 
             if (DerivedStatusChecks.Has(requiredContext)) {
-                this._log("_supplyStagingWithPrRequired: skip derived " + requiredContext);
+                this._log("_supplyStagingWithPrRequired: skip internal " + requiredContext);
                 continue;
             }
 
@@ -1298,8 +1305,6 @@ class PullRequest {
         }
     }
 
-    _guardedRunActive() { return Config.guardedRun() && !this._labels.has(Config.clearedForMergeLabel()); }
-
     // whether target branch changes are prohibited
     _stagingOnly() {
         // TODO: The caller should not have to remember to call _dryRun() first
@@ -1312,11 +1317,12 @@ class PullRequest {
         }
 
         if (Config.guardedRun()) {
-            if (this._guardedRunActive()) {
-                this._log("skip " + msg + " due to guarded_run option");
-                return true;
+            if (this._labels.has(Config.clearedForMergeLabel())) {
+                this._log("allow " + msg + " due to " + Config.clearedForMergeLabel() + " overruling guarded_run option");
+                return false;
             }
-            this._log("allow " + msg + " due to " + Config.clearedForMergeLabel() + " overruling guarded_run option");
+            this._log("skip " + msg + " due to guarded_run option");
+            return true;
         }
 
         return false; // no staging-only mode by default
@@ -1617,7 +1623,7 @@ class PullRequest {
         assert(!this._labelPushBan);
         this._labels.add(label);
         let problem = new PrProblem("failure", why);
-        problem._label = label;
+        problem.setLabel(label);
         return problem;
     }
 }

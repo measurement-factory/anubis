@@ -124,7 +124,7 @@ merging (for the staging commit) and just after merging (for PR).
 Depending on the current PR merging step, an encountered problem or event
 (such as approval), the automated status is assigned a status (failure, pending, or
 success) and is supplied with a description, consisting of the problem-specific
-PR label and the message, detailing it:
+PR label and message, detailing it:
 
 *state* | *label* | *message* | *step* |
 --- | --- | --- | ---
