@@ -90,6 +90,12 @@ algorithm:
 If the bot is killed while executing the above algorithm, it will resume
 from the beginning of the unfinished step.
 
+The above algorithm can be divided into three merging phases:
+
+1. pre-staging: step 1
+2. staging: step 2 and 3
+3. merged: step 4 and 5
+
 While the bot is merging a pull request, it does not touch other PRs. If
 the bot receives a GitHub event while merging a pull request, then the
 bot re-examines all PRs _after_ it is done merging the current PR. This
@@ -121,40 +127,50 @@ uses this mechanism to forbid manual merges, which result in wrong commit
 messages and missed staging checks. The bot satisfies this check just before
 merging (for the staging commit) and just after merging (for PR).
 
-Depending on the current PR merging step, an encountered problem or event
+Depending on the current PR merging phase, an encountered problem or event
 (such as approval), the automated status is assigned a status (failure, pending, or
 success) and is supplied with a description, consisting of the problem-specific
-PR label and message, detailing it:
+PR label and message, detailing it.
 
-*state* | *label* | *message* | *step* |
+Two tables below outlines possible states and messages for both commits.
+
+PR HEAD commit:
+
+*state* | *label* | *message* | *phase* |
 --- | --- | --- | ---
 failure | - | GitHub will not be able to merge | pre-staging
 failure | - | failed PR tests | pre-staging
-failure | - | failed PR tests (during staging) | staging
 failure | M-failed-staging-other | an unexpected error during staging some time ago | pre-staging
-failure | M-failed-staging-other | an unexpected error during staging | staging
 failure | M-failed-staging-checks | staged commit tests failed some time ago | pre-staging
-failure | M-failed-staging-checks | staged commit tests have failed | staging
 failure | M-failed-description | invalid commit message | pre-staging
-failure | M-failed-description | invalid commit message (during staging) | staging
 pending | - | waiting on WIP | pre-staging
-pending | - | waiting on WIP (during staging) | staging
 pending | - | waiting for approval | pre-staging
-pending | - | waiting for approval (during staging) | staging
 pending | - | waiting for objections | pre-staging
-pending | - | waiting for objections (during staging) | staging
 pending | - | waiting for PR tests | pre-staging
-pending | - | waiting for PR tests (during staging) | staging
-pending | - | waiting for the dry-run mode to end | pre-staging
-pending | - | waiting for the dry-run mode to end (during staging) | staging
 pending | - | waiting for another staged PR | pre-staging
+pending | - | staged at SHA | staging
+success | M-merged | - | merged
+
+Staging commit:
+
+*state* | *label* | *message* | *step* |
+--- | --- | --- | ---
+failure | - | failed PR tests | staging
+failure | M-failed-staging-other | an unexpected error during staging | staging
+failure | M-failed-staging-checks | staged commit tests have failed | staging
+failure | M-failed-description | invalid commit message | staging
+failure | M-abandoned-staging-checks | stage commit tests are stale | staging
+pending | - | waiting on WIP | staging
+pending | - | waiting for approval | staging
+pending | - | waiting for objections | staging
+pending | - | waiting for PR tests | staging
+pending | - | waiting for the dry-run mode to end | staging
 pending | - | waiting for staging-only mode to end | staging
 pending | - | waiting for staging tests (...) | staging
-pending | - | staged at SHA | staging
 success | - | will be merged as SHA | staging
 success | M-merged | - | merged
 
-The label is shown only in a case of a problem, e.g.:
+Message is prefixed with a label only in a case of a problem, e.g.:
 ![](./docs/images/automated_status_problem.png)
 
 The (...) in the table above denotes specific information about the number of tests

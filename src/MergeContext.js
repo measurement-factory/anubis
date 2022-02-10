@@ -180,7 +180,7 @@ class DerivedStatusChecks
     // does nothing (returning false) if the check already exists
     addApproval(approval) {
         if (!Config.manageApprovalStatus())
-            return;
+            return false;
 
         let newCheck = DerivedStatusChecks.CreateApproval(approval);
 
@@ -196,7 +196,7 @@ class DerivedStatusChecks
         return true;
     }
 
-    // adds an existing StatusCheck
+    // adds an existing on GitHub StatusCheck
     // returns true if the check was successfully added
     // does nothing (returningfalse) if the check is not internal or already exists
     add(newCheck) {
@@ -595,7 +595,7 @@ class PullRequest {
         // GitHub 'external' statuses of the PR branch head commit
         this._prStatuses = null;
 
-        // GitHub 'internal' statuses of the staged commit 
+        // GitHub 'internal' statuses of the staged commit
         this._derivedStagedStatuses = null;
 
         // GitHub 'internal' statuses of the PR branch head commit
@@ -605,9 +605,6 @@ class PullRequest {
 
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
         this._labelPushBan = false;
-
-        // the current PrProblem, if any
-        this._currentKnownProblem = null;
     }
 
     // this PR will need to be reprocessed in this many milliseconds
@@ -730,49 +727,53 @@ class PullRequest {
         return (sha === this._prHeadSha()) ? this._getDerivedPrStatuses() : this._getDerivedStagedStatuses();
     }
 
-    _createAutomatedForPR() {
-        if (this._labels.has(Config.mergedLabel()))
-            return DerivedStatusChecks.CreateAutomated("success", Config.mergedLabel());
+    _waitingForStagingTestsMsg() {
+        assert(this._stagedStatuses);
+        return "waiting for staging tests (" + this._stagedStatuses.progressString() + ")";
+    }
 
+    async _setAutomatedStepBrewing() {
+        assert(this._prState.brewing());
+        const prCheck = DerivedStatusChecks.CreateAutomated("pending", "not staged yet");
+        await this._applyAutomatedStatus(prCheck, this._prHeadSha());
+        // staged commit does not exist yet
+    }
+
+    async _setAutomatedStepStaged() {
+        assert(this._prState.staged());
+        const prCheck = DerivedStatusChecks.CreateAutomated("pending", "staged at " + this._stagedShaBrief());
+        await this._applyAutomatedStatus(prCheck, this._prHeadSha());
+        const stagedCheck = DerivedStatusChecks.CreateAutomated("pending", this._waitingForStagingTestsMsg());
+        await this._applyAutomatedStatus(stagedCheck, this._stagedSha());
+    }
+
+    async _setAutomatedStepMerged() {
+        assert(this._prState.merged());
+        const check = DerivedStatusChecks.CreateAutomated("success", Config.mergedLabel());
+        await this._applyAutomatedStatus(check, this._prHeadSha());
         if (this._stagedSha())
-            return DerivedStatusChecks.CreateAutomated("pending", "staged at " + this._stagedShaBrief());
-
-        return this._currentKnownProblem ?
-            DerivedStatusChecks.CreateAutomated(this._currentKnownProblem.status(), this._currentKnownProblem.toString()) :
-            DerivedStatusChecks.CreateAutomated("pending", "not staged yet");
+            await this._applyAutomatedStatus(check, this._stagedSha());
     }
 
-    _createAutomatedForStaged() {
-        if (this._labels.has(Config.mergedLabel()))
-            return DerivedStatusChecks.CreateAutomated("success", Config.mergedLabel());
-
-        if (!this._stagedSha())
-            return null;
-
-        return this._currentKnownProblem ?
-            DerivedStatusChecks.CreateAutomated(this._currentKnownProblem.status(), this._currentKnownProblem.toString()) :
-            DerivedStatusChecks.CreateAutomated("pending", "staging in process");
-    }
-
-    async _setAutomatedStatuses() {
+    async _setAutomatedForProblem(problem) {
         if (!Config.manageAutomatedMergeStatus())
             return;
 
-        const prCheck = this._createAutomatedForPR();
-        if (prCheck)
-            await this._applyAutomatedStatus(prCheck, this._prHeadSha());
+        const prCheck = DerivedStatusChecks.CreateAutomated(problem.status(),
+                (this._prState && this._prState.staged()) ? "staged at " + this._stagedShaBrief() : problem.toString());
+        await this._applyAutomatedStatus(prCheck, this._prHeadSha());
 
-        const stagedCheck = this._createAutomatedForStaged();
-        if (stagedCheck)
+        if (this._stagedSha()) {
+            const stagedCheck = DerivedStatusChecks.CreateAutomated(problem.status(), problem.toString());
             await this._applyAutomatedStatus(stagedCheck, this._stagedSha());
+        }
     }
 
-    async _setAutomatedForStagedSuccess() {
+    async _setAutomatedForStaged(state, description) {
         if (!Config.manageAutomatedMergeStatus())
             return;
-        assert(this._stagedSha);
-        const description = 'will be merged as ' + this._stagedShaBrief();
-        const check = DerivedStatusChecks.CreateAutomated("success", description);
+        assert(this._stagedSha());
+        const check = DerivedStatusChecks.CreateAutomated(state, description);
         await this._applyAutomatedStatus(check, this._stagedSha());
     }
 
@@ -783,8 +784,12 @@ class PullRequest {
         // XXX: statuses may be still empty on some early stages or due to an error.
         // We should probably request statuses in this case (as a last resort) to avoid
         // creating duplicates on GitHub.
+        this._log("_applyAutomatedStatus: " + check.context + ": " + check.description);
         if (this._getDerivedStatuses(sha).add(check))
             await GH.createStatus(sha, check.state, check.targetUrl, check.description, check.context);
+        else
+            this._log("_applyAutomatedStatus: skip duplicate " + check.context + ": " + check.description);
+        this._automatedForStaged = null;
     }
 
     async _getRequiredContexts() {
@@ -969,7 +974,7 @@ class PullRequest {
         this._log("messageValid: " + this._messageValid);
 
         this._approval = await this._checkApproval();
-        this._log("checkApproval: " + this._approval)
+        this._log("checkApproval: " + this._approval);
         await this._setApprovalStatuses();
 
         this._updated = true;
@@ -1175,7 +1180,7 @@ class PullRequest {
     async _loadPrState() {
         if (!this._stagedSha()) {
             if (await this._mergedSomeTimeAgo())
-                this._enterMerged();
+                await this._enterMerged();
             else
                 await this._enterBrewing();
             return;
@@ -1185,12 +1190,18 @@ class PullRequest {
 
         if (this._stagedPosition.merged()) {
             this._log("already merged into base some time ago");
-            this._enterMerged();
+            await this._enterMerged();
             return;
         }
 
         if (!(await this._stagedCommitIsFresh())) {
+            // XXX: we can get here again and again in the following scenario:
+            // * staging checks failed, but the manually-removed failedStagingChecksLabel() is still on
+            // * a new PR commit has been created
+            // In this case, we should avoid re-adding the label and creating automated status duplicates.
             await this._labels.addImmediately(Config.abandonedStagingChecksLabel());
+            const problem = this._exLabeledFailure("staged commit tests are stale", Config.abandonedStagingChecksLabel());
+            await this._setAutomatedForStaged(problem.status(), problem.toString());
             await this._enterBrewing();
             return;
         }
@@ -1201,9 +1212,11 @@ class PullRequest {
         // Do not vainly recreate staged commit which will definitely fail again,
         // since the PR+base code is yet unchanged and the existing errors still persist
         if (this._stagedStatuses.failed()) {
+            this._labels.add(Config.failedStagingChecksLabel());
+            const problem = this._exLabeledFailure("staged commit tests failed some time ago", Config.failedStagingChecksLabel());
+            await this._setAutomatedForStaged(problem.status(), problem.toString());
             this._stagedStatuses = null;
             this._derivedStagedStatuses = null;
-            this._labels.add(Config.failedStagingChecksLabel());
             await this._enterBrewing();
             return;
         }
@@ -1213,8 +1226,12 @@ class PullRequest {
 
     async _enterBrewing() {
         this._prState = PrState.Brewing();
+        this._stagedCommit = null;
         assert(this._prStatuses === null);
         await this._getPrStatuses();
+        // XXX: a problem during 'brewing' will overwrite this automated status,
+        // thus creating status duplicates on each run (until the problem is fixed).
+        // await this._setAutomatedStepBrewing();
     }
 
     async _enterStaged() {
@@ -1222,10 +1239,12 @@ class PullRequest {
         if (!this._stagedStatuses)
             this._stagedStatuses = await this._getStagingStatuses();
         await this._getPrStatuses();
+        await this._setAutomatedStepStaged();
     }
 
-    _enterMerged() {
+    async _enterMerged() {
         this._prState = PrState.Merged();
+        await this._setAutomatedStepMerged();
     }
 
     // loads raw PR metadata from GitHub
@@ -1259,8 +1278,7 @@ class PullRequest {
 
         if (!this._stagedStatuses.final()) {
             this._labels.add(Config.waitingStagingChecksLabel());
-            const msg = "waiting for staging tests (" + this._stagedStatuses.progressString() + ")";
-            throw this._exSuspend(msg);
+            throw this._exSuspend(this._waitingForStagingTestsMsg());
         }
 
         assert(this._stagedStatuses.succeeded());
@@ -1342,25 +1360,25 @@ class PullRequest {
         // yes, _checkStagingPreconditions() has checked the same message
         // already, but our _criteria_ might have changed since that check
         if (!this._messageValid)
-            throw this._exLabeledFailure("invalid commit message (during staging)", Config.failedDescriptionLabel());
+            throw this._exLabeledFailure("invalid commit message", Config.failedDescriptionLabel());
 
         if (this._wipPr())
-            throw this._exWaiting("waiting on WIP (during staging");
+            throw this._exWaiting("waiting on WIP");
 
         // TODO: unstage only if there is competition for being staged
 
         // yes, _checkStagingPreconditions() has checked approval already, but
         // humans may have changed their mind since that check
         if (!this._approval.granted())
-            throw this._exWaiting("waiting for approval (during staging)");
+            throw this._exWaiting("waiting for approval");
         if (this._approval.grantedTimeout())
-            throw this._exWaiting("waiting for objections (during staging)");
+            throw this._exWaiting("waiting for objections");
 
         if (this._prStatuses.failed())
-            throw this._exObviousFailure("failed PR tests (during staging)");
+            throw this._exObviousFailure("failed PR tests");
 
         if (!this._prStatuses.final())
-            throw this._exSuspend("waiting for PR tests (during staging)");
+            throw this._exSuspend("waiting for PR tests");
 
         assert(this._prStatuses.succeeded());
 
@@ -1373,14 +1391,14 @@ class PullRequest {
         this._log("merging to base...");
 
         if (this._dryRun("merging to base"))
-            throw this._exSuspend("waiting for the dry-run mode to end (during staging)");
+            throw this._exSuspend("waiting for the dry-run mode to end");
 
         if (this._stagingOnly())
             throw this._exSuspend("waiting for staging-only mode to end");
 
         assert(!this._stagingBanned);
 
-        await this._setAutomatedForStagedSuccess();
+        await this._setAutomatedForStaged('success', 'will be merged as ' + this._stagedShaBrief());
 
         try {
             await GH.updateReference(this._prBaseBranchPath(), this._stagedSha(), false);
@@ -1393,7 +1411,7 @@ class PullRequest {
             throw e;
         }
 
-        this._enterMerged();
+        await this._enterMerged();
     }
 
     async _acquireUserProperties() {
@@ -1504,16 +1522,16 @@ class PullRequest {
     // Otherwise, returns null.
     async process() {
         try {
-            this._currentKnownProblem = null;
             await this._doProcess();
             assert(this._prState.merged());
             return new ProcessResult();
         } catch (e) {
             const knownProblem = e instanceof PrProblem;
+            let currentKnownProblem = null;
 
             if (knownProblem) {
                 this._log("did not merge: " + e.message);
-                this._currentKnownProblem = e;
+                currentKnownProblem = e;
             } else {
                 this._logEx(e, "process() failure");
             }
@@ -1529,7 +1547,7 @@ class PullRequest {
 
             if (knownProblem) {
                 result.setDelayMsIfAny(this._delayMs());
-                assert(this._currentKnownProblem);
+                await this._setAutomatedForProblem(currentKnownProblem);
                 return result;
             }
 
@@ -1542,7 +1560,7 @@ class PullRequest {
             if (this._stagedSha()) { // the PR is staged now or was staged some time ago
                 // avoid livelocking
                 this._labels.add(Config.failedStagingOtherLabel());
-                this._currentKnownProblem = this._exLabeledFailure("an unexpected error during staging",
+                currentKnownProblem = this._exLabeledFailure("an unexpected error during staging",
                         Config.failedStagingOtherLabel());
             } else {
                 // Since knownProblem is false, either there was no failedStagingOtherLabel()
@@ -1550,14 +1568,13 @@ class PullRequest {
                 // that label will remain set, and we will add failedOtherLabel(), reflecting the
                 // compound nature of the problem.
                 this._labels.add(Config.failedOtherLabel());
-                this._currentKnownProblem = this._exLabeledFailure("an unexpected error",
+                currentKnownProblem = this._exLabeledFailure("an unexpected error",
                         Config.failedOtherLabel());
             }
-            assert(this._currentKnownProblem);
+            await this._setAutomatedForProblem(currentKnownProblem);
             throw e;
         } finally {
             await this._pushLabelsToGitHub();
-            await this._setAutomatedStatuses();
         }
     }
 
