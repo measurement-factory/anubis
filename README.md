@@ -153,7 +153,7 @@ success | M-merged | - | merged
 
 Staging commit:
 
-*state* | *label* | *message* | *step* |
+*state* | *label* | *message* | *phase* |
 --- | --- | --- | ---
 failure | - | failed PR tests | staging
 failure | M-failed-staging-other | an unexpected error during staging | staging

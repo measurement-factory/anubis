@@ -784,7 +784,6 @@ class PullRequest {
         // XXX: statuses may be still empty on some early stages or due to an error.
         // We should probably request statuses in this case (as a last resort) to avoid
         // creating duplicates on GitHub.
-        this._log("_applyAutomatedStatus: " + check.context + ": " + check.description);
         if (this._getDerivedStatuses(sha).add(check))
             await GH.createStatus(sha, check.state, check.targetUrl, check.description, check.context);
         else
@@ -829,7 +828,7 @@ class PullRequest {
             else
                 this._prStatuses.addOptionalStatus(check);
         }
-        this._log("pr internal status details: " + this._derivedPrStatuses);
+        this._log("pr internal status details: " + this._getDerivedPrStatuses());
         this._log("pr external status details: " + this._prStatuses);
     }
 
@@ -1225,6 +1224,7 @@ class PullRequest {
     }
 
     async _enterBrewing() {
+        this._log("_enterBrewing");
         this._prState = PrState.Brewing();
         this._stagedCommit = null;
         assert(this._prStatuses === null);
@@ -1235,14 +1235,16 @@ class PullRequest {
     }
 
     async _enterStaged() {
+        this._log("_enterStaged");
         this._prState = PrState.Staged();
         if (!this._stagedStatuses)
-            this._stagedStatuses = await this._getStagingStatuses();
+            await this._getStagingStatuses();
         await this._getPrStatuses();
         await this._setAutomatedStepStaged();
     }
 
     async _enterMerged() {
+        this._log("_enterMerged");
         this._prState = PrState.Merged();
         await this._setAutomatedStepMerged();
     }
