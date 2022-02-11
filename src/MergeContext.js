@@ -1196,10 +1196,6 @@ class PullRequest {
         await this._getStagingStatuses();
 
         if (!(await this._stagedCommitIsFresh())) {
-            // XXX: we can get here again and again in the following scenario:
-            // * staging checks failed, but the manually-removed failedStagingChecksLabel() is still on
-            // * a new PR commit has been created
-            // In this case, we should avoid re-adding the label and creating automated status duplicates.
             const problem = this._exObviousFailure("staged commit tests are stale");
             await this._setAutomatedForStaged(problem.status(), problem.toString());
             await this._enterBrewing();
