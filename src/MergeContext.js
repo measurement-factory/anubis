@@ -196,9 +196,8 @@ class DerivedStatusChecks
         return true;
     }
 
-    // adds an existing on GitHub StatusCheck
-    // returns true if the check was successfully added
-    // does nothing (returningfalse) if the check is not internal or already exists
+    // adds an internal StatusCheck
+    // does nothing (returning false) if the check is not internal or already exists
     add(newCheck) {
         if (!DerivedStatusChecks.Has(newCheck.context))
             return false;
@@ -694,8 +693,6 @@ class PullRequest {
         if (!Config.manageApprovalStatus())
             return;
 
-        assert(this._prStatuses);
-
         await this._createApprovalStatus(this._prHeadSha());
         if (this._stagedSha())
             await this._createApprovalStatus(this._stagedSha());
@@ -704,27 +701,17 @@ class PullRequest {
     async _createApprovalStatus(sha) {
         if (this._dryRun("creating approval status"))
             return;
-        // XXX: statuses may be still empty on some early stages or due to an error.
-        // We should probably request statuses in this case (as a last resort) to avoid
-        // creating duplicates on GitHub.
-        if (this._getDerivedStatuses(sha).addApproval(this._approval))
+
+        assert(sha);
+        let derivedStatuses = this._derivedStatuses(sha);
+        assert(derivedStatuses);
+
+        if (derivedStatuses.addApproval(this._approval))
             await GH.createStatus(sha, this._approval.state, Config.approvalUrl(), this._approval.description, Config.approvalContext());
     }
 
-    _getDerivedPrStatuses() {
-        if (!this._derivedPrStatuses)
-            this._derivedPrStatuses = new DerivedStatusChecks("PR");
-        return this._derivedPrStatuses;
-    }
-
-    _getDerivedStagedStatuses() {
-        if (!this._derivedStagedStatuses)
-            this._derivedStagedStatuses = new DerivedStatusChecks("Staging");
-        return this._derivedStagedStatuses;
-    }
-
-    _getDerivedStatuses(sha) {
-        return (sha === this._prHeadSha()) ? this._getDerivedPrStatuses() : this._getDerivedStagedStatuses();
+    _derivedStatuses(sha) {
+        return (sha === this._prHeadSha()) ? this._derivedPrStatuses : this._derivedStagedStatuses;
     }
 
     _waitingForStagingTestsMsg() {
@@ -743,8 +730,13 @@ class PullRequest {
         assert(this._prState.staged());
         const prCheck = DerivedStatusChecks.CreateAutomated("pending", "staged at " + this._stagedShaBrief());
         await this._applyAutomatedStatus(prCheck, this._prHeadSha());
-        const stagedCheck = DerivedStatusChecks.CreateAutomated("pending", this._waitingForStagingTestsMsg());
-        await this._applyAutomatedStatus(stagedCheck, this._stagedSha());
+
+        assert(this._stagedStatuses);
+        if (!this._stagedStatuses.final() && !this._stagedStatuses.failed()) {
+            const stagedCheck = DerivedStatusChecks.CreateAutomated("pending", this._waitingForStagingTestsMsg());
+            await this._applyAutomatedStatus(stagedCheck, this._stagedSha());
+        }
+        // other cases (errors or final_success) are handled elsewhere
     }
 
     async _setAutomatedStepMerged() {
@@ -780,11 +772,16 @@ class PullRequest {
     async _applyAutomatedStatus(check, sha) {
         if (this._dryRun("creating automated merge status"))
             return;
+
+        let derivedStatuses = this._derivedStatuses(sha);
+        // Statuses may be still empty after an early unknown error.
+        // We should avoid updating the automated status until this general
+        // (and possibly PR-unrelated) problem is resolved.
+        if (!derivedStatuses)
+            return;
+
         assert(DerivedStatusChecks.Has(check.context));
-        // XXX: statuses may be still empty on some early stages or due to an error.
-        // We should probably request statuses in this case (as a last resort) to avoid
-        // creating duplicates on GitHub.
-        if (this._getDerivedStatuses(sha).add(check))
+        if (derivedStatuses.add(check))
             await GH.createStatus(sha, check.state, check.targetUrl, check.description, check.context);
         else
             this._log("_applyAutomatedStatus: skip duplicate " + check.context + ": " + check.description);
@@ -814,12 +811,13 @@ class PullRequest {
     async _getPrStatuses() {
         const requiredContexts = await this._getRequiredContexts();
         const combinedPrStatus = await GH.getStatuses(this._prHeadSha());
+        this._derivedPrStatuses = new DerivedStatusChecks("PR");
         this._prStatuses = new StatusChecks(requiredContexts.length - Config.derivativeRequiredChecks(), "PR");
         // fill with required status checks
         for (let st of combinedPrStatus.statuses) {
             const check = new StatusCheck(st);
             if (DerivedStatusChecks.Has(st.context)) {
-                this._getDerivedPrStatuses().add(check, "PR");
+                this._derivedPrStatuses.add(check, "PR");
                 continue;
             }
             if (requiredContexts.some(el => el.trim() === st.context.trim()))
@@ -827,7 +825,7 @@ class PullRequest {
             else
                 this._prStatuses.addOptionalStatus(check);
         }
-        this._log("pr internal status details: " + this._getDerivedPrStatuses());
+        this._log("pr internal status details: " + this._derivedPrStatuses);
         this._log("pr external status details: " + this._prStatuses);
     }
 
@@ -836,12 +834,13 @@ class PullRequest {
         const genuineStatuses = combinedStagingStatuses.statuses.filter(st =>
                 !st.description.endsWith(Config.copiedDescriptionSuffix()));
         assert(genuineStatuses.length <= Config.stagingChecks()); // PR approval
+        this._derivedStagedStatuses = new DerivedStatusChecks("Staging");
         this._stagedStatuses = new StatusChecks(Config.stagingChecksCI(), "Staging");
         // all genuine checks are 'required'
         for (let st of genuineStatuses) {
             const check = new StatusCheck(st);
             if (DerivedStatusChecks.Has(st.context))
-                this._getDerivedStagedStatuses().add(check, "staged");
+                this._derivedStagedStatuses.add(check, "staged");
             else
                 this._stagedStatuses.addRequiredStatus(check);
         }
@@ -850,7 +849,7 @@ class PullRequest {
         for (let st of optionalStatuses) {
             const check = new StatusCheck(st);
             if (DerivedStatusChecks.Has(st.context))
-                this._getDerivedStagedStatuses().add(check, "staged");
+                this._derivedStagedStatuses.add(check, "staged");
             else
                 this._stagedStatuses.addOptionalStatus(check);
         }
