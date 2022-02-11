@@ -159,24 +159,28 @@ failure | - | failed PR tests | staging
 failure | M-failed-staging-other | an unexpected error during staging | staging
 failure | M-failed-staging-checks | staged commit tests have failed | staging
 failure | M-failed-description | invalid commit message | staging
-failure | M-abandoned-staging-checks | stage commit tests are stale | staging
+failure | - | staged commit tests are stale (1) | staging
 pending | - | waiting on WIP | staging
 pending | - | waiting for approval | staging
 pending | - | waiting for objections | staging
 pending | - | waiting for PR tests | staging
 pending | - | waiting for the dry-run mode to end | staging
 pending | - | waiting for staging-only mode to end | staging
-pending | - | waiting for staging tests (...) | staging
+pending | - | waiting for staging tests (...) (2)| staging
 success | - | will be merged as SHA | staging
 success | M-merged | - | merged
 
-Message is prefixed with a label only in a case of a problem, e.g.:
-![](./docs/images/automated_status_problem.png)
+(1): Staged commit tests become stale when either the PR state changes (e.g.,
+the author commits new code) or the staging_branch is unexpectedly modified.
+The status lets the developer know why Anubis ignored (failed, unfinished, or
+successful) staging tests.
 
-The (...) in the table above denotes specific information about the number of tests
-succeeded/pending/failed so far, e.g.:
+(2): The (...) in the table above denotes specific information about the number
+of tests succeeded/pending/failed so far, e.g.:
 ![](./docs/images/automated_status_details.png)
 
+In some cases (usually errors), the message is prefixed with a label, e.g.:
+![](./docs/images/automated_status_problem.png)
 
 ## Pull request labels
 
@@ -205,14 +209,6 @@ request state:
   mode (see `config::staged_run` and `config::guarded_run`). The bot
   removes this label when either the PR was successfully merged or its
   staging results are no longer fresh/applicable.
-* `M-abandoned-staging-checks`: Anubis discovered a stale _staging commit_.
-  This usually happens when either the PR state changes (e.g., the author
-  commits new code) or the staging_branch is unexpectedly modified. After
-  labeling the PR, the bot ignores any failed or unfinished tests associated
-  with that stale commit. This label was added so that the developer observing
-  the PR page on GitHub knows why Anubis ignored (failed, unfinished, or
-  successful) staging tests. The bot removes this (usually short-lived) label
-  after creating a fresh staging commit for the PR.
 * `M-failed-staging-checks`: Essentially duplicates GitHub "red x" mark
   for the _staging commit_. The bot does not attempt to merge this PR
   again until a human decides that this problem is resolved and removes

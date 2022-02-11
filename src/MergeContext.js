@@ -788,7 +788,6 @@ class PullRequest {
             await GH.createStatus(sha, check.state, check.targetUrl, check.description, check.context);
         else
             this._log("_applyAutomatedStatus: skip duplicate " + check.context + ": " + check.description);
-        this._automatedForStaged = null;
     }
 
     async _getRequiredContexts() {
@@ -1193,13 +1192,15 @@ class PullRequest {
             return;
         }
 
+        // statuses are needed by _setAutomatedForStaged() below
+        await this._getStagingStatuses();
+
         if (!(await this._stagedCommitIsFresh())) {
             // XXX: we can get here again and again in the following scenario:
             // * staging checks failed, but the manually-removed failedStagingChecksLabel() is still on
             // * a new PR commit has been created
             // In this case, we should avoid re-adding the label and creating automated status duplicates.
-            await this._labels.addImmediately(Config.abandonedStagingChecksLabel());
-            const problem = this._exLabeledFailure("staged commit tests are stale", Config.abandonedStagingChecksLabel());
+            const problem = this._exObviousFailure("staged commit tests are stale");
             await this._setAutomatedForStaged(problem.status(), problem.toString());
             await this._enterBrewing();
             return;
@@ -1207,15 +1208,12 @@ class PullRequest {
 
         assert(this._stagedPosition.ahead());
 
-        await this._getStagingStatuses();
         // Do not vainly recreate staged commit which will definitely fail again,
         // since the PR+base code is yet unchanged and the existing errors still persist
         if (this._stagedStatuses.failed()) {
             this._labels.add(Config.failedStagingChecksLabel());
             const problem = this._exLabeledFailure("staged commit tests failed some time ago", Config.failedStagingChecksLabel());
             await this._setAutomatedForStaged(problem.status(), problem.toString());
-            this._stagedStatuses = null;
-            this._derivedStagedStatuses = null;
             await this._enterBrewing();
             return;
         }
@@ -1227,6 +1225,8 @@ class PullRequest {
         this._log("_enterBrewing");
         this._prState = PrState.Brewing();
         this._stagedCommit = null;
+        this._stagedStatuses = null;
+        this._derivedStagedStatuses = null;
         assert(this._prStatuses === null);
         await this._getPrStatuses();
         // XXX: a problem during 'brewing' will overwrite this automated status,
@@ -1596,7 +1596,6 @@ class PullRequest {
         this._labels.remove(Config.failedOtherLabel());
         this._labels.remove(Config.passedStagingChecksLabel());
         this._labels.remove(Config.waitingStagingChecksLabel());
-        this._labels.remove(Config.abandonedStagingChecksLabel());
         // Config.mergedLabel() is not meant to be removed by anybody
     }
 
