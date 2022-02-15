@@ -141,7 +141,7 @@ PR HEAD commit:
 failure | - | GitHub will not be able to merge | pre-staging
 failure | - | failed PR tests | pre-staging
 failure | M-failed-staging-other | an unexpected error during staging some time ago | pre-staging
-failure | M-failed-staging-checks | staged commit tests failed some time ago | pre-staging
+failure | M-failed-staging-checks | staged commit tests failed some time ago (3) | pre-staging
 failure | M-failed-description | invalid commit message | pre-staging
 pending | - | waiting on WIP | pre-staging
 pending | - | waiting for approval | pre-staging
@@ -178,6 +178,10 @@ successful) staging tests.
 (2): The (...) in the table above denotes specific information about the number
 of tests succeeded/pending/failed so far, e.g.:
 ![](./docs/images/automated_status_details.png)
+
+(3): This state means that the bot will ignore this PR (even if the unterlying
+problem has been fixed) until the M-ffailed-staging-checks is manually removed.
+Please also see the description of M-failed-staging-checks below.
 
 In some cases (usually errors), the message is prefixed with a label, e.g.:
 ![](./docs/images/automated_status_problem.png)

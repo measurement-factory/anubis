@@ -70,6 +70,9 @@ class PrProblem extends Error {
 
         this._keepStaged = false; // catcher should preserve the staged commit
         this._label = null; // the label associated with this problem
+        // whether there is some indication on GitHub that this problem happened
+        // some time ago and is still unresolved
+        this.alreadyExists = null;
     }
 
     keepStagedRequested() { return this._keepStaged; }
@@ -747,12 +750,35 @@ class PullRequest {
             await this._applyAutomatedStatus(check, this._stagedSha());
     }
 
-    async _setAutomatedForProblem(problem) {
+    async _setAutomatedForKnownProblem(problem) {
         if (!Config.manageAutomatedMergeStatus())
             return;
 
+        // for a recurrent problem the statuses must have been already created
+        if (problem.alreadyExists)
+            return;
+
+        // the PR state and statuses must be already loaded in a case
+        // of a known (and not recurrent) problem
+        assert(this._prState);
+        assert(this._derivedPrStatuses);
+        if (this._stagedSha())
+            assert(this._derivedStagedStatuses);
+
+        this._setAutomatedForProblem(problem);
+    }
+
+    async _setAutomatedForUnexpectedProblem(problem) {
+        if (!Config.manageAutomatedMergeStatus())
+            return;
+        assert(!problem.alreadyExists);
+
+        this._setAutomatedForProblem(problem);
+    }
+
+    async _setAutomatedForProblem(problem) {
         const prCheck = DerivedStatusChecks.CreateAutomated(problem.status(),
-                (this._prState && this._prState.staged()) ? "staged at " + this._stagedShaBrief() : problem.toString());
+               (this._prState && this._prState.staged()) ? "staged at " + this._stagedShaBrief() : problem.toString());
         await this._applyAutomatedStatus(prCheck, this._prHeadSha());
 
         if (this._stagedSha()) {
@@ -774,7 +800,7 @@ class PullRequest {
             return;
 
         let derivedStatuses = this._derivedStatuses(sha);
-        // Statuses may be still empty after an early unknown error.
+        // Statuses may be still empty in a case of an unexpected error.
         // We should avoid updating the automated status until this general
         // (and possibly PR-unrelated) problem is resolved.
         if (!derivedStatuses)
@@ -1224,9 +1250,7 @@ class PullRequest {
         this._derivedStagedStatuses = null;
         assert(this._prStatuses === null);
         await this._getPrStatuses();
-        // XXX: a problem during 'brewing' will overwrite this automated status,
-        // thus creating status duplicates on each run (until the problem is fixed).
-        // await this._setAutomatedStepBrewing();
+        await this._setAutomatedStepBrewing();
     }
 
     async _enterStaged() {
@@ -1544,7 +1568,7 @@ class PullRequest {
 
             if (knownProblem) {
                 result.setDelayMsIfAny(this._delayMs());
-                await this._setAutomatedForProblem(currentKnownProblem);
+                await this._setAutomatedForKnownProblem(currentKnownProblem);
                 return result;
             }
 
@@ -1568,7 +1592,7 @@ class PullRequest {
                 currentKnownProblem = this._exLabeledFailure("an unexpected error",
                         Config.failedOtherLabel());
             }
-            await this._setAutomatedForProblem(currentKnownProblem);
+            await this._setAutomatedForUnexpectedProblem(currentKnownProblem);
             throw e;
         } finally {
             await this._pushLabelsToGitHub();
@@ -1642,6 +1666,7 @@ class PullRequest {
         this._labels.add(label);
         let problem = new PrProblem("failure", why);
         problem.setLabel(label);
+        problem.alreadyExists = this._labels.has(label);
         return problem;
     }
 }
