@@ -72,7 +72,7 @@ class PrProblem extends Error {
         this._label = null; // the label associated with this problem
         // whether there is some indication on GitHub that this problem happened
         // some time ago and is still unresolved
-        this.alreadyExists = null;
+        this.alreadyExists = false;
     }
 
     keepStagedRequested() { return this._keepStaged; }
@@ -169,67 +169,27 @@ class StatusCheck
     }
 }
 
-// aggregates a list of 'internal' (i.e., bot-reported) status checks for a PR or commit
+// aggregates a list of 'internal' (i.e., bot-reported) status checks for a PR or staged commit
 class DerivedStatusChecks
 {
     constructor(context) {
         this._context = context;
-        this._approval = null;
-        this._automated = null;
+        // a list of internal StatusChecks existing on GitHub
+        this._checks = [];
     }
 
-    // creates a StatusCheck from Approval
-    // returns true if the check was successfully created
-    // does nothing (returning false) if the check already exists
-    addApproval(approval) {
-        if (!Config.manageApprovalStatus())
+    // whether this check is present on GitHub
+    has(check) { return this._checks.some(el => el.equals(check)); }
+
+    // adds a check that is present on GitHub
+    import(check) {
+        if (!Config.manageAutomatedMergeStatus())
             return false;
-
-        let newCheck = DerivedStatusChecks.CreateApproval(approval);
-
-        if (!this._approval) {
-            this._approval = newCheck;
-            return true;
-        }
-
-        if (this._approval.equals(newCheck))
+        if (!DerivedStatusChecks.Has(check.context))
             return false;
-
-        this._approval = newCheck;
+        this._checks = this._checks.filter(el => el.context !== check.context);
+        this._checks.push(check);
         return true;
-    }
-
-    // adds an internal StatusCheck
-    // does nothing (returning false) if the check is not internal or already exists
-    add(newCheck) {
-        if (!DerivedStatusChecks.Has(newCheck.context))
-            return false;
-
-        let oldCheck = this._get(newCheck);
-        if (!oldCheck) {
-            this._set(newCheck);
-            return true;
-        }
-
-        if (oldCheck.equals(newCheck))
-            return false;
-
-        oldCheck = newCheck;
-        return true;
-    }
-
-    _get(check) {
-        assert(DerivedStatusChecks.Has(check.context));
-        return (check.context === Config.automatedMergeStatusContext()) ?
-            this._automated : this._approval;
-    }
-
-    _set(check) {
-        assert(DerivedStatusChecks.Has(check.context));
-        if (check.context === Config.automatedMergeStatusContext())
-            this._automated = check;
-        else
-            this._approval = check;
     }
 
     // creates the 'automated merge' status check
@@ -265,12 +225,10 @@ class DerivedStatusChecks
 
     toString() {
         let statuses = "";
-        if (this._approval)
-            statuses += this._approval.context + ": " + this._approval.state + "(" + this._approval.description + ")";
-        if (this._automated) {
+        for (let s of this._checks) {
             if (statuses)
                 statuses += ", ";
-            statuses += this._automated.context + ": " + this._automated.state + "(" + this._automated.description + ")";
+            statuses += s.context + ": " + s.state + "(" + s.description + ")";
         }
         return "context: " + this._context + " checks: " + statuses;
     }
@@ -709,8 +667,11 @@ class PullRequest {
         let derivedStatuses = this._derivedStatuses(sha);
         assert(derivedStatuses);
 
-        if (derivedStatuses.addApproval(this._approval))
+        const approvalCheck = DerivedStatusChecks.CreateApproval(this._approval);
+        if (!derivedStatuses.has(approvalCheck)) {
             await GH.createStatus(sha, this._approval.state, Config.approvalUrl(), this._approval.description, Config.approvalContext());
+            derivedStatuses.import(approvalCheck);
+        }
     }
 
     _derivedStatuses(sha) {
@@ -751,9 +712,6 @@ class PullRequest {
     }
 
     async _setAutomatedForKnownProblem(problem) {
-        if (!Config.manageAutomatedMergeStatus())
-            return;
-
         // for a recurrent problem the statuses must have been already created
         if (problem.alreadyExists)
             return;
@@ -769,10 +727,7 @@ class PullRequest {
     }
 
     async _setAutomatedForUnexpectedProblem(problem) {
-        if (!Config.manageAutomatedMergeStatus())
-            return;
         assert(!problem.alreadyExists);
-
         this._setAutomatedForProblem(problem);
     }
 
@@ -788,14 +743,17 @@ class PullRequest {
     }
 
     async _setAutomatedForStaged(state, description) {
-        if (!Config.manageAutomatedMergeStatus())
-            return;
         assert(this._stagedSha());
         const check = DerivedStatusChecks.CreateAutomated(state, description);
         await this._applyAutomatedStatus(check, this._stagedSha());
     }
 
     async _applyAutomatedStatus(check, sha) {
+        if (!Config.manageAutomatedMergeStatus())
+            return;
+
+        assert(DerivedStatusChecks.Has(check.context));
+
         if (this._dryRun("creating automated merge status"))
             return;
 
@@ -803,14 +761,11 @@ class PullRequest {
         // Statuses may be still empty in a case of an unexpected error.
         // We should avoid updating the automated status until this general
         // (and possibly PR-unrelated) problem is resolved.
-        if (!derivedStatuses)
+        if (!derivedStatuses || derivedStatuses.has(check))
             return;
 
-        assert(DerivedStatusChecks.Has(check.context));
-        if (derivedStatuses.add(check))
-            await GH.createStatus(sha, check.state, check.targetUrl, check.description, check.context);
-        else
-            this._log("_applyAutomatedStatus: skip duplicate " + check.context + ": " + check.description);
+        await GH.createStatus(sha, check.state, check.targetUrl, check.description, check.context);
+        derivedStatuses.import(check);
     }
 
     async _getRequiredContexts() {
@@ -843,7 +798,7 @@ class PullRequest {
         for (let st of combinedPrStatus.statuses) {
             const check = new StatusCheck(st);
             if (DerivedStatusChecks.Has(st.context)) {
-                this._derivedPrStatuses.add(check, "PR");
+                this._derivedPrStatuses.import(check, "PR");
                 continue;
             }
             if (requiredContexts.some(el => el.trim() === st.context.trim()))
@@ -866,7 +821,7 @@ class PullRequest {
         for (let st of genuineStatuses) {
             const check = new StatusCheck(st);
             if (DerivedStatusChecks.Has(st.context))
-                this._derivedStagedStatuses.add(check, "staged");
+                this._derivedStagedStatuses.import(check, "staged");
             else
                 this._stagedStatuses.addRequiredStatus(check);
         }
@@ -875,7 +830,7 @@ class PullRequest {
         for (let st of optionalStatuses) {
             const check = new StatusCheck(st);
             if (DerivedStatusChecks.Has(st.context))
-                this._derivedStagedStatuses.add(check, "staged");
+                this._derivedStagedStatuses.import(check, "staged");
             else
                 this._stagedStatuses.addOptionalStatus(check);
         }
