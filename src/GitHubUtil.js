@@ -33,12 +33,15 @@ function protectedBranchAppender(protectedBranchPages, aPage) {
 // This delay is required to overcome the "API rate limit exceeded" GitHub error for
 // "core" (non-search) API calls. The current GitHub limitation is 5000/hour,
 // as documented at https://docs.github.com/en/rest/reference/rate-limit.
-function rateLimitDelay(result) {
+function calculateRateLimitDelay(result) {
     if (result.meta["x-ratelimit-resource"] !== "core")
         return 0;
     const used = parseInt(result.meta["x-ratelimit-used"]);
-    // Optimization: allow the first N (1000 out of 5000) requests to proceed without delays.
-    if (used < 1000)
+    // Optimization: Do not delay the first 20% of the requests.
+    // This avoids most artificial delays for less busy projects while
+    // keeping the remaining delays small enough for the busiest ones.
+    const limit = parseInt(result.meta["x-ratelimit-limit"]);
+    if (used < limit/5)
         return 0;
     const resetTime = parseInt(result.meta["x-ratelimit-reset"]) * 1000;
     const now = Date.now();
@@ -48,14 +51,13 @@ function rateLimitDelay(result) {
     }
     const remaining = parseInt(result.meta["x-ratelimit-remaining"]);
     const delay = Math.round((resetTime - now)/remaining);
-    const limit = parseInt(result.meta["x-ratelimit-limit"]);
-    Log.Logger.info("rateLimitDelay: " +  delay + "(ms), used: " + used + " out of " + limit);
+    Log.Logger.info("calculateRateLimitDelay: " +  delay + "(ms), used: " + used + " out of " + limit);
     return delay;
 }
 
-async function fulfilPromise(promise) {
+async function rateLimitedPromise(promise) {
     const result = await promise;
-    const ms = rateLimitDelay(result);
+    const ms = calculateRateLimitDelay(result);
     if (ms) {
         await Util.sleep(ms);
     }
@@ -100,7 +102,7 @@ async function getOpenPrs() {
             resolve(res);
         });
     });
-    return await fulfilPromise(promise);
+    return await rateLimitedPromise(promise);
 }
 
 async function getLabels(prNum) {
@@ -118,7 +120,7 @@ async function getLabels(prNum) {
            resolve(res);
         });
     });
-    return await fulfilPromise(promise);
+    return await rateLimitedPromise(promise);
 }
 
 // Gets PR metadata from GitHub
@@ -154,7 +156,7 @@ async function getRawPR(prNum) {
             resolve(pr);
        });
     });
-    return await fulfilPromise(promise);
+    return await rateLimitedPromise(promise);
 }
 
 async function getReviews(prNum) {
@@ -171,7 +173,7 @@ async function getReviews(prNum) {
             resolve(res);
         });
     });
-    return await fulfilPromise(promise);
+    return await rateLimitedPromise(promise);
 }
 
 async function getStatuses(ref) {
@@ -190,7 +192,7 @@ async function getStatuses(ref) {
             resolve(res);
         });
     });
-    return await fulfilPromise(promise);
+    return await rateLimitedPromise(promise);
 }
 
 async function getCommit(sha) {
@@ -207,7 +209,7 @@ async function getCommit(sha) {
             resolve(res);
         });
     });
-    return await fulfilPromise(promise);
+    return await rateLimitedPromise(promise);
 }
 
 async function createCommit(treeSha, message, parents, author, committer) {
@@ -230,7 +232,7 @@ async function createCommit(treeSha, message, parents, author, committer) {
             resolve(res);
         });
     });
-    return await fulfilPromise(promise);
+    return await rateLimitedPromise(promise);
 }
 
 // returns one of: "ahead", "behind", "identical" or "diverged"
@@ -250,7 +252,7 @@ async function compareCommits(baseRef, headRef) {
             resolve(res);
         });
     });
-    return (await fulfilPromise(promise)).status;
+    return (await rateLimitedPromise(promise)).status;
 }
 
 async function getCommits(branch, since, author) {
@@ -271,7 +273,7 @@ async function getCommits(branch, since, author) {
             resolve(res);
         });
     });
-    return await fulfilPromise(promise);
+    return await rateLimitedPromise(promise);
 }
 
 async function getReference(ref) {
@@ -295,7 +297,7 @@ async function getReference(ref) {
             resolve(res);
         });
     });
-    return (await fulfilPromise(promise)).object.sha;
+    return (await rateLimitedPromise(promise)).object.sha;
 }
 
 async function updateReference(ref, sha, force) {
@@ -318,7 +320,7 @@ async function updateReference(ref, sha, force) {
             resolve(res);
        });
     });
-    return (await fulfilPromise(promise)).object.sha;
+    return (await rateLimitedPromise(promise)).object.sha;
 }
 
 async function updatePR(prNum, state) {
@@ -338,7 +340,7 @@ async function updatePR(prNum, state) {
         resolve(res);
      });
    });
-   return await fulfilPromise(promise);
+   return await rateLimitedPromise(promise);
 }
 
 async function addLabels(params) {
@@ -355,7 +357,7 @@ async function addLabels(params) {
         resolve(res);
      });
    });
-   return await fulfilPromise(promise);
+   return await rateLimitedPromise(promise);
 }
 
 async function removeLabel(label, prNum) {
@@ -375,7 +377,7 @@ async function removeLabel(label, prNum) {
           resolve(res);
       });
     });
-    return await fulfilPromise(promise);
+    return await rateLimitedPromise(promise);
 }
 
 // XXX: remove if not needed, since the "required_status_checks" api call sometimes
@@ -394,7 +396,7 @@ async function removeLabel(label, prNum) {
 //          logApiResult(getProtectedBranchRequiredStatusChecks.name, params, result);
 //          resolve(res);
 //      });
-//    return (await fulfilPromise(promise)).contexts;
+//    return (await rateLimitedPromise(promise)).contexts;
 //    });
 //}
 
@@ -418,7 +420,7 @@ async function createStatus(sha, state, targetUrl, description, context) {
           resolve(res);
         });
     });
-    return (await fulfilPromise(promise)).context;
+    return (await rateLimitedPromise(promise)).context;
 }
 
 async function getProtectedBranchRequiredStatusChecks(branch) {
@@ -437,7 +439,7 @@ async function getProtectedBranchRequiredStatusChecks(branch) {
           resolve(res);
       });
     });
-    return (await fulfilPromise(promise)).protection.required_status_checks.contexts;
+    return (await rateLimitedPromise(promise)).protection.required_status_checks.contexts;
 }
 
 async function getUser(username) {
@@ -455,7 +457,7 @@ async function getUser(username) {
           resolve(res);
       });
     });
-    return await fulfilPromise(promise);
+    return await rateLimitedPromise(promise);
 }
 
 async function getUserEmails() {
@@ -472,7 +474,7 @@ async function getUserEmails() {
           resolve(res);
       });
     });
-    return await fulfilPromise(promise);
+    return await rateLimitedPromise(promise);
 }
 
 module.exports = {
