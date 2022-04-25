@@ -475,7 +475,7 @@ class PullRequest {
         // major methods we have called, in the call order (for debugging only)
         this._breadcrumbs = [];
 
-        this._messageValid = null;
+        this._messageValid = true;
 
         this._prState = null; // calculated PrState
 
@@ -497,6 +497,12 @@ class PullRequest {
 
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
         this._labelPushBan = false;
+
+        // the 'Authored-by' credentials from the PR message
+        this._authoredBy = null;
+
+        // PR message with removed 'Authored-by' line
+        this._preprocessedPrBodyCache = null;
     }
 
     // this PR will need to be reprocessed in this many milliseconds
@@ -788,7 +794,7 @@ class PullRequest {
 
         assert(!this._prState.merged());
 
-        this._messageValid = this._prMessageValid();
+        this._validatePrMessage();
         this._log("messageValid: " + this._messageValid);
 
         this._approval = await this._checkApproval();
@@ -837,8 +843,12 @@ class PullRequest {
 
     _prHeadSha() { return this._rawPr.head.sha; }
 
-    _prMessage() {
-        return (this._rawPr.title + ' (#' + this._rawPr.number + ')' + '\n\n' + this._prBody()).trim();
+    _prTitle() {
+        return this._rawPr.title + ' (#' + this._rawPr.number + ')';
+    }
+
+    _preprocessedPrMessage() {
+        return (this._prTitle() + '\n\n' + this._preprocessedPrBody()).trim();
     }
 
     // returns the position of the first non-ASCII_printable character (or -1)
@@ -848,21 +858,35 @@ class PullRequest {
         return match ? match.index : -1;
     }
 
-    _prMessageValid() {
+    _validatePrMessage() {
         // _prBody() removed CRs in CRLF sequences
         // other CRs are not treated specially (and are banned)
-        const lines = this._prMessage().split('\n');
+        const prMessage = (this._prTitle() + '\n\n' + this._prBody()).trim();
+        const lines = prMessage.split('\n');
         for (let i = 0; i < lines.length; ++i) {
             const line = lines[i];
             const invalidPosition = this._invalidCharacterPosition(line);
             if (invalidPosition !== -1) {
                 this._warn(`PR message has an invalid character at line ${i}, offset ${invalidPosition}`);
-                return false;
+                this._messageValid = false;
+                return;
             }
-            if (line.length > 72)
-                return false;
+            if (line.length > 72) {
+                this._warn(`PR message has a too long line ${i}: ${line.length} > 72`);
+                this._messageValid = false;
+                return;
+            }
         }
-        return true;
+
+        let body = this._preprocessedPrBody();
+        const trailer = body.match(/\n\nCo-authored-by/);
+        if (trailer)
+            body = body.substring(0, trailer.index);
+        if (body.match(/^\S+[aA]uthored-[bB]y/)) {
+            this._warn(`PR message has a misplaced '*Authored-by' tag`);
+            this._messageValid = false;
+            return;
+        }
     }
 
     _draftPr() {
@@ -904,6 +928,28 @@ class PullRequest {
         if (this._rawPr.body === undefined || this._rawPr.body === null)
             return "";
         return this._rawPr.body.replace(/\r+\n/g, '\n');
+    }
+
+    _preprocessedPrBody() {
+        if (!this._preprocessedPrBodyCache)
+            this._preprocessedPrBodyCache = this._processPrBody();
+        return this._preprocessedPrBodyCache;
+    }
+
+    _processPrBody() {
+        const body = this._prBody();
+        const authoredBy = body.match(/^(Authored-by: )([^,]+)$/m);
+        if (!authoredBy)
+            return body;
+        const cred = authoredBy[2].match(/(.+)(<.+>)/);
+        if (!cred) {
+            this._warn(`Invalid PR 'Authored-by' credentials format`);
+            this._messageValid = false;
+        } else {
+            let now = new Date();
+            this._authoredBy = {name: cred[1].trim, email: cred[2].trim, date: now.toISOString()};
+        }
+        return body.substring(authoredBy[0].length);
     }
 
     _createdAt() { return this._rawPr.created_at; }
@@ -1064,11 +1110,18 @@ class PullRequest {
         const pr = await GH.getPR(this._prNumber(), waitForMergeable);
         assert(pr.number === this._prNumber());
         this._rawPr = pr;
+        this._processPrBody();
     }
 
     // Whether the commit message configuration remained intact since staging.
     async _messageIsFresh() {
-        const result = this._prMessage() === this._stagedCommit.message;
+        const messageFresh = this._preprocessedPrMessage() === this._stagedCommit.message;
+        let authorFresh = true;
+        if (this._authoredBy) {
+            const committer = this._stagedCommit.committer;
+            authorFresh = (this._authoredBy.name === committer.name) && (this._authoredBy.email === committer.email);
+        }
+        const result = messageFresh && authorFresh;
         this._log("staged commit message freshness: " + result);
         return result;
     }
@@ -1236,7 +1289,8 @@ class PullRequest {
         if (this._dryRun("create staged commit"))
             throw this._exObviousFailure("dryRun");
 
-        this._stagedCommit = await GH.createCommit(mergeCommit.tree.sha, this._prMessage(), [baseSha], mergeCommit.author, committer);
+        const author = this._authoredBy ? this.authoredBy : mergeCommit.author;
+        this._stagedCommit = await GH.createCommit(mergeCommit.tree.sha, this._preprocessedPrMessage(), [baseSha], author, committer);
 
         assert(!this._stagingBanned);
         await GH.updateReference(Config.stagingBranchPath(), this._stagedSha(), true);
