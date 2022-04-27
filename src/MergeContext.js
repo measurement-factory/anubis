@@ -475,7 +475,7 @@ class PullRequest {
         // major methods we have called, in the call order (for debugging only)
         this._breadcrumbs = [];
 
-        this._messageValid = true;
+        this._messageValid = null;
 
         this._prState = null; // calculated PrState
 
@@ -688,7 +688,7 @@ class PullRequest {
             // check this separately because GitHub does not recreate PR merge commits
             // for conflicted PR branches (leaving stale PR merge commits).
             this._prMergeable() &&
-            await this._messageIsFresh()) {
+            this._messageIsFresh()) {
 
             const prMergeSha = await GH.getReference(this._mergePath());
             const prCommit = await GH.getCommit(prMergeSha);
@@ -794,7 +794,7 @@ class PullRequest {
 
         assert(!this._prState.merged());
 
-        this._validatePrMessage();
+        this._messageValid = this._validatePrMessage();
         this._log("messageValid: " + this._messageValid);
 
         this._approval = await this._checkApproval();
@@ -848,6 +848,8 @@ class PullRequest {
     }
 
     _preprocessedPrMessage() {
+        if (this._preprocessedPrBody() === null)
+            return null;
         return (this._prTitle() + '\n\n' + this._preprocessedPrBody()).trim();
     }
 
@@ -859,6 +861,9 @@ class PullRequest {
     }
 
     _validatePrMessage() {
+        if (this._preprocessedPrBody() === null)
+            return false;
+
         // _prBody() removed CRs in CRLF sequences
         // other CRs are not treated specially (and are banned)
         const prMessage = (this._prTitle() + '\n\n' + this._prBody()).trim();
@@ -867,14 +872,12 @@ class PullRequest {
             const line = lines[i];
             const invalidPosition = this._invalidCharacterPosition(line);
             if (invalidPosition !== -1) {
-                this._warn(`PR message has an invalid character at line ${i}, offset ${invalidPosition}`);
-                this._messageValid = false;
-                return;
+                this._warn(`Invalid PR message: an invalid character at line ${i}, offset ${invalidPosition}`);
+                return false;
             }
             if (line.length > 72) {
-                this._warn(`PR message has a too long line ${i}: ${line.length} > 72`);
-                this._messageValid = false;
-                return;
+                this._warn(`Invalid PR message: too long line ${i}: ${line.length} > 72`);
+                return false;
             }
         }
 
@@ -882,11 +885,12 @@ class PullRequest {
         const trailer = body.match(/\n\nCo-authored-by/);
         if (trailer)
             body = body.substring(0, trailer.index);
-        if (body.match(/^\S+[aA]uthored-[bB]y/)) {
-            this._warn(`PR message has a misplaced '*Authored-by' tag`);
-            this._messageValid = false;
-            return;
+        if (body.match(/^\S*[aA]uthored-[bB]y/m)) {
+            this._warn(`Invalid PR message: a misplaced '*Authored-by' tag`);
+            return false;
         }
+
+        return true;
     }
 
     _draftPr() {
@@ -931,24 +935,27 @@ class PullRequest {
     }
 
     _preprocessedPrBody() {
-        if (!this._preprocessedPrBodyCache)
+        if (this._preprocessedPrBodyCache === null)
             this._preprocessedPrBodyCache = this._processPrBody();
         return this._preprocessedPrBodyCache;
     }
 
     _processPrBody() {
         const body = this._prBody();
-        const authoredBy = body.match(/^(Authored-by: )([^,]+)$/m);
+
+        const authoredBy = body.match(/^(Authored-by: )([^,]+?)$/m);
         if (!authoredBy)
             return body;
-        const cred = authoredBy[2].match(/(.+)(<.+>)/);
+
+        const cred = authoredBy[2].match(/(.+)<(.+)>/);
         if (!cred) {
-            this._warn(`Invalid PR 'Authored-by' credentials format`);
-            this._messageValid = false;
+            this._warn(`Invalid PR message: incorrect 'Authored-by' format`);
+            return null;
         } else {
             let now = new Date();
-            this._authoredBy = {name: cred[1].trim, email: cred[2].trim, date: now.toISOString()};
+            this._authoredBy = {name: cred[1].trim(), email: cred[2].trim(), date: now.toISOString()};
         }
+
         return body.substring(authoredBy[0].length);
     }
 
@@ -1118,11 +1125,10 @@ class PullRequest {
         const messageFresh = this._preprocessedPrMessage() === this._stagedCommit.message;
         let authorFresh = true;
         if (this._authoredBy) {
-            const committer = this._stagedCommit.committer;
-            authorFresh = (this._authoredBy.name === committer.name) && (this._authoredBy.email === committer.email);
+            const author = this._stagedCommit.author;
+            authorFresh = (this._authoredBy.name === author.name) && (this._authoredBy.email === author.email);
         }
         const result = messageFresh && authorFresh;
-        this._log("staged commit message freshness: " + result);
         return result;
     }
 
@@ -1289,7 +1295,8 @@ class PullRequest {
         if (this._dryRun("create staged commit"))
             throw this._exObviousFailure("dryRun");
 
-        const author = this._authoredBy ? this.authoredBy : mergeCommit.author;
+        const author = this._authoredBy ? this._authoredBy : mergeCommit.author;
+        assert(this._preprocessedPrMessage());
         this._stagedCommit = await GH.createCommit(mergeCommit.tree.sha, this._preprocessedPrMessage(), [baseSha], author, committer);
 
         assert(!this._stagingBanned);
