@@ -882,7 +882,7 @@ class PullRequest {
         }
 
         let body = this._preprocessedPrBody();
-        const trailer = body.match(/\n\nCo-authored-by/);
+        const trailer = body.match(/\n\nCo-authored-by: /);
         if (trailer)
             body = body.substring(0, trailer.index);
         if (body.match(/^\S*[aA]uthored-[bB]y/m)) {
@@ -956,7 +956,7 @@ class PullRequest {
             this._authoredBy = {name: cred[1].trim(), email: cred[2].trim(), date: now.toISOString()};
         }
 
-        return body.substring(authoredBy[0].length);
+        return body.substring(authoredBy[0].length).trim();
     }
 
     _createdAt() { return this._rawPr.created_at; }
@@ -1117,7 +1117,7 @@ class PullRequest {
         const pr = await GH.getPR(this._prNumber(), waitForMergeable);
         assert(pr.number === this._prNumber());
         this._rawPr = pr;
-        this._processPrBody();
+        this._preprocessedPrBody(); // cache and ignore the result (for now)
     }
 
     // Whether the commit message configuration remained intact since staging.
