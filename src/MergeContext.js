@@ -947,12 +947,12 @@ class PullRequest {
         if (!authoredBy)
             return body;
 
-        const cred = authoredBy[2].match(/(.+)<(.+)>/);
+        const cred = authoredBy[2].match(/(.+)<(\S+@\S+\.\S+)>/);
         if (!cred) {
             this._warn(`Invalid PR message: incorrect 'Authored-by' format`);
             return null;
         } else {
-            let now = new Date();
+            const now = new Date();
             this._authoredBy = {name: cred[1].trim(), email: cred[2].trim(), date: now.toISOString()};
         }
 
