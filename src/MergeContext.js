@@ -499,10 +499,10 @@ class PullRequest {
         this._labelPushBan = false;
 
         // the 'Authored-by' credentials from the PR message
-        this._authoredBy = null;
+        this._authoredBy = undefined;
 
         // PR message with removed 'Authored-by' line
-        this._preprocessedPrBodyCache = null;
+        this._preprocessedPrBodyCache = undefined;
     }
 
     // this PR will need to be reprocessed in this many milliseconds
@@ -881,13 +881,31 @@ class PullRequest {
             }
         }
 
-        let body = this._preprocessedPrBody();
-        const trailer = body.match(/\n\nCo-authored-by: /);
-        if (trailer)
-            body = body.substring(0, trailer.index);
-        if (body.match(/^\S*[aA]uthored-[bB]y/m)) {
-            this._warn(`Invalid PR message: a misplaced '*Authored-by' tag`);
+        return this._validatePrMessageAttributes();
+    }
+
+    _validatePrMessageAttributes() {
+        const origBody = this._preprocessedPrBody();
+        const trailerMatch = origBody.match(/\n\nCo-authored-by: /);
+        if (!trailerMatch)
+            return true;
+
+        const body = origBody.substring(0, trailerMatch.index);
+        const misplacedAuthor = /^\S*[aA]uthored-[bB]y/m;
+        if (body.match(misplacedAuthor)) {
+            this._warn(`Invalid PR message: a misplaced '*Authored-by' attribute in the message body`);
             return false;
+        }
+
+        const trailer = origBody.substring(trailerMatch.index).trim().split('\n');
+        const attr = /^Co-authored-by: /;
+        for (let trailerLine of trailer) {
+            const matched = trailerLine.match(attr);
+            if (matched) {
+                if (!this._parseAuthor(attr, trailerLine.substring(matched[0].length)))
+                    return false;
+            } else if (trailerLine.match(misplacedAuthor))
+                return false;
         }
 
         return true;
@@ -935,28 +953,36 @@ class PullRequest {
     }
 
     _preprocessedPrBody() {
-        if (this._preprocessedPrBodyCache === null)
+        if (this._preprocessedPrBodyCache === undefined)
             this._preprocessedPrBodyCache = this._processPrBody();
         return this._preprocessedPrBodyCache;
     }
 
-    _processPrBody() {
-        const body = this._prBody();
-
-        const authoredBy = body.match(/^(Authored-by: )([^,]+?)$/m);
-        if (!authoredBy)
-            return body;
-
-        const cred = authoredBy[2].match(/(.+)<(\S+@\S+\.\S+)>/);
+    _parseAuthor(attr, str) {
+        const cred = str.match(/^([\w+\s]+) <(\S+@\S+\.\S+)>$/);
         if (!cred) {
-            this._warn(`Invalid PR message: incorrect 'Authored-by' format`);
+            this._warn(`Invalid PR message: cannot parse ${attr} line: ${str}`);
             return null;
-        } else {
-            const now = new Date();
-            this._authoredBy = {name: cred[1].trim(), email: cred[2].trim(), date: now.toISOString()};
         }
+        if (cred[0].includes(',')) {
+            this._warn(`Invalid PR message: ${attr} line cannot contain commas`);
+            return null;
+        }
+        const now = new Date();
+        return {name: cred[1].trim(), email: cred[2].trim(), date: now.toISOString()};
+    }
 
-        return body.substring(authoredBy[0].length).trim();
+    _processPrBody() {
+        const attr = /^Authored-by: /;
+        const body = this._prBody();
+        const matched = body.match(attr);
+        if (!matched)
+            return body;
+        const end = body.search(/$/m);
+        const cred = this._parseAuthor(attr, body.substring(matched[0].length, end));
+        if (!cred)
+            return null;
+        return body.substring(end).trim();
     }
 
     _createdAt() { return this._rawPr.created_at; }
