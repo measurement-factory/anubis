@@ -498,10 +498,11 @@ class PullRequest {
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
         this._labelPushBan = false;
 
-        // the 'Authored-by' credentials from the PR message
-        this._authoredBy = undefined;
+        // the 'Authored-by' credentials from the PR message or null
+        this._authoredByCache = undefined;
 
-        // PR message with removed 'Authored-by' line
+        // PR message where the special attributes (such as 'Authored-by') were successfully parsed and removed or
+        // null on a parsing error
         this._preprocessedPrBodyCache = undefined;
     }
 
@@ -848,7 +849,7 @@ class PullRequest {
     }
 
     _preprocessedPrMessage() {
-        if (this._preprocessedPrBody() === null)
+        if (!this._preprocessedPrBody())
             return null;
         return (this._prTitle() + '\n\n' + this._preprocessedPrBody()).trim();
     }
@@ -861,7 +862,7 @@ class PullRequest {
     }
 
     _validatePrMessage() {
-        if (this._preprocessedPrBody() === null)
+        if (!this._preprocessedPrBody())
             return false;
 
         // _prBody() removed CRs in CRLF sequences
@@ -886,26 +887,28 @@ class PullRequest {
 
     _validatePrMessageAttributes() {
         const origBody = this._preprocessedPrBody();
-        const trailerMatch = origBody.match(/\n\nCo-authored-by: /);
-        if (!trailerMatch)
-            return true;
-
-        const body = origBody.substring(0, trailerMatch.index);
+        assert(origBody);
         const misplacedAuthor = /^\S*[aA]uthored-[bB]y/m;
+        const trailerMatch = origBody.match(/\n\nCo-authored-by: /);
+
+        const body = trailerMatch ? origBody.substring(0, trailerMatch.index) : origBody;
         if (body.match(misplacedAuthor)) {
             this._warn(`Invalid PR message: a misplaced '*Authored-by' attribute in the message body`);
             return false;
         }
 
-        const trailer = origBody.substring(trailerMatch.index).trim().split('\n');
-        const attr = /^Co-authored-by: /;
-        for (let trailerLine of trailer) {
-            const matched = trailerLine.match(attr);
-            if (matched) {
-                if (!this._parseAuthor(attr, trailerLine.substring(matched[0].length)))
+        if (trailerMatch) {
+            const attr = "Co-authored-by: ";
+            const trailers = origBody.substring(trailerMatch.index).trim().split('\n');
+            for (let trailer of trailers) {
+                if (trailer.startsWith(attr)) {
+                    if (!this._parseAuthor(attr, trailer.substring(attr.length)))
+                        return false;
+                } else if (trailer.match(misplacedAuthor)) {
+                    this._warn(`Invalid PR message: a misplaced '*Authored-by' attribute in the message trailer`);
                     return false;
-            } else if (trailerLine.match(misplacedAuthor))
-                return false;
+                }
+            }
         }
 
         return true;
@@ -953,8 +956,7 @@ class PullRequest {
     }
 
     _preprocessedPrBody() {
-        if (this._preprocessedPrBodyCache === undefined)
-            this._preprocessedPrBodyCache = this._processPrBody();
+        assert(this._preprocessedPrBodyCache !== undefined);
         return this._preprocessedPrBodyCache;
     }
 
@@ -972,6 +974,11 @@ class PullRequest {
         return {name: cred[1].trim(), email: cred[2].trim(), date: now.toISOString()};
     }
 
+    _authoredBy() {
+        assert(this._authoredByCache !== undefined);
+        return this._authoredByCache;
+    }
+
     _processPrBody() {
         const attr = /^Authored-by: /;
         const body = this._prBody();
@@ -979,8 +986,9 @@ class PullRequest {
         if (!matched)
             return body;
         const end = body.search(/$/m);
-        const cred = this._parseAuthor(attr, body.substring(matched[0].length, end));
-        if (!cred)
+        assert(this._authoredByCache === undefined);
+        this._authoredByCache = this._parseAuthor(attr, body.substring(matched[0].length, end));
+        if (!this._authoredByCache)
             return null;
         return body.substring(end).trim();
     }
@@ -1143,19 +1151,19 @@ class PullRequest {
         const pr = await GH.getPR(this._prNumber(), waitForMergeable);
         assert(pr.number === this._prNumber());
         this._rawPr = pr;
-        this._preprocessedPrBody(); // cache and ignore the result (for now)
+        this._preprocessedPrBodyCache = this._processPrBody();
     }
 
     // Whether the commit message configuration remained intact since staging.
-    async _messageIsFresh() {
-        const messageFresh = this._preprocessedPrMessage() === this._stagedCommit.message;
-        let authorFresh = true;
-        if (this._authoredBy) {
+    _messageIsFresh() {
+        if (this._preprocessedPrMessage() !== this._stagedCommit.message)
+            return false;
+        if (this._authoredBy()) {
             const author = this._stagedCommit.author;
-            authorFresh = (this._authoredBy.name === author.name) && (this._authoredBy.email === author.email);
+            if (this._authoredBy().name !== author.name || this._authoredBy().email !== author.email)
+                return false;
         }
-        const result = messageFresh && authorFresh;
-        return result;
+        return true;
     }
 
     async _processStagingStatuses() {
@@ -1321,7 +1329,7 @@ class PullRequest {
         if (this._dryRun("create staged commit"))
             throw this._exObviousFailure("dryRun");
 
-        const author = this._authoredBy ? this._authoredBy : mergeCommit.author;
+        const author = this._authoredBy() ? this._authoredBy() : mergeCommit.author;
         assert(this._preprocessedPrMessage());
         this._stagedCommit = await GH.createCommit(mergeCommit.tree.sha, this._preprocessedPrMessage(), [baseSha], author, committer);
 
