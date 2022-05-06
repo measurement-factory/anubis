@@ -959,7 +959,7 @@ class PullRequest {
     }
 
     _parseAuthor(attr, str) {
-        const cred = str.match(/^([\w+\s]+) <(\S+@\S+\.\S+)>$/);
+        const cred = str.match(/^([\w][^@<>,]*) <(\S+@\S+\.\S+)>$/);
         if (!cred) {
             this._warn(`Invalid PR message: cannot parse ${attr} line: ${str}`);
             return null;
