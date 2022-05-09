@@ -873,11 +873,11 @@ class PullRequest {
             const line = lines[i];
             const invalidPosition = this._invalidCharacterPosition(line);
             if (invalidPosition !== -1) {
-                this._warn(`Invalid PR message: an invalid character at line ${i}, offset ${invalidPosition}`);
+                this._warn(`Invalid PR message: bad character at line ${i}, offset ${invalidPosition}`);
                 return false;
             }
             if (line.length > 72) {
-                this._warn(`Invalid PR message: too long line ${i}: ${line.length} > 72`);
+                this._warn(`Invalid PR message: too long line '${line}'`);
                 return false;
             }
         }
@@ -889,22 +889,22 @@ class PullRequest {
         const origBody = this._preprocessedPrBody();
         assert(origBody);
         const misplacedAuthor = /^\S*[aA]uthored-[bB]y/m;
-        const trailerMatch = origBody.match(/\n\nCo-authored-by: /);
-
-        const body = trailerMatch ? origBody.substring(0, trailerMatch.index) : origBody;
-        if (body.match(misplacedAuthor)) {
-            this._warn(`Invalid PR message: a misplaced '*Authored-by' attribute in the message body`);
+        const trailerIndex = origBody.search(/\n\nCo-authored-by: /);
+        const body = (trailerIndex >= 0) ? origBody.substring(0, trailerIndex) : origBody;
+        const misplacedAuthorIndex = body.search(misplacedAuthor);
+        if (misplacedAuthorIndex >= 0) {
+            this._warn(`Invalid PR message: a misplaced '*Authored-by' attribute in the message body at ${misplacedAuthorIndex}'`);
             return false;
         }
 
-        if (trailerMatch) {
+        if (trailerIndex >= 0) {
             const attr = "Co-authored-by: ";
-            const trailers = origBody.substring(trailerMatch.index).trim().split('\n');
+            const trailers = origBody.substring(trailerIndex).trim().split('\n');
             for (let trailer of trailers) {
                 if (trailer.startsWith(attr)) {
                     if (!this._parseAuthor(attr, trailer.substring(attr.length)))
                         return false;
-                } else if (trailer.match(misplacedAuthor)) {
+                } else if (trailer.search(misplacedAuthor) >= 0) {
                     this._warn(`Invalid PR message: a misplaced '*Authored-by' attribute in the message trailer`);
                     return false;
                 }
@@ -963,11 +963,11 @@ class PullRequest {
     _parseAuthor(attr, str) {
         const cred = str.match(/^([\w][^@<>,]*) <(\S+@\S+\.\S+)>$/);
         if (!cred) {
-            this._warn(`Invalid PR message: cannot parse ${attr} line: ${str}`);
+            this._warn(`Invalid '${attr}' line format`);
             return null;
         }
         if (cred[0].includes(',')) {
-            this._warn(`Invalid PR message: ${attr} line cannot contain commas`);
+            this._warn(`Invalid '${attr}' line: commas are not allowed`);
             return null;
         }
         const now = new Date();
@@ -980,17 +980,17 @@ class PullRequest {
     }
 
     _processPrBody() {
-        const attr = /^Authored-by: /;
+        const attr = "Authored-by: ";
         const body = this._prBody();
-        const matched = body.match(attr);
-        if (!matched)
+        if (!body.startsWith(attr))
             return body;
-        const end = body.search(/$/m);
+        const lineEnd = body.search(/$/m);
+        assert(lineEnd >= 0);
         assert(this._authoredByCache === undefined);
-        this._authoredByCache = this._parseAuthor(attr, body.substring(matched[0].length, end));
+        this._authoredByCache = this._parseAuthor(attr, body.substring(attr.length, lineEnd));
         if (!this._authoredByCache)
             return null;
-        return body.substring(end).trim();
+        return body.substring(lineEnd+1); // an empty string if overruning the body size
     }
 
     _createdAt() { return this._rawPr.created_at; }
