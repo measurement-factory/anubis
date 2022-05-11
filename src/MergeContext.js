@@ -888,12 +888,12 @@ class PullRequest {
     _validatePrMessageAttributes() {
         const origBody = this._preprocessedPrBody();
         assert(origBody);
-        const misplacedAuthor = /^\S*[aA]uthored-[bB]y/m;
+        const misplacedAuthor = /^\s*\S*[aA]uthored-[bB]y/m;
         const trailerIndex = origBody.search(/\n\nCo-authored-by: /);
         const body = (trailerIndex >= 0) ? origBody.substring(0, trailerIndex) : origBody;
         const misplacedAuthorIndex = body.search(misplacedAuthor);
         if (misplacedAuthorIndex >= 0) {
-            this._warn(`Invalid PR message: a misplaced '*Authored-by' attribute in the message body at ${misplacedAuthorIndex}'`);
+            this._warn(`Invalid PR message: a misplaced '*Authored-by' attribute in the message body at ${misplacedAuthorIndex} position`);
             return false;
         }
 
@@ -988,9 +988,7 @@ class PullRequest {
         assert(lineEnd >= 0);
         assert(this._authoredByCache === undefined);
         this._authoredByCache = this._parseAuthor(attr, body.substring(attr.length, lineEnd));
-        if (!this._authoredByCache)
-            return null;
-        return body.substring(lineEnd+1); // an empty string if overruning the body size
+        return this._authoredByCache ? body.substring(lineEnd).trim() : null;
     }
 
     _createdAt() { return this._rawPr.created_at; }
