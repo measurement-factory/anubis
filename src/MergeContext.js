@@ -499,7 +499,7 @@ class PullRequest {
         this._labelPushBan = false;
 
         // the 'Authored-by' credentials from the PR message or null
-        this._authoredByCache = undefined;
+        this._authoredBy = undefined;
 
         // PR message where the special attributes (such as 'Authored-by') were successfully parsed and removed or
         // null on a parsing error
@@ -974,11 +974,6 @@ class PullRequest {
         return {name: cred[1].trim(), email: cred[2].trim(), date: now.toISOString()};
     }
 
-    _authoredBy() {
-        assert(this._authoredByCache !== undefined);
-        return this._authoredByCache;
-    }
-
     _processPrBody() {
         const attr = "Authored-by: ";
         const body = this._prBody();
@@ -986,9 +981,10 @@ class PullRequest {
             return body;
         const lineEnd = body.search(/$/m);
         assert(lineEnd >= 0);
-        assert(this._authoredByCache === undefined);
-        this._authoredByCache = this._parseAuthor(attr, body.substring(attr.length, lineEnd));
-        return this._authoredByCache ? body.substring(lineEnd).trim() : null;
+        assert(this._authoredBy === undefined);
+        this._authoredBy = this._parseAuthor(attr, body.substring(attr.length, lineEnd));
+        assert(this._authoredBy !== undefined);
+        return this._authoredBy ? body.substring(lineEnd).replace(/^\s*\n+/g, '') : null;
     }
 
     _createdAt() { return this._rawPr.created_at; }
@@ -1156,9 +1152,9 @@ class PullRequest {
     _messageIsFresh() {
         if (this._preprocessedPrMessage() !== this._stagedCommit.message)
             return false;
-        if (this._authoredBy()) {
+        if (this._authoredBy) {
             const author = this._stagedCommit.author;
-            if (this._authoredBy().name !== author.name || this._authoredBy().email !== author.email)
+            if (this._authoredBy.name !== author.name || this._authoredBy.email !== author.email)
                 return false;
         }
         return true;
@@ -1327,7 +1323,7 @@ class PullRequest {
         if (this._dryRun("create staged commit"))
             throw this._exObviousFailure("dryRun");
 
-        const author = this._authoredBy() ? this._authoredBy() : mergeCommit.author;
+        const author = this._authoredBy ? this._authoredBy : mergeCommit.author;
         assert(this._preprocessedPrMessage());
         this._stagedCommit = await GH.createCommit(mergeCommit.tree.sha, this._preprocessedPrMessage(), [baseSha], author, committer);
 
