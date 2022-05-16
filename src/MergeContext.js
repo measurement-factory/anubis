@@ -1173,8 +1173,13 @@ class PullRequest {
 
     // Whether the commit message configuration remained intact since staging.
     _messageIsFresh() {
-        return this._commitMessage.valid() &&
-              (this._commitMessage.whole() === this._stagedCommit.message);
+        if (!this._commitMessage.valid()) {
+            this._log("staged commit message is invalid (and stale)");
+            return false;
+        }
+        const result = this._commitMessage.whole() === this._stagedCommit.message;
+        this._log("staged commit message freshness: " + result);
+        return result;
     }
 
     async _processStagingStatuses() {
