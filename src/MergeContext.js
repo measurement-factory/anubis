@@ -454,6 +454,128 @@ class BranchPosition
     }
 }
 
+// Converts the raw PR message to the staged commit message.
+class CommitMessage
+{
+    constructor(rawPr) {
+        this._body = undefined;
+        this._author = undefined;
+        this._trailer = undefined;
+        this._errorMessage = undefined;
+
+        this._title = rawPr.title + ' (#' + rawPr.number + ')';
+        if (rawPr.body !== undefined && rawPr.body !== null) {
+            this._body = rawPr.body.replace(/\r+\n/g, '\n');
+            this._parse();
+        }
+    }
+
+    error() { return this._errorMessage; }
+
+    valid() { return !this.error(); }
+
+    // complete message for the staged commt
+    whole() {
+        assert(!this.error());
+        assert(this._author !== null && this._body !== null && this._trailer !== null);
+        let message = this._title + '\n\n' + this._body;
+        if (this._trailer)
+            message += this._trailer;
+        return message.trim();
+    }
+
+    // The author specified in the the Authoredby attribute in {name, email, date} format.
+    author() { return this._author; }
+
+    // returns the position of the first non-ASCII_printable character (or -1)
+    _invalidCharacterPosition(str) {
+        const prohibitedCharacters = /[^\u{20}-\u{7e}]/u;
+        const match = prohibitedCharacters.exec(str);
+        return match ? match.index : -1;
+    }
+
+    // basic checks for the entire (raw) message, such as the maxumum line length
+    _check() {
+        // constructor removed CRs in CRLF sequences
+        // other CRs are not treated specially (and are banned)
+        const lines = this.whole().split('\n');
+        for (let i = 0; i < lines.length; ++i) {
+            const line = lines[i];
+            const invalidPosition = this._invalidCharacterPosition(line);
+            if (invalidPosition !== -1) {
+                this._error = `bad character at line ${i}, offset ${invalidPosition}`;
+                return false;
+            }
+            if (line.length > 72) {
+                this._error = `too long line '${line}'`;
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // parses the raw message attributes (if any) and removes some of them
+    _parse() {
+        if (!this._check())
+            return;
+
+        const attr = 'Authored-by: ';
+        if (this._body.startsWith(attr)) {
+            const lineEnd = this._body.search(/$/m);
+            this._author = this._parseAuthor(attr, this._body.substring(attr.length, lineEnd));
+            if (!this._author)
+                return;
+            this._body = this._body.substring(lineEnd).replace(/^\s*\n+/g, ''); // remove leading empty lines
+        }
+
+        const trailerIndex = this._body.search('\n\nCo-authored-by: ');
+        if (trailerIndex >= 0) {
+            this._body = this._body.substring(0, trailerIndex);
+            this._trailer = this._parseTrailer(this._body.substring(trailerIndex));
+            if (!this._trailer)
+                return;
+        }
+
+        if (this._findMisplacedAuthor(this._body)) {
+            this._errorMessage = `a misplaced '*Authored-by' attribute in the message`;
+        }
+    }
+
+    _parseAuthor(attr, str) {
+        const cred = str.match(/^([\w][^@<>,]*) <(\S+@\S+\.\S+)>$/);
+        if (!cred) {
+            this._errorMessage = `invalid '${attr}' line format`;
+            return null;
+        }
+        if (cred[0].includes(',')) {
+            this._errorMessage = `invalid '${attr}' line: commas are not allowed`;
+            return null;
+        }
+        const now = new Date();
+        return {name: cred[1].trim(), email: cred[2].trim(), date: now.toISOString()};
+    }
+
+    _parseTrailer(trailer) {
+        const attr = "Co-authored-by: ";
+        const trailers = trailer.split('\n');
+        for (let line of trailers) {
+            if (line.startsWith(attr)) {
+                if (!this._parseAuthor(attr, trailer.substring(attr.length)))
+                    return null;
+            } else if (this._findMisplacedAuthor(line)) {
+                this._errorMessage = `a misplaced '*Authored-by' attribute in the message trailer`;
+                return null;
+            }
+        }
+        return trailer;
+    }
+
+    _findMisplacedAuthor(str) {
+        const misplacedAuthor = /^\s*\S*[aA]uthored-[bB]y/m;
+        return str.search(misplacedAuthor) >= 0;
+    }
+}
+
 // a single GitHub pull request
 class PullRequest {
 
@@ -474,8 +596,6 @@ class PullRequest {
 
         // major methods we have called, in the call order (for debugging only)
         this._breadcrumbs = [];
-
-        this._messageValid = null;
 
         this._prState = null; // calculated PrState
 
@@ -501,9 +621,7 @@ class PullRequest {
         // the 'Authored-by' credentials from the PR message or null
         this._authoredBy = undefined;
 
-        // PR message where the special attributes (such as 'Authored-by') were successfully parsed and removed or
-        // null on a parsing error
-        this._preprocessedPrBodyCache = undefined;
+        this._commitMessage = undefined;
     }
 
     // this PR will need to be reprocessed in this many milliseconds
@@ -762,7 +880,7 @@ class PullRequest {
         if (this._draftPr())
             throw this._exObviousFailure("just a draft");
 
-        if (!this._messageValid)
+        if (!this._commitMessage.valid())
             throw this._exLabeledFailure("invalid commit message", Config.failedDescriptionLabel());
 
         if (!this._prMergeable())
@@ -795,8 +913,7 @@ class PullRequest {
 
         assert(!this._prState.merged());
 
-        this._messageValid = this._validatePrMessage();
-        this._log("messageValid: " + this._messageValid);
+        this._log("messageValid: " + this._commitMessage.valid());
 
         this._approval = await this._checkApproval();
         this._log("checkApproval: " + this._approval);
@@ -844,76 +961,6 @@ class PullRequest {
 
     _prHeadSha() { return this._rawPr.head.sha; }
 
-    _prTitle() {
-        return this._rawPr.title + ' (#' + this._rawPr.number + ')';
-    }
-
-    _preprocessedPrMessage() {
-        if (!this._preprocessedPrBody())
-            return null;
-        return (this._prTitle() + '\n\n' + this._preprocessedPrBody()).trim();
-    }
-
-    // returns the position of the first non-ASCII_printable character (or -1)
-    _invalidCharacterPosition(str) {
-        const prohibitedCharacters = /[^\u{20}-\u{7e}]/u;
-        const match = prohibitedCharacters.exec(str);
-        return match ? match.index : -1;
-    }
-
-    _validatePrMessage() {
-        if (!this._preprocessedPrBody())
-            return false;
-
-        // _prBody() removed CRs in CRLF sequences
-        // other CRs are not treated specially (and are banned)
-        const prMessage = (this._prTitle() + '\n\n' + this._prBody()).trim();
-        const lines = prMessage.split('\n');
-        for (let i = 0; i < lines.length; ++i) {
-            const line = lines[i];
-            const invalidPosition = this._invalidCharacterPosition(line);
-            if (invalidPosition !== -1) {
-                this._warn(`Invalid PR message: bad character at line ${i}, offset ${invalidPosition}`);
-                return false;
-            }
-            if (line.length > 72) {
-                this._warn(`Invalid PR message: too long line '${line}'`);
-                return false;
-            }
-        }
-
-        return this._validatePrMessageAttributes();
-    }
-
-    _validatePrMessageAttributes() {
-        const origBody = this._preprocessedPrBody();
-        assert(origBody);
-        const misplacedAuthor = /^\s*\S*[aA]uthored-[bB]y/m;
-        const trailerIndex = origBody.search(/\n\nCo-authored-by: /);
-        const body = (trailerIndex >= 0) ? origBody.substring(0, trailerIndex) : origBody;
-        const misplacedAuthorIndex = body.search(misplacedAuthor);
-        if (misplacedAuthorIndex >= 0) {
-            this._warn(`Invalid PR message: a misplaced '*Authored-by' attribute in the message body at ${misplacedAuthorIndex} position`);
-            return false;
-        }
-
-        if (trailerIndex >= 0) {
-            const attr = "Co-authored-by: ";
-            const trailers = origBody.substring(trailerIndex).trim().split('\n');
-            for (let trailer of trailers) {
-                if (trailer.startsWith(attr)) {
-                    if (!this._parseAuthor(attr, trailer.substring(attr.length)))
-                        return false;
-                } else if (trailer.search(misplacedAuthor) >= 0) {
-                    this._warn(`Invalid PR message: a misplaced '*Authored-by' attribute in the message trailer`);
-                    return false;
-                }
-            }
-        }
-
-        return true;
-    }
-
     _draftPr() {
         // TODO: Remove this backward compatibility code after 2021-12-24.
         if (this._rawPr.title.startsWith('WIP:'))
@@ -949,17 +996,6 @@ class PullRequest {
 
     _prOpen() { return this._rawPr.state === 'open'; }
 
-    _prBody() {
-        if (this._rawPr.body === undefined || this._rawPr.body === null)
-            return "";
-        return this._rawPr.body.replace(/\r+\n/g, '\n');
-    }
-
-    _preprocessedPrBody() {
-        assert(this._preprocessedPrBodyCache !== undefined);
-        return this._preprocessedPrBodyCache;
-    }
-
     _parseAuthor(attr, str) {
         const cred = str.match(/^([\w][^@<>,]*) <(\S+@\S+\.\S+)>$/);
         if (!cred) {
@@ -972,19 +1008,6 @@ class PullRequest {
         }
         const now = new Date();
         return {name: cred[1].trim(), email: cred[2].trim(), date: now.toISOString()};
-    }
-
-    _processPrBody() {
-        const attr = "Authored-by: ";
-        const body = this._prBody();
-        if (!body.startsWith(attr))
-            return body;
-        const lineEnd = body.search(/$/m);
-        assert(lineEnd >= 0);
-        assert(this._authoredBy === undefined);
-        this._authoredBy = this._parseAuthor(attr, body.substring(attr.length, lineEnd));
-        assert(this._authoredBy !== undefined);
-        return this._authoredBy ? body.substring(lineEnd).replace(/^\s*\n+/g, '') : null;
     }
 
     _createdAt() { return this._rawPr.created_at; }
@@ -1145,19 +1168,13 @@ class PullRequest {
         const pr = await GH.getPR(this._prNumber(), waitForMergeable);
         assert(pr.number === this._prNumber());
         this._rawPr = pr;
-        this._preprocessedPrBodyCache = this._processPrBody();
+        this._commitMessage = new CommitMessage(this._rawPr);
     }
 
     // Whether the commit message configuration remained intact since staging.
     _messageIsFresh() {
-        if (this._preprocessedPrMessage() !== this._stagedCommit.message)
-            return false;
-        if (this._authoredBy) {
-            const author = this._stagedCommit.author;
-            if (this._authoredBy.name !== author.name || this._authoredBy.email !== author.email)
-                return false;
-        }
-        return true;
+        return this._commitMessage.valid() &&
+              (this._commitMessage.whole() === this._stagedCommit.message);
     }
 
     async _processStagingStatuses() {
@@ -1240,8 +1257,8 @@ class PullRequest {
 
         // yes, _checkStagingPreconditions() has checked the same message
         // already, but our _criteria_ might have changed since that check
-        if (!this._messageValid)
-            throw this._exLabeledFailure("commit message is now considered invalid", Config.failedDescriptionLabel());
+        if (!this._commitMessage.valid())
+            throw this._exLabeledFailure("commit message is now considered invalid: " + this._commitMessage.error(), Config.failedDescriptionLabel());
 
         // yes, _checkStagingPreconditions() has checked this already, but
         // humans may have changed the PR stage since that check, and our
@@ -1323,9 +1340,8 @@ class PullRequest {
         if (this._dryRun("create staged commit"))
             throw this._exObviousFailure("dryRun");
 
-        const author = this._authoredBy ? this._authoredBy : mergeCommit.author;
-        assert(this._preprocessedPrMessage());
-        this._stagedCommit = await GH.createCommit(mergeCommit.tree.sha, this._preprocessedPrMessage(), [baseSha], author, committer);
+        const author = this._commitMessage.author() ? this._commitMessage.author() : mergeCommit.author;
+        this._stagedCommit = await GH.createCommit(mergeCommit.tree.sha, this._commitMessage.whole(), [baseSha], author, committer);
 
         assert(!this._stagingBanned);
         await GH.updateReference(Config.stagingBranchPath(), this._stagedSha(), true);
