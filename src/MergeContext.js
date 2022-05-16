@@ -484,8 +484,15 @@ class CommitMessage
         return message.trim();
     }
 
-    // The author specified in the the Authoredby attribute in {name, email, date} format.
-    author() { return this._author; }
+    // the author specified in the the Authoredby attribute in {name, email, date} format
+    // or mergeCommitAuthor
+    author(mergeCommitAuthor)
+    {
+        if (!this._author)
+            return mergeCommitAuthor;
+        this._author.date = mergeCommitAuthor.date;
+        return this._author;
+    }
 
     // returns the position of the first non-ASCII_printable character (or -1)
     _invalidCharacterPosition(str) {
@@ -552,7 +559,7 @@ class CommitMessage
             return null;
         }
         const now = new Date();
-        return {name: cred[1].trim(), email: cred[2].trim(), date: now.toISOString()};
+        return {name: cred[1].trim(), email: cred[2].trim(), date: null};
     }
 
     _parseTrailer(trailer) {
@@ -1345,7 +1352,7 @@ class PullRequest {
         if (this._dryRun("create staged commit"))
             throw this._exObviousFailure("dryRun");
 
-        const author = this._commitMessage.author() ? this._commitMessage.author() : mergeCommit.author;
+        const author = this._commitMessage.author(mergeCommit.author);
         this._stagedCommit = await GH.createCommit(mergeCommit.tree.sha, this._commitMessage.whole(), [baseSha], author, committer);
 
         assert(!this._stagingBanned);
