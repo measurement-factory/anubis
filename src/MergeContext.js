@@ -571,7 +571,7 @@ class CommitMessage
     }
 
     _findMisplacedAuthor(str) {
-        const misplacedAuthor = /^\s*\S*[aA]uthored-[bB]y/m;
+        const misplacedAuthor = /^\s*\S*[aA]uthored[-_]?[bB]y/m;
         return str.search(misplacedAuthor) >= 0;
     }
 }
