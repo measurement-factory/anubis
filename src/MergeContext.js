@@ -478,9 +478,11 @@ class CommitMessage
     whole() {
         assert(!this.error());
         assert(this._author !== null && this._body !== null && this._trailer !== null);
-        let message = this._title + '\n\n' + this._body;
+        let message = this._title;
+        if (this._body)
+            message += '\n\n' + this._body;
         if (this._trailer)
-            message += this._trailer;
+            message += '\n\n' + this._trailer;
         return message.trim();
     }
 
@@ -490,8 +492,7 @@ class CommitMessage
     {
         if (!this._author)
             return mergeCommitAuthor;
-        this._author.date = mergeCommitAuthor.date;
-        return this._author;
+        return {name: this._author.name, email: this._author.email, date: mergeCommitAuthor.date};
     }
 
     // returns the position of the first non-ASCII_printable character (or -1)
@@ -558,8 +559,7 @@ class CommitMessage
             this._errorMessage = `invalid '${attr}' line: commas are not allowed`;
             return null;
         }
-        const now = new Date();
-        return {name: cred[1].trim(), email: cred[2].trim(), date: null};
+        return {name: cred[1].trim(), email: cred[2].trim()};
     }
 
     _parseTrailer(trailer) {
@@ -574,7 +574,7 @@ class CommitMessage
                 return null;
             }
         }
-        return trailer;
+        return trailer.trim();
     }
 
     _findMisplacedAuthor(str) {
@@ -888,7 +888,7 @@ class PullRequest {
             throw this._exObviousFailure("just a draft");
 
         if (!this._commitMessage.valid())
-            throw this._exLabeledFailure("invalid commit message", Config.failedDescriptionLabel());
+            throw this._exLabeledFailure("invalid commit message: " + this._commitMessage.error(), Config.failedDescriptionLabel());
 
         if (!this._prMergeable())
             throw this._exObviousFailure("GitHub will not be able to merge");
@@ -1002,20 +1002,6 @@ class PullRequest {
     _prBaseBranchPath() { return "heads/" + this._prBaseBranch(); }
 
     _prOpen() { return this._rawPr.state === 'open'; }
-
-    _parseAuthor(attr, str) {
-        const cred = str.match(/^([\w][^@<>,]*) <(\S+@\S+\.\S+)>$/);
-        if (!cred) {
-            this._warn(`Invalid '${attr}' line format`);
-            return null;
-        }
-        if (cred[0].includes(',')) {
-            this._warn(`Invalid '${attr}' line: commas are not allowed`);
-            return null;
-        }
-        const now = new Date();
-        return {name: cred[1].trim(), email: cred[2].trim(), date: now.toISOString()};
-    }
 
     _createdAt() { return this._rawPr.created_at; }
 
