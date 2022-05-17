@@ -454,6 +454,37 @@ class BranchPosition
     }
 }
 
+// parses the given text as comma-separated {name, value} pairs
+class FieldsTokenizer
+{
+    // stores the given raw text
+    constructor(str) {
+        this._lines = str.split('\n');
+    }
+
+    // Searches for a line representing a comma-separated 'name:value' token.
+    // Removes all parsed lines from the input and returns the found {name, value} pair.
+    nextField() {
+        while (!this.atEnd()) {
+            const line = this._lines.shift();
+            const pos = line.search(':');
+            if (pos >= 0)
+                return {name: line.substring(0, pos), value: line.substring(pos+1)};
+        }
+        return null;
+    }
+
+    // whether the unparsed text is empty
+    atEnd() {
+        return this._lines.length === 0;
+    }
+
+    // returns the unparsed text
+    remaining() {
+        return this._lines.join('\n').replace(/^\s*\n+/g, ''); // remove leading empty lines
+    }
+}
+
 // Converts the raw PR message to the staged commit message.
 class CommitMessage
 {
@@ -461,7 +492,7 @@ class CommitMessage
         this._body = undefined;
         this._author = undefined;
         this._trailer = undefined;
-        this._errorMessage = undefined;
+        this._error = undefined;
 
         this._title = rawPr.title + ' (#' + rawPr.number + ')';
         if (rawPr.body !== undefined && rawPr.body !== null) {
@@ -470,13 +501,16 @@ class CommitMessage
         }
     }
 
-    error() { return this._errorMessage; }
+    errorMessage() {
+        assert(!this.valid());
+        return this._error.message;
+    }
 
-    valid() { return !this.error(); }
+    valid() { return !this._error; }
 
     // complete message for the staged commt
     whole() {
-        assert(!this.error());
+        assert(this.valid());
         assert(this._author !== null && this._body !== null && this._trailer !== null);
         let message = this._title;
         if (this._body)
@@ -510,76 +544,74 @@ class CommitMessage
         for (let i = 0; i < lines.length; ++i) {
             const line = lines[i];
             const invalidPosition = this._invalidCharacterPosition(line);
-            if (invalidPosition !== -1) {
-                this._error = `bad character at line ${i}, offset ${invalidPosition}`;
-                return false;
-            }
-            if (line.length > 72) {
-                this._error = `too long line '${line}'`;
-                return false;
-            }
+
+            if (invalidPosition !== -1)
+                throw new Error(`bad character at line ${i}, offset ${invalidPosition}`);
+
+            if (line.length > 72)
+                throw new Error(`too long line '${line}'`);
         }
         return true;
     }
 
-    // parses the raw message attributes (if any) and removes some of them
+    // parses the raw message attributes (if any)
     _parse() {
-        if (!this._check())
-            return;
-
-        const attr = 'Authored-by: ';
-        if (this._body.startsWith(attr)) {
-            const lineEnd = this._body.search(/$/m);
-            this._author = this._parseAuthor(attr, this._body.substring(attr.length, lineEnd));
-            if (!this._author)
+        try
+        {
+            if (!this._check())
                 return;
-            this._body = this._body.substring(lineEnd).replace(/^\s*\n+/g, ''); // remove leading empty lines
-        }
 
-        const trailerIndex = this._body.search('\n\nCo-authored-by: ');
-        if (trailerIndex >= 0) {
-            this._body = this._body.substring(0, trailerIndex);
-            this._trailer = this._parseTrailer(this._body.substring(trailerIndex));
-            if (!this._trailer)
-                return;
-        }
+            if (this._findMisplacedAuthor())
+                throw new Error(`a misplaced '*Authored-by' attribute in the message`);
 
-        if (this._findMisplacedAuthor(this._body)) {
-            this._errorMessage = `a misplaced '*Authored-by' attribute in the message`;
-        }
+            const trailerIndex = this._body.search('\n\nCo-authored-by: ');
+            if (trailerIndex >= 0) {
+                this._body = this._body.substring(0, trailerIndex);
+                this._trailer = this._body.substring(trailerIndex);
+                this._parseTrailer();
+            }
+
+            this._parseBody();
+
+       } catch (e) {
+           this._error = e;
+       }
     }
 
     _parseAuthor(attr, str) {
-        const cred = str.match(/^([\w][^@<>,]*) <(\S+@\S+\.\S+)>$/);
-        if (!cred) {
-            this._errorMessage = `invalid '${attr}' line format`;
-            return null;
-        }
-        if (cred[0].includes(',')) {
-            this._errorMessage = `invalid '${attr}' line: commas are not allowed`;
-            return null;
-        }
+        const cred = str.match(/^ ([\w][^@<>,]*) <(\S+@\S+\.\S+)>$/);
+        if (!cred)
+            throw new Error(`invalid '${attr}' line format`);
+
+        if (cred[0].includes(','))
+            throw new Error(`invalid '${attr}' line: commas are not allowed`);
+
         return {name: cred[1].trim(), email: cred[2].trim()};
     }
 
-    _parseTrailer(trailer) {
-        const attr = "Co-authored-by: ";
-        const trailers = trailer.split('\n');
-        for (let line of trailers) {
-            if (line.startsWith(attr)) {
-                if (!this._parseAuthor(attr, trailer.substring(attr.length)))
-                    return null;
-            } else if (this._findMisplacedAuthor(line)) {
-                this._errorMessage = `a misplaced '*Authored-by' attribute in the message trailer`;
-                return null;
-            }
+    _parseBody() {
+        const attr = 'Authored-by:';
+        if (this._body.startsWith(attr)) {
+            let tokenizer = new FieldsTokenizer(this._body);
+            const token = tokenizer.nextField();
+            this._author = this._parseAuthor(attr, token.value);
+            this._body = tokenizer.remaining();
         }
-        return trailer.trim();
     }
 
-    _findMisplacedAuthor(str) {
-        const misplacedAuthor = /^\s*\S*[aA]uthored[-_]?[bB]y/m;
-        return str.search(misplacedAuthor) >= 0;
+    _parseTrailer() {
+        const attr = "Co-authored-by";
+        let tokenizer = new FieldsTokenizer(this._trailer);
+        while (!tokenizer.atEnd()) {
+            const token = tokenizer.nextField();
+            if (token.name === attr)
+                this._parseAuthor(attr, token.value);
+        }
+    }
+
+    _findMisplacedAuthor() {
+        const misplacedAuthor = /^\s*\S*[aA]uthored[-_]?[bB]y[^:]/m;
+        return this._body.search(misplacedAuthor) >= 0;
     }
 }
 
@@ -888,7 +920,7 @@ class PullRequest {
             throw this._exObviousFailure("just a draft");
 
         if (!this._commitMessage.valid())
-            throw this._exLabeledFailure("invalid commit message: " + this._commitMessage.error(), Config.failedDescriptionLabel());
+            throw this._exLabeledFailure("invalid commit message: " + this._commitMessage.errorMessage(), Config.failedDescriptionLabel());
 
         if (!this._prMergeable())
             throw this._exObviousFailure("GitHub will not be able to merge");
@@ -1256,7 +1288,7 @@ class PullRequest {
         // yes, _checkStagingPreconditions() has checked the same message
         // already, but our _criteria_ might have changed since that check
         if (!this._commitMessage.valid())
-            throw this._exLabeledFailure("commit message is now considered invalid: " + this._commitMessage.error(), Config.failedDescriptionLabel());
+            throw this._exLabeledFailure("commit message is now considered invalid: " + this._commitMessage.errorMessage(), Config.failedDescriptionLabel());
 
         // yes, _checkStagingPreconditions() has checked this already, but
         // humans may have changed the PR stage since that check, and our
