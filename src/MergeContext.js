@@ -454,16 +454,16 @@ class BranchPosition
     }
 }
 
-// parses the given text as comma-separated {name, value} pairs
+// Forward iterator for fields in the 'name:value' format.
 class FieldsTokenizer
 {
-    // stores the given raw text
+    // stores the input multiline string
     constructor(str) {
         this._lines = str.split('\n');
     }
 
-    // Searches for a line representing a comma-separated 'name:value' token.
-    // Removes all parsed lines from the input and returns the found {name, value} pair.
+    // Searches for a line matching the 'name:value' pattern, removing each parsed line from the input.
+    // Returns the matched line as a {name, value} pair or null.
     nextField() {
         while (!this.atEnd()) {
             const line = this._lines.shift();
@@ -474,18 +474,18 @@ class FieldsTokenizer
         return null;
     }
 
-    // whether the unparsed text is empty
+    // whether the input is empty
     atEnd() {
         return this._lines.length === 0;
     }
 
-    // returns the unparsed text
+    // returns the unparsed (yet) string with removed leading empty lines
     remaining() {
         return this._lines.join('\n').replace(/^\s*\n+/g, ''); // remove leading empty lines
     }
 }
 
-// Converts the raw PR message to the staged commit message.
+// Converts the raw PR message into the staged commit message.
 class CommitMessage
 {
     constructor(rawPr) {
@@ -501,14 +501,16 @@ class CommitMessage
         }
     }
 
+    // parsing error details
     errorMessage() {
         assert(!this.valid());
         return this._error.message;
     }
 
+    // whether the raw PR message has been parsed successfully
     valid() { return !this._error; }
 
-    // complete message for the staged commt
+    // returns complete message for the staged commit
     whole() {
         assert(this.valid());
         assert(this._author !== null && this._body !== null && this._trailer !== null);
@@ -520,8 +522,7 @@ class CommitMessage
         return message.trim();
     }
 
-    // the author specified in the the Authoredby attribute in {name, email, date} format
-    // or mergeCommitAuthor
+    // returns author object in the {name, email, date} format for the staged commit
     author(mergeCommitAuthor)
     {
         if (!this._author)
@@ -536,7 +537,7 @@ class CommitMessage
         return match ? match.index : -1;
     }
 
-    // basic checks for the entire (raw) message, such as the maxumum line length
+    // basic checks for the entire (raw) message, such as the max line length
     _check() {
         // constructor removed CRs in CRLF sequences
         // other CRs are not treated specially (and are banned)
@@ -554,7 +555,7 @@ class CommitMessage
         return true;
     }
 
-    // parses the raw message attributes (if any)
+    // parses the raw PR message attributes (if any)
     _parse() {
         try
         {
@@ -571,7 +572,8 @@ class CommitMessage
                 this._parseTrailer();
             }
 
-            this._parseBody();
+            if (this._body.startsWith('Authored-by:'))
+                this._parseBody();
 
        } catch (e) {
            this._error = e;
@@ -590,13 +592,12 @@ class CommitMessage
     }
 
     _parseBody() {
-        const attr = 'Authored-by:';
-        if (this._body.startsWith(attr)) {
-            let tokenizer = new FieldsTokenizer(this._body);
-            const token = tokenizer.nextField();
-            this._author = this._parseAuthor(attr, token.value);
-            this._body = tokenizer.remaining();
-        }
+        assert(this._body.startsWith('Authored-by:'));
+        let tokenizer = new FieldsTokenizer(this._body);
+        const token = tokenizer.nextField();
+        assert(token);
+        this._author = this._parseAuthor('Authored-by', token.value);
+        this._body = tokenizer.remaining();
     }
 
     _parseTrailer() {
@@ -604,7 +605,7 @@ class CommitMessage
         let tokenizer = new FieldsTokenizer(this._trailer);
         while (!tokenizer.atEnd()) {
             const token = tokenizer.nextField();
-            if (token.name === attr)
+            if (token && token.name === attr)
                 this._parseAuthor(attr, token.value);
         }
     }
