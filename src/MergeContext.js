@@ -711,9 +711,6 @@ class PullRequest {
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
         this._labelPushBan = false;
 
-        // the 'Authored-by' credentials from the PR message or null
-        this._authoredBy = undefined;
-
         this._commitMessage = undefined;
     }
 
@@ -1257,8 +1254,6 @@ class PullRequest {
             return false;
         }
         const result = this._commitMessage.whole() === this._stagedCommit.message;
-        this._warn(this._commitMessage.whole());
-        this._warn(this._stagedCommit.message);
         this._log("staged commit message freshness: " + result);
 
         if (this._commitMessage.author()) {
