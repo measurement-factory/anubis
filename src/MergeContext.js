@@ -1255,6 +1255,8 @@ class PullRequest {
         }
         const result = this._commitMessage.whole() === this._stagedCommit.message;
         this._log("staged commit message freshness: " + result);
+        if (!result)
+            return false;
 
         if (this._commitMessage.author()) {
             const oldAuthor = this._stagedCommit.author;
@@ -1265,7 +1267,7 @@ class PullRequest {
                 return false;
         }
 
-        return result;
+        return true;
     }
 
     async _processStagingStatuses() {
