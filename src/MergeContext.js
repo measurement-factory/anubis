@@ -457,6 +457,7 @@ class BranchPosition
 // Forward iterator for fields in the 'name:value' format.
 class FieldsTokenizer
 {
+    // input string and an array of allowed attributes
     constructor(str, allowedAttributes) {
         this._lines = str.split('\n');
         // supported attributes
@@ -485,9 +486,9 @@ class FieldsTokenizer
         return this._lines.length === 0;
     }
 
-    // returns the unparsed (yet) string with removed leading empty lines
+    // returns the unparsed (yet) string
     remaining() {
-        return this._lines.join('\n').replace(/^\s*\n+/g, '');
+        return this._lines.join('\n');
     }
 }
 
@@ -529,9 +530,9 @@ class CommitMessage
         assert(this._author !== null && this._body !== null && this._trailer !== null);
         let message = this._title;
         if (this._body)
-            message += '\n\n' + this._body.trimEnd();
+            message += '\n\n' + this._body;
         if (this._trailer)
-            message += '\n\n' + this._trailer.trim();
+            message += '\n\n' + this._trailer;
         return message;
     }
 
@@ -599,7 +600,7 @@ class CommitMessage
             const trailerIndex = this._body.search(/\n\n(?!.+\n\n)/s);
             if (trailerIndex >= 0) {
                 this._trailer = this._body.substring(trailerIndex).trim();
-                this._body = this._body.substring(0, trailerIndex);
+                this._body = this._body.substring(0, trailerIndex); // trim in _parseBody()
                 this._parseTrailer();
             }
 
@@ -632,6 +633,9 @@ class CommitMessage
         }
         if (tokenizer.nextField() !== null)
             throw new Error(`the message body can contain only one '${attr}' attribute at the beginning`);
+        // Remove leading empty lines.
+        // Do not use trim() to preserve the first line indentation (if any).
+        this._body = this._body.replace(/^\s*\n+/g, '').trimEnd();
     }
 
     _parseTrailer() {
