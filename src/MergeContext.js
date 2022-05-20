@@ -454,37 +454,13 @@ class BranchPosition
     }
 }
 
-// Forward iterator for fields with a format specified by kids.
-class Tokenizer
+// Forward iterator for fields in the 'name:value' format.
+class FieldsTokenizer
 {
-    // stores the input multi-line string
-    constructor(str) {
+    constructor(str, allowedAttributes) {
         this._lines = str.split('\n');
         // supported attributes
-        this._attributes = ["Authored-by", "Co-authored-by"];
-    }
-
-    // implemented by kids
-    nextField() {
-        assert(0);
-    }
-
-    // whether the input is empty
-    atEnd() {
-        return this._lines.length === 0;
-    }
-
-    // returns the unparsed (yet) string with removed leading empty lines
-    remaining() {
-        return this._lines.join('\n').replace(/^\s*\n+/g, '');
-    }
-}
-
-// Forward iterator for fields in the 'name:value' format.
-class FieldsTokenizer extends Tokenizer
-{
-    constructor(str) {
-        super(str);
+        this._attributes = allowedAttributes;
     }
 
     // Searches for a line matching the 'attrName:attrValue' pattern,
@@ -503,32 +479,15 @@ class FieldsTokenizer extends Tokenizer
         }
         return null;
     }
-}
 
-// Forward iterator for fields with invalid/misused attributes.
-class InvalidFieldsTokenizer extends Tokenizer
-{
-    constructor(str) {
-        super(str);
-        // A line matched by this expression is considered as valid if it
-        // starts with one of the allowed attributes and invalid otherwise.
-        // A line not matched by this expression and containing one of the
-        // allowed attributes is ignored.
-        this._authorExp = /^\s*\S*[aA]uthored[-_]?[bB]y/;
+    // whether the input is empty
+    atEnd() {
+        return this._lines.length === 0;
     }
 
-    // returns a line with an invalid attribute (or null)
-    nextField() {
-        while (!this.atEnd()) {
-            const line = this._lines.shift();
-            if (!line.match(this._authorExp))
-                continue;
-            // skip permitted attributes
-            if (this._attributes.some(attr => line.startsWith(attr + ':')))
-                continue;
-            return line;
-        }
-        return null;
+    // returns the unparsed (yet) string with removed leading empty lines
+    remaining() {
+        return this._lines.join('\n').replace(/^\s*\n+/g, '');
     }
 }
 
@@ -536,14 +495,21 @@ class InvalidFieldsTokenizer extends Tokenizer
 class CommitMessage
 {
     constructor(rawPr) {
-        this._body = undefined;
-        this._author = undefined;
-        this._trailer = undefined;
-        this._error = undefined;
-
+        // the (required) commit message title
         this._title = rawPr.title + ' (#' + rawPr.number + ')';
+        // the (optional) message body without optional trailer, may be missing
+        this._body = undefined;
+        // The (optional) finalizing message part with GitHub-related attributes,
+        // separated from the body by an empty line.
+        this._trailer = undefined;
+        // the (optional) Authored-by meta information extracted from the PR description header
+        this._author = undefined;
+        this._error = undefined; // Error object in a case of a parsing problem
+        // message attributes supported by the bot
+        this._attributes = ["Authored-by", "Co-authored-by"];
+
         if (rawPr.body !== undefined && rawPr.body !== null) {
-            this._body = rawPr.body.replace(/\r+\n/g, '\n');
+            this._body = rawPr.body.replace(/\r+\n/g, '\n').trimEnd();
             this._parse();
         }
     }
@@ -565,7 +531,7 @@ class CommitMessage
         if (this._body)
             message += '\n\n' + this._body.trimEnd();
         if (this._trailer)
-            message += '\n\n' + this._trailer.trimEnd();
+            message += '\n\n' + this._trailer.trim();
         return message;
     }
 
@@ -605,10 +571,20 @@ class CommitMessage
 
     // checks whether the message has a misused attribute
     _checkAttributes() {
-        let tokenizer = new InvalidFieldsTokenizer(this._body);
-        const token = tokenizer.nextField();
-        if (token !== null)
-            throw new Error(`a misused '*Authored-by' attribute in the message line: ${token}`);
+        // A line matched by this expression is considered valid if it
+        // starts with one of the allowed attributes and invalid otherwise.
+        // A line that is not matched by this expression and containing one
+        // of the allowed attributes is ignored.
+        const authorExp = /^\s*\S*[aA]uthored[-_]?[bB]y/;
+        let lines = this._body.split('\n');
+        while (lines.length > 0) {
+            const line = lines.shift();
+            if (line.match(authorExp)) {
+                if (this._attributes.some(attr => line.startsWith(attr + ':')))
+                    continue;
+                throw new Error(`a misused '*Authored-by' attribute in the message`);
+            }
+        }
     }
 
     // parses attributes of the raw PR message
@@ -619,9 +595,10 @@ class CommitMessage
 
             this._checkAttributes();
 
-            const trailerIndex = this._body.search('\n\nCo-authored-by: ');
+            // index of the last occurrence of '\n\n'
+            const trailerIndex = this._body.search(/\n\n(?!.+\n\n)/s);
             if (trailerIndex >= 0) {
-                this._trailer = this._body.substring(trailerIndex+2);
+                this._trailer = this._body.substring(trailerIndex).trim();
                 this._body = this._body.substring(0, trailerIndex);
                 this._parseTrailer();
             }
@@ -646,7 +623,7 @@ class CommitMessage
 
     _parseBody() {
         const attr = "Authored-by";
-        let tokenizer = new FieldsTokenizer(this._body);
+        let tokenizer = new FieldsTokenizer(this._body, this._attributes);
         if (this._body.startsWith('Authored-by:')) {
             const authorTok = tokenizer.nextField();
             assert(authorTok !== null);
@@ -659,11 +636,11 @@ class CommitMessage
 
     _parseTrailer() {
         const attr = "Co-authored-by";
-        let tokenizer = new FieldsTokenizer(this._trailer);
+        let tokenizer = new FieldsTokenizer(this._trailer, this._attributes);
         let token = null;
         while ((token = tokenizer.nextField()) !== null) {
             if (token.name !== attr)
-                throw new Error(`attributes other from '${attr}' are not allowed in the trailer`);
+                throw new Error(`${token.name} is not allowed in the trailer`);
             this._parseAuthor(attr, token.value);
         }
     }
