@@ -459,32 +459,27 @@ class FieldsTokenizer
 {
     constructor(str) {
         this._lines = str.split('\n');
-        this._emptyLine = false; // whether an empty line is reached
     }
 
     // Extracts the next line from the input and checks that it matches the
     // 'attrName:attrValue' pattern.
-    // Returns the matched {attrName, attrValue} pair or null if the end of input is reached.
+    // Returns the matched {attrName, attrValue} pair.
     nextField() {
-        if (this.atEnd())
-            return null;
-
+        assert(!this.atEnd());
         const line = this._lines.shift();
         // treat an empty line as the end of input
-        if (line.trim().length === 0) {
-            this._emptyLine = true;
-            return null;
-        }
+        assert(line.trim().length > 0);
+
         const pos = line.search(':');
         if (pos < 0)
-            throw new Error(`no ':' in the line: '${line}'`);
+            throw new Error(`':' is missing in the line: '${line}'`);
 
         return {name: line.substring(0, pos), value: line.substring(pos+1)};
     }
 
     // whether we are at the end of input
     atEnd() {
-        return this._lines.length === 0 || this._emptyLine;
+        return this._lines.length === 0 || this._lines[0].trim().length === 0;
     }
 
     // returns the unparsed (yet) string
@@ -508,8 +503,8 @@ class CommitMessage
         this._author = undefined;
 
         if (rawPr.body !== undefined && rawPr.body !== null) {
-            const trimmedPrDescription = rawPr.body.replace(/\r+\n/g, '\n').trimEnd();
-            this._parse(trimmedPrDescription);
+            const trimmedEndPrDescription = rawPr.body.replace(/\r+\n/g, '\n').trimEnd();
+            this._parse(trimmedEndPrDescription);
         }
     }
 
@@ -542,10 +537,10 @@ class CommitMessage
     }
 
     // basic checks for the entire raw message
-    _checkMessage(trimmedPrDescription) {
+    _checkMessage(trimmedEndPrDescription) {
         // constructor removed CRs in CRLF sequences
         // other CRs are not treated specially (and are banned)
-        const lines = trimmedPrDescription.split('\n');
+        const lines = trimmedEndPrDescription.split('\n');
         for (let i = 0; i < lines.length; ++i) {
             const line = lines[i];
             const invalidPosition = this._invalidCharacterPosition(line);
@@ -559,23 +554,26 @@ class CommitMessage
     }
 
     // parses attributes of the raw PR message
-    _parse(trimmedPrDescription) {
-        this._checkMessage(trimmedPrDescription);
+    _parse(trimmedEndPrDescription) {
+        this._checkMessage(trimmedEndPrDescription);
 
         try {
             // extract trailer first so we could handle a case
             // when the message consists of only Authored-by and Co-authored-by lines
-            this._extractTrailer(trimmedPrDescription);
+            this._extractTrailer(trimmedEndPrDescription);
         } catch (e) {
             Log.Logger.info("assuming no trailer: " + e.message);
+            this._body = trimmedEndPrDescription;
         }
+
+        assert(this._body !== undefined && this._body !== null);
 
         this._extractHeader();
 
         this._checkForTypos();
     }
 
-    // author - {name, value}
+    // author is a {name, value}
     _parseAuthor(author) {
         const cred = author.value.match(/^ ([\w][^@<>,]*) <(\S+@\S+\.\S+)>$/);
         if (!cred)
@@ -591,34 +589,51 @@ class CommitMessage
         if (this._body.startsWith('Authored-by:')) {
             let tokenizer = new FieldsTokenizer(this._body);
             const authorField = tokenizer.nextField();
-            assert(authorField !== null);
             this._author = this._parseAuthor(authorField);
             this._body = tokenizer.remaining();
+            if (!tokenizer.atEnd())
+                throw new Error(`header must have nothing but a single 'Authored-by' attribute`);
         }
 
         // Remove leading empty lines.
-        // Do not use trim() to preserve the first line indentation (if any).
+        // Do not just use trim() to preserve the first line indentation (if any).
         this._body = this._body.replace(/^\s*\n+/g, '');
     }
 
-    _extractTrailer(trimmedPrDescription) {
-        // index of the last occurrence of '\n\n'
-        const trailerIndex = trimmedPrDescription.search(/\n\n(?!.+\n\n)/s);
-        if (trailerIndex < 0) {
-            this._body = trimmedPrDescription;
-            return;
-        }
+    _parseTrailer(trailer) {
+        let tokenizer = new FieldsTokenizer(trailer);
 
-        this._trailer = trimmedPrDescription.substring(trailerIndex).trim();
-        this._body = trimmedPrDescription.substring(0, trailerIndex).trimEnd();
+        if (tokenizer.atEnd())
+            throw new Error(`an empty trailer`);
 
-        let tokenizer = new FieldsTokenizer(this._trailer);
-        let field = null;
-        while ((field = tokenizer.nextField()) !== null) {
+        while (!tokenizer.atEnd()) {
+            const field = tokenizer.nextField();
             if (field.name === "Co-authored-by")
                 this._parseAuthor(field);
             // and skip any other field
         }
+        // successfully parsed
+        this._trailer = trailer;
+    }
+
+    _extractTrailer(trimmedEndPrDescription) {
+        // index of the last occurrence of '\n\n'
+        const trailerIndex = trimmedEndPrDescription.search(/\n\n(?!.+\n\n)/s);
+
+        if (trailerIndex < 0) {
+            // check a special case when the entire message may represent a trailer
+            if (trimmedEndPrDescription.startsWith('Authored-by:')) {
+                this._body = trimmedEndPrDescription;
+            } else {
+                this._parseTrailer(trimmedEndPrDescription);
+                this._body = "";
+            }
+            return;
+        }
+
+        const trailer = trimmedEndPrDescription.substring(trailerIndex).trim();
+        this._parseTrailer(trailer);
+        this._body = trimmedEndPrDescription.substring(0, trailerIndex).trimEnd();
     }
 
     // checks whether the message has a misused attribute
