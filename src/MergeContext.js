@@ -467,7 +467,6 @@ class FieldsTokenizer
     nextField() {
         assert(!this.atEnd());
         const line = this._lines.shift();
-        // treat an empty line as the end of input
         assert(line.trim().length > 0);
 
         const pos = line.search(':');
@@ -479,6 +478,7 @@ class FieldsTokenizer
 
     // whether we are at the end of input
     atEnd() {
+        // treat an empty line as the end of input
         return this._lines.length === 0 || this._lines[0].trim().length === 0;
     }
 
@@ -494,12 +494,13 @@ class CommitMessage
     constructor(rawPr) {
         // the (required) commit message title
         this._title = rawPr.title + ' (#' + rawPr.number + ')';
-        // the (optional) message body without optional trailer, may be missing
+        // the main message part, without header and trailer
         this._body = undefined;
-        // The (optional) finalizing message part with GitHub-related attributes,
+        // The optional finalizing message part with GitHub-related attributes,
         // separated from the body by an empty line.
         this._trailer = undefined;
-        // the (optional) Authored-by meta information extracted from the PR description header
+        // The 'Authored-by' meta information extracted from the optional message header,
+        // separated from the body by an empty line.
         this._author = undefined;
 
         if (rawPr.body !== undefined && rawPr.body !== null) {
@@ -1413,6 +1414,7 @@ class PullRequest {
         if (this._dryRun("create staged commit"))
             throw this._exObviousFailure("dryRun");
 
+        assert(this._commitMessage);
         const author = this._commitMessage.createAuthor(mergeCommit.author);
         this._stagedCommit = await GH.createCommit(mergeCommit.tree.sha, this._commitMessage.whole(), [baseSha], author, committer);
 
