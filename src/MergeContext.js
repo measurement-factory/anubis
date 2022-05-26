@@ -562,6 +562,7 @@ class CommitMessage
             // when the message consists of only Authored-by and Co-authored-by lines
             this._extractTrailer(trimmedEndPrDescription);
         } catch (e) {
+            // TODO: supply debugString() prefix
             Log.Logger.info("assuming no trailer: " + e.message);
             this._body = trimmedEndPrDescription;
         }
@@ -1222,7 +1223,7 @@ class PullRequest {
         try {
             this._commitMessage = new CommitMessage(this._rawPr);
         } catch (e) {
-            this._warn("cannot parse commit message: " + e.message + " " + e.stack);
+            this._logEx(e, "cannot parse commit message");
         }
     }
 
