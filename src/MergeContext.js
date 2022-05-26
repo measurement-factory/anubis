@@ -457,33 +457,34 @@ class BranchPosition
 // Forward iterator for fields in the 'name:value' format.
 class FieldsTokenizer
 {
-    // input string and an array of allowed attributes
-    constructor(str, allowedAttributes) {
+    constructor(str) {
         this._lines = str.split('\n');
-        // supported attributes
-        this._attributes = allowedAttributes;
+        this._emptyLine = false; // whether an empty line is reached
     }
 
-    // Searches for a line matching the 'attrName:attrValue' pattern,
-    // where attrName is one of the allowed attributes.
-    // All parsed lines are removed from the input.
-    // Returns the matched {attrName, attrValue} pair (or null).
+    // Extracts the next line from the input and checks that it matches the
+    // 'attrName:attrValue' pattern.
+    // Returns the matched {attrName, attrValue} pair or null if the end of input is reached.
     nextField() {
-        while (!this.atEnd()) {
-            const line = this._lines.shift();
-            const pos = line.search(':');
-            if (pos >= 0) {
-                const name = line.substring(0, pos);
-                if (this._attributes.includes(name))
-                    return {name: name, value: line.substring(pos+1)};
-            }
+        if (this.atEnd())
+            return null;
+
+        const line = this._lines.shift();
+        // treat an empty line as the end of input
+        if (line.trim().length === 0) {
+            this._emptyLine = true;
+            return null;
         }
-        return null;
+        const pos = line.search(':');
+        if (pos < 0)
+            throw new Error(`no ':' in the line: '${line}'`);
+
+        return {name: line.substring(0, pos), value: line.substring(pos+1)};
     }
 
-    // whether the input is empty
+    // whether we are at the end of input
     atEnd() {
-        return this._lines.length === 0;
+        return this._lines.length === 0 || this._emptyLine;
     }
 
     // returns the unparsed (yet) string
@@ -492,7 +493,7 @@ class FieldsTokenizer
     }
 }
 
-// Converts the raw PR message into the staged commit message.
+// computes future commit message from raw PR
 class CommitMessage
 {
     constructor(rawPr) {
@@ -505,28 +506,15 @@ class CommitMessage
         this._trailer = undefined;
         // the (optional) Authored-by meta information extracted from the PR description header
         this._author = undefined;
-        this._error = undefined; // Error object in a case of a parsing problem
-        // message attributes supported by the bot
-        this._attributes = ["Authored-by", "Co-authored-by"];
 
         if (rawPr.body !== undefined && rawPr.body !== null) {
-            this._body = rawPr.body.replace(/\r+\n/g, '\n').trimEnd();
-            this._parse();
+            const trimmedPrDescription = rawPr.body.replace(/\r+\n/g, '\n').trimEnd();
+            this._parse(trimmedPrDescription);
         }
     }
 
-    // parsing error details
-    errorMessage() {
-        assert(!this.valid());
-        return this._error.message;
-    }
-
-    // whether the raw PR message has been parsed successfully
-    valid() { return !this._error; }
-
     // complete message for the staged commit
     whole() {
-        assert(this.valid());
         assert(this._author !== null && this._body !== null && this._trailer !== null);
         let message = this._title;
         if (this._body)
@@ -554,10 +542,10 @@ class CommitMessage
     }
 
     // basic checks for the entire raw message
-    _checkMessage() {
+    _checkMessage(trimmedPrDescription) {
         // constructor removed CRs in CRLF sequences
         // other CRs are not treated specially (and are banned)
-        const lines = this.whole().split('\n');
+        const lines = trimmedPrDescription.split('\n');
         for (let i = 0; i < lines.length; ++i) {
             const line = lines[i];
             const invalidPosition = this._invalidCharacterPosition(line);
@@ -570,83 +558,74 @@ class CommitMessage
         }
     }
 
-    // checks whether the message has a misused attribute
-    _checkAttributes() {
-        // A line matched by this expression is considered valid if it
-        // starts with one of the allowed attributes and invalid otherwise.
-        // A line that is not matched by this expression and containing one
-        // of the allowed attributes is ignored.
-        const authorExp = /^\s*\S*[aA]uthored[-_]?[bB]y/;
-        let lines = this._body.split('\n');
-        while (lines.length > 0) {
-            const line = lines.shift();
-            if (line.match(authorExp)) {
-                if (this._attributes.some(attr => line.startsWith(attr + ':')))
-                    continue;
-                throw new Error(`a misused '*Authored-by' attribute in the message`);
-            }
-        }
-    }
-
     // parses attributes of the raw PR message
-    _parse() {
-        try
-        {
-            this._checkMessage();
+    _parse(trimmedPrDescription) {
+        this._checkMessage(trimmedPrDescription);
 
-            this._checkAttributes();
+        try {
+            // extract trailer first so we could handle a case
+            // when the message consists of only Authored-by and Co-authored-by lines
+            this._extractTrailer(trimmedPrDescription);
+        } catch (e) {
+            Log.Logger.info("assuming no trailer: " + e.message);
+        }
 
-            // index of the last occurrence of '\n\n'
-            const trailerIndex = this._body.search(/\n\n(?!.+\n\n)/s);
-            if (trailerIndex >= 0) {
-                this._trailer = this._body.substring(trailerIndex).trim();
-                this._body = this._body.substring(0, trailerIndex); // trim in _parseBody()
-                this._parseTrailer();
-            }
+        this._extractHeader();
 
-            this._parseBody();
-
-       } catch (e) {
-           this._error = e;
-       }
+        this._checkForTypos();
     }
 
-    _parseAuthor(attr, str) {
-        const cred = str.match(/^ ([\w][^@<>,]*) <(\S+@\S+\.\S+)>$/);
+    // author - {name, value}
+    _parseAuthor(author) {
+        const cred = author.value.match(/^ ([\w][^@<>,]*) <(\S+@\S+\.\S+)>$/);
         if (!cred)
-            throw new Error(`invalid '${attr}' value format`);
+            throw new Error(`invalid '${author.name}' value format`);
 
         if (cred[0].includes(','))
-            throw new Error(`invalid '${attr}' value: commas are not allowed`);
+            throw new Error(`invalid '${author.name}' value: commas are not allowed`);
 
         return {name: cred[1].trim(), email: cred[2].trim()};
     }
 
-    _parseBody() {
-        const attr = "Authored-by";
-        let tokenizer = new FieldsTokenizer(this._body, this._attributes);
+    _extractHeader() {
         if (this._body.startsWith('Authored-by:')) {
-            const authorTok = tokenizer.nextField();
-            assert(authorTok !== null);
-            this._author = this._parseAuthor(attr, authorTok.value);
+            let tokenizer = new FieldsTokenizer(this._body);
+            const authorField = tokenizer.nextField();
+            assert(authorField !== null);
+            this._author = this._parseAuthor(authorField);
             this._body = tokenizer.remaining();
         }
-        if (tokenizer.nextField() !== null)
-            throw new Error(`the message body can contain only one '${attr}' attribute at the beginning`);
+
         // Remove leading empty lines.
         // Do not use trim() to preserve the first line indentation (if any).
-        this._body = this._body.replace(/^\s*\n+/g, '').trimEnd();
+        this._body = this._body.replace(/^\s*\n+/g, '');
     }
 
-    _parseTrailer() {
-        const attr = "Co-authored-by";
-        let tokenizer = new FieldsTokenizer(this._trailer, this._attributes);
-        let token = null;
-        while ((token = tokenizer.nextField()) !== null) {
-            if (token.name !== attr)
-                throw new Error(`${token.name} is not allowed in the trailer`);
-            this._parseAuthor(attr, token.value);
+    _extractTrailer(trimmedPrDescription) {
+        // index of the last occurrence of '\n\n'
+        const trailerIndex = trimmedPrDescription.search(/\n\n(?!.+\n\n)/s);
+        if (trailerIndex < 0) {
+            this._body = trimmedPrDescription;
+            return;
         }
+
+        this._trailer = trimmedPrDescription.substring(trailerIndex).trim();
+        this._body = trimmedPrDescription.substring(0, trailerIndex).trimEnd();
+
+        let tokenizer = new FieldsTokenizer(this._trailer);
+        let field = null;
+        while ((field = tokenizer.nextField()) !== null) {
+            if (field.name === "Co-authored-by")
+                this._parseAuthor(field);
+            // and skip any other field
+        }
+    }
+
+    // checks whether the message has a misused attribute
+    _checkForTypos() {
+        const authorExp = /^\s*\S*[aA]uthored[-_]?[bB]y/m;
+        if (this._body.search(authorExp) >= 0)
+            throw new Error(`a misused '*Authored-by' attribute in the message`);
     }
 }
 
@@ -951,8 +930,8 @@ class PullRequest {
         if (this._draftPr())
             throw this._exObviousFailure("just a draft");
 
-        if (!this._commitMessage.valid())
-            throw this._exLabeledFailure("invalid commit message: " + this._commitMessage.errorMessage(), Config.failedDescriptionLabel());
+        if (!this._commitMessage)
+            throw this._exLabeledFailure("invalid commit message", Config.failedDescriptionLabel());
 
         if (!this._prMergeable())
             throw this._exObviousFailure("GitHub will not be able to merge");
@@ -984,7 +963,7 @@ class PullRequest {
 
         assert(!this._prState.merged());
 
-        this._log("messageValid: " + this._commitMessage.valid());
+        this._log("messageValid: " + (this._commitMessage !== undefined && this._commitMessage !== null));
 
         this._approval = await this._checkApproval();
         this._log("checkApproval: " + this._approval);
@@ -1225,13 +1204,17 @@ class PullRequest {
         const pr = await GH.getPR(this._prNumber(), waitForMergeable);
         assert(pr.number === this._prNumber());
         this._rawPr = pr;
-        this._commitMessage = new CommitMessage(this._rawPr);
+        try {
+            this._commitMessage = new CommitMessage(this._rawPr);
+        } catch (e) {
+            this._warn("cannot parse commit message: " + e.message + " " + e.stack);
+        }
     }
 
     // Whether the commit message configuration remained intact since staging.
     _messageIsFresh() {
-        if (!this._commitMessage.valid()) {
-            this._log("staged commit message is invalid (and stale)");
+        if (!this._commitMessage) {
+            this._log("staged commit message became invalid (and will be treated as stale)");
             return false;
         }
         const result = this._commitMessage.whole() === this._stagedCommit.message;
@@ -1331,8 +1314,8 @@ class PullRequest {
 
         // yes, _checkStagingPreconditions() has checked the same message
         // already, but our _criteria_ might have changed since that check
-        if (!this._commitMessage.valid())
-            throw this._exLabeledFailure("commit message is now considered invalid: " + this._commitMessage.errorMessage(), Config.failedDescriptionLabel());
+        if (!this._commitMessage)
+            throw this._exLabeledFailure("invalid commit message", Config.failedDescriptionLabel());
 
         // yes, _checkStagingPreconditions() has checked this already, but
         // humans may have changed the PR stage since that check, and our
