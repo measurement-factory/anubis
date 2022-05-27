@@ -467,6 +467,10 @@ class FieldsTokenizer
     nextField() {
         assert(!this.atEnd());
         const line = this._lines.shift();
+
+        if (/^\s/.test(line))
+            throw new Error(`the line starts with a delimiter: '${line}'`);
+
         assert(line.trim().length > 0);
 
         const pos = line.search(':');
@@ -491,7 +495,7 @@ class FieldsTokenizer
 // computes future commit message from raw PR
 class CommitMessage
 {
-    constructor(rawPr) {
+    constructor(rawPr, defaultAuthor) {
         // the (required) commit message title
         this._title = rawPr.title + ' (#' + rawPr.number + ')';
         // the main message part, without header and trailer
@@ -502,14 +506,17 @@ class CommitMessage
         // The 'Authored-by' meta information extracted from the optional message header,
         // separated from the body by an empty line.
         this._author = undefined;
+        // Author in the {name, email, date} format.
+        // The default author will be used in the future commit if the 'Authored-by' attribute is missing.
+        this._defaultAuthor = defaultAuthor;
 
         if (rawPr.body !== undefined && rawPr.body !== null) {
-            const trimmedEndPrDescription = rawPr.body.replace(/\r+\n/g, '\n').trimEnd();
-            this._parse(trimmedEndPrDescription);
+            const trimmedPrDescription = this._trim(rawPr.body.replace(/\r+\n/g, '\n'));
+            this._parse(trimmedPrDescription);
         }
     }
 
-    // complete message for the staged commit
+    // complete message for the future commit
     whole() {
         assert(this._author !== null && this._body !== null && this._trailer !== null);
         let message = this._title;
@@ -521,14 +528,12 @@ class CommitMessage
     }
 
     // returns author object in the {name, email, date} format
-    createAuthor(mergeCommitAuthor)
+    author()
     {
         if (!this._author)
-            return mergeCommitAuthor;
-        return {name: this._author.name, email: this._author.email, date: mergeCommitAuthor.date};
+            return this._defaultAuthor;
+        return {name: this._author.name, email: this._author.email, date: this._defaultAuthor.date};
     }
-
-    author() { return this._author; }
 
     // returns the position of the first non-ASCII_printable character (or -1)
     _invalidCharacterPosition(str) {
@@ -537,11 +542,17 @@ class CommitMessage
         return match ? match.index : -1;
     }
 
+    // Remove leading empty lines and trim the end.
+    _trim(str) {
+        // cannot just use trim() to preserve the first line indentation (if any).
+        return str.replace(/^\s*\n+/g, '').trimEnd();
+    }
+
     // basic checks for the entire raw message
-    _checkMessage(trimmedEndPrDescription) {
+    _checkMessage(trimmedPrDescription) {
         // constructor removed CRs in CRLF sequences
         // other CRs are not treated specially (and are banned)
-        const lines = trimmedEndPrDescription.split('\n');
+        const lines = trimmedPrDescription.split('\n');
         for (let i = 0; i < lines.length; ++i) {
             const line = lines[i];
             const invalidPosition = this._invalidCharacterPosition(line);
@@ -555,22 +566,20 @@ class CommitMessage
     }
 
     // parses attributes of the raw PR message
-    _parse(trimmedEndPrDescription) {
-        this._checkMessage(trimmedEndPrDescription);
+    _parse(trimmedPrDescription) {
+        this._checkMessage(trimmedPrDescription);
+
+        const removedHeaderDescription = this._extractHeader(trimmedPrDescription);
 
         try {
-            // extract trailer first so we could handle a case
-            // when the message consists of only Authored-by and Co-authored-by lines
-            this._extractTrailer(trimmedEndPrDescription);
+            this._extractTrailer(removedHeaderDescription);
         } catch (e) {
             // TODO: supply debugString() prefix
             Log.Logger.info("assuming no trailer: " + e.message);
-            this._body = trimmedEndPrDescription;
+            this._body = removedHeaderDescription;
         }
 
         assert(this._body !== undefined && this._body !== null);
-
-        this._extractHeader();
 
         this._checkForTypos();
     }
@@ -587,19 +596,17 @@ class CommitMessage
         return {name: cred[1].trim(), email: cred[2].trim()};
     }
 
-    _extractHeader() {
-        if (this._body.startsWith('Authored-by:')) {
-            let tokenizer = new FieldsTokenizer(this._body);
+    _extractHeader(trimmedPrDescription) {
+        if (trimmedPrDescription.startsWith('Authored-by:')) {
+            let tokenizer = new FieldsTokenizer(trimmedPrDescription);
             const authorField = tokenizer.nextField();
             this._author = this._parseAuthor(authorField);
-            this._body = tokenizer.remaining();
             if (!tokenizer.atEnd())
                 throw new Error(`header must have nothing but a single 'Authored-by' attribute`);
+            return this._trim(tokenizer.remaining());
+        } else {
+            return trimmedPrDescription;
         }
-
-        // Remove leading empty lines.
-        // Do not just use trim() to preserve the first line indentation (if any).
-        this._body = this._body.replace(/^\s*\n+/g, '');
     }
 
     _parseTrailer(trailer) {
@@ -618,24 +625,19 @@ class CommitMessage
         this._trailer = trailer;
     }
 
-    _extractTrailer(trimmedEndPrDescription) {
+    _extractTrailer(removedHeaderDescription) {
         // index of the last occurrence of '\n\n'
-        const trailerIndex = trimmedEndPrDescription.search(/\n\n(?!.+\n\n)/s);
+        const trailerIndex = removedHeaderDescription.search(/\n\n(?!.+\n\n)/s);
 
         if (trailerIndex < 0) {
             // check a special case when the entire message may represent a trailer
-            if (trimmedEndPrDescription.startsWith('Authored-by:')) {
-                this._body = trimmedEndPrDescription;
-            } else {
-                this._parseTrailer(trimmedEndPrDescription);
-                this._body = "";
-            }
-            return;
+            this._parseTrailer(removedHeaderDescription);
+            this._body = "";
+        } else {
+            const trailer = this._trim(removedHeaderDescription.substring(trailerIndex));
+            this._parseTrailer(trailer);
+            this._body = this._trim(removedHeaderDescription.substring(0, trailerIndex));
         }
-
-        const trailer = trimmedEndPrDescription.substring(trailerIndex).trim();
-        this._parseTrailer(trailer);
-        this._body = trimmedEndPrDescription.substring(0, trailerIndex).trimEnd();
     }
 
     // checks whether the message has a misused attribute
@@ -660,6 +662,9 @@ class PullRequest {
         this._contextsRequiredByGitHubConfig = null;
 
         this._stagedPosition = null;
+
+        // this PR merge commit received from GitHub, if any
+        this._mergeCommit = null;
 
         // this PR staged commit received from GitHub, if any
         this._stagedCommit = null;
@@ -1220,11 +1225,17 @@ class PullRequest {
         const waitForMergeable = !(this._stagedPosition && this._stagedPosition.merged());
         const pr = await GH.getPR(this._prNumber(), waitForMergeable);
         assert(pr.number === this._prNumber());
+
         this._rawPr = pr;
-        try {
-            this._commitMessage = new CommitMessage(this._rawPr);
-        } catch (e) {
-            this._logEx(e, "cannot parse commit message");
+
+        if (this._prMergeable()) {
+            const mergeSha = await GH.getReference("pull/" + this._prNumber() + "/merge");
+            this._mergeCommit = await GH.getCommit(mergeSha);
+            try {
+                this._commitMessage = new CommitMessage(this._rawPr, this._mergeCommit.author);
+            } catch (e) {
+                this._logEx(e, "cannot parse commit message");
+            }
         }
     }
 
@@ -1239,14 +1250,12 @@ class PullRequest {
         if (!result)
             return false;
 
-        if (this._commitMessage.author()) {
-            const oldAuthor = this._stagedCommit.author;
-            const newAuthor = this._commitMessage.author();
-            const authorIsFresh = oldAuthor.name === newAuthor.name && oldAuthor.email === newAuthor.email;
-            this._log("staged commit author freshness: " + authorIsFresh);
-            if (!authorIsFresh)
-                return false;
-        }
+        const oldAuthor = this._stagedCommit.author;
+        const newAuthor = this._commitMessage.author();
+        const authorIsFresh = oldAuthor.name === newAuthor.name && oldAuthor.email === newAuthor.email;
+        this._log("staged commit author freshness: " + authorIsFresh);
+        if (!authorIsFresh)
+            return false;
 
         return true;
     }
@@ -1404,8 +1413,6 @@ class PullRequest {
 
     async _createStaged() {
         const baseSha = await GH.getReference(this._prBaseBranchPath());
-        const mergeSha = await GH.getReference("pull/" + this._prNumber() + "/merge");
-        const mergeCommit = await GH.getCommit(mergeSha);
         if (!Config.githubUserName())
             await this._acquireUserProperties();
         let now = new Date();
@@ -1415,8 +1422,8 @@ class PullRequest {
             throw this._exObviousFailure("dryRun");
 
         assert(this._commitMessage);
-        const author = this._commitMessage.createAuthor(mergeCommit.author);
-        this._stagedCommit = await GH.createCommit(mergeCommit.tree.sha, this._commitMessage.whole(), [baseSha], author, committer);
+        assert(this._mergeCommit);
+        this._stagedCommit = await GH.createCommit(this._mergeCommit.tree.sha, this._commitMessage.whole(), [baseSha], this._commitMessage.author(), committer);
 
         assert(!this._stagingBanned);
         await GH.updateReference(Config.stagingBranchPath(), this._stagedSha(), true);
