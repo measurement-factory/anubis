@@ -498,20 +498,23 @@ class CommitMessage
     constructor(rawPr, defaultAuthor) {
         // the (required) commit message title
         this._title = rawPr.title + ' (#' + rawPr.number + ')';
-        // the main message part, without header and trailer
+        // the main description part, without header and trailer
         this._body = undefined;
-        // The optional finalizing message part with GitHub-related attributes,
+        // The optional finalizing description part with GitHub-related attributes,
         // separated from the body by an empty line.
         this._trailer = undefined;
-        // The 'Authored-by' meta information extracted from the optional message header,
+        // The 'Authored-by' meta information extracted from the optional description header,
         // separated from the body by an empty line.
         this._author = undefined;
         // Author in the {name, email, date} format.
         // The default author will be used in the future commit if the 'Authored-by' attribute is missing.
         this._defaultAuthor = defaultAuthor;
 
+        this._checkRaw(this._title);
+
         if (rawPr.body !== undefined && rawPr.body !== null) {
             const trimmedPrDescription = this._trim(rawPr.body.replace(/\r+\n/g, '\n'));
+            this._checkRaw(trimmedPrDescription);
             this._parse(trimmedPrDescription);
         }
     }
@@ -527,7 +530,7 @@ class CommitMessage
         return message;
     }
 
-    // returns author object in the {name, email, date} format
+    // the future commit author in the {name, email, date} format
     author()
     {
         if (!this._author)
@@ -542,17 +545,17 @@ class CommitMessage
         return match ? match.index : -1;
     }
 
-    // Remove leading empty lines and trim the end.
+    // removes leading empty lines and trims the end
     _trim(str) {
         // cannot just use trim() to preserve the first line indentation (if any).
         return str.replace(/^\s*\n+/g, '').trimEnd();
     }
 
-    // basic checks for the entire raw message
-    _checkMessage(trimmedPrDescription) {
-        // constructor removed CRs in CRLF sequences
+    // basic checks for an unparsed message
+    _checkRaw(message) {
+        // CRs in CRLF sequences already removed
         // other CRs are not treated specially (and are banned)
-        const lines = trimmedPrDescription.split('\n');
+        const lines = message.split('\n');
         for (let i = 0; i < lines.length; ++i) {
             const line = lines[i];
             const invalidPosition = this._invalidCharacterPosition(line);
@@ -565,10 +568,8 @@ class CommitMessage
         }
     }
 
-    // parses attributes of the raw PR message
+    // parses attributes of the raw PR description
     _parse(trimmedPrDescription) {
-        this._checkMessage(trimmedPrDescription);
-
         const removedHeaderDescription = this._extractHeader(trimmedPrDescription);
 
         try {
@@ -985,6 +986,7 @@ class PullRequest {
 
         assert(!this._prState.merged());
 
+        // paranoid null check: must be undefined or non-null
         this._log("messageValid: " + (this._commitMessage !== undefined && this._commitMessage !== null));
 
         this._approval = await this._checkApproval();
