@@ -196,35 +196,45 @@ GitHub markdown to plain text. However, both texts must conform to the
 further reduces the maximum PR title length to ~65 characters. PRs violating
 these limits are labeled `M-failed-description` and are not merged.
 
+
 ### Message attributes
 
-Commit message may contain special attributes, which are recognized and
+Commit description may contain special attributes, which are recognized and
 processed by the bot. If the bot cannot parse an attribute, it marks the PR
-it `M-failed-description` label.
+with `M-failed-description` label.
 
 1.`*Authored-by*` - The commit message author.
 We need to provide this attribute when the actual PR author is different from
 the author automatically provided by GitHub (which is the author of the PR branch
-first commit). The attribute should be specified at the beginning of the PR message.
-In order to avoid typos, lines starting with /\s*\S*Authored-By/ (except
-the first line and message trailers) are considered as invalid.
+first commit). The attribute should be specified at the beginning of the PR
+description and separated by an empty line from the rest of the message.  In order
+to avoid typos, the main part of the description (that is all lines excluding the
+first line and the message trailer) is subjected to a typo check, whereby lines
+starting with /\s*\S*Authored-By/ are considered as invalid.
 After the attribute value is parsed, the entire line (including empty lines
 below it) is removed from the message.
 The attribute is parsed according to the following ABNF rules:
-pr-author-paragraph = "Authored-By:" <SP> credentials eol empty-line+
-credentials = name+ "<" login "@" host ">"
-empty-line = eol
-eol = <CR>*<LF>
+```
+    pr-author-paragraph = "Authored-By:" <SP> credentials eol empty-line+
+    credentials = name+ "<" login "@" host ">"
+    empty-line = eol
+    eol = <CR>*<LF>
+```
 
 2. *Co-Authored-by* - The commit message co-author.
-These GitHub-recognized attribute allows to create a commit with multiple
-authors. If a message has an empty line followed by 'Co-authored-by: ',
-the bot treats this line and lines below as message trailer. Trailer
-section may contain multiple 'Co-authored-by' attrubutes, but other
-lines starting with /\s*\S*Authored-By/ are regarded as errors.
+This GitHub-recognized attribute allows to create a commit with multiple
+authors. It will be parsed by Anubis if it is specified within the last
+paragraph of the description (a.k.a. the trailer). Note that the bot recognizes
+the last paragraph as a trailer if and only if it contains attribute fields
+(i.e., `name: value` lines) and nothing else - otherwise this text block is
+considered belonging to the main part of the description and subjected to
+the typo check outlined above.
 The attribute is parsed according to the following ABNF rules:
-co-authors-paragraph = eol empty-line co-author-line+ empty-line\*
-co-author-line = "Co-Authored-By:" <SP> credentials eol
+```
+    co-authors-paragraph = eol empty-line co-author-line+ empty-line\*
+    co-author-line = "Co-Authored-By:" <SP> credentials eol
+```
+
 
 ## Voting and PR approvals
 
