@@ -496,12 +496,6 @@ class PullRequest {
 
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
         this._labelPushBan = false;
-
-        // Whether the PR has a relevant staged commit that failed its checks.
-        // The relevant commit can be a fresh staged commit, a merged commit (for
-        // still-open PRs) or an abandoned staged commit, if it is equivalent
-        // to a staged commit that would have been created right now.
-        this._stagingFailed = false;
     }
 
     // this PR will need to be reprocessed in this many milliseconds
@@ -648,7 +642,6 @@ class PullRequest {
     }
 
     // returns filled StatusChecks object
-    // recalculates this._stagingFailed value
     async _getStagingStatuses(stagedSha) {
         assert(stagedSha);
         const combinedStagingStatuses = await GH.getStatuses(stagedSha);
