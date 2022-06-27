@@ -484,6 +484,11 @@ class PullRequest {
         // GitHub statuses of the staged commit
         this._stagedStatuses = null;
 
+        // GitHub statuses of an abandoned staged commit, if that commit is
+        // equivalent to a staged commit that would have been created right now.
+        // _stagedStatuses and _abandonedStagedStatuses are mutually exclusive
+        this._abandonedStagedStatuses = null;
+
         // GitHub statuses of the PR branch head commit
         this._prStatuses = null;
 
@@ -491,10 +496,6 @@ class PullRequest {
 
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
         this._labelPushBan = false;
-
-        // Whether this PR has or had a staged commit with failed checks.
-        // Starts as M-failed-staging-checks and then acquires its value
-        // from loaded staging statuses.
 
         // Whether the PR has a relevant staged commit that failed its checks.
         // The relevant commit can be a fresh staged commit, a merged commit (for
@@ -647,6 +648,7 @@ class PullRequest {
     }
 
     // returns filled StatusChecks object
+    // recalculates this._stagingFailed value
     async _getStagingStatuses(stagedSha) {
         assert(stagedSha);
         const combinedStagingStatuses = await GH.getStatuses(stagedSha);
@@ -661,7 +663,6 @@ class PullRequest {
         for (let st of optionalStatuses)
             statusChecks.addOptionalStatus(new StatusCheck(st));
 
-        this._stagingFailed = statusChecks.failed();
         this._log("staging status details: " + statusChecks);
         return statusChecks;
     }
@@ -738,7 +739,7 @@ class PullRequest {
 
         // Do not vainly recreate staged commit which will definitely fail again,
         // since the PR+base code is yet unchanged and the existing errors still persist
-        if (this._stagingFailed)
+        if (this._abandonedStagedStatuses && this._abandonedStagedStatuses.failed())
             throw this._exLabeledFailure("staged commit tests failed", Config.failedStagingChecksLabel());
 
         if (this._wipPr())
@@ -973,8 +974,8 @@ class PullRequest {
         return await GH.getCommit(mergeSha);
     }
 
-    // recalculates this._stagingFailed value for PRs without staging commit
-    async _recalculateStagingFailed() {
+    // obtains abandoned staging checks
+    async _getAbandonedStagingStatuses() {
         assert(!this._stagedSha());
 
         const allEvents = await GH.getIssueEvents(this._prNumber());
@@ -993,17 +994,15 @@ class PullRequest {
         assert(stagedCommitCreatedAt);
         // whether the merge commit is fresher than the last staged commit
         if (stagedCommitCreatedAt < mergeCommitCreatedAt)
-            return false;
-
-        // recalculates this._stagingFailed value
-        await this._getStagingStatuses(lastStaged.commit_id);
+            return;
+        this._abandonedStagedStatuses = await this._getStagingStatuses(lastStaged.commit_id);
         // TODO: If something made this (previously failed) commit succeed, then
         // we should use it further, if possible.
     }
 
     async _loadPrState() {
         if (!this._stagedSha()) {
-            await this._recalculateStagingFailed();
+            await this._getAbandonedStagingStatuses();
             if (await this._mergedSomeTimeAgo()) {
                 this._enterMerged();
                 return;
@@ -1022,8 +1021,6 @@ class PullRequest {
 
         if (!(await this._stagedCommitIsFresh())) {
             await this._labels.addImmediately(Config.abandonedStagingChecksLabel());
-            // we have no fresh staged commit
-            this._stagingFailed = false; // may already be false
             await this._enterBrewing();
             return;
         }
@@ -1032,7 +1029,7 @@ class PullRequest {
 
         const stagedStatuses = await this._getStagingStatuses(this._stagedSha());
         // if staging failed, enter the "brewing (with failed staging tests)" state
-        if (this._stagingFailed) {
+        if (stagedStatuses.failed()) {
             await this._enterBrewing();
             return;
         }
@@ -1053,6 +1050,7 @@ class PullRequest {
             this._stagedStatuses = stagedStatuses;
         else
             this._stagedStatuses = await this._getStagingStatuses(this._stagedSha());
+        this._abandonedStagedStatuses = null;
         this._prStatuses = await this._getPrStatuses();
     }
 
@@ -1084,7 +1082,7 @@ class PullRequest {
 
     async _processStagingStatuses() {
         assert(this._stagedStatuses);
-        if (this._stagingFailed)
+        if (this._stagedStatuses.failed())
             throw this._exLabeledFailure("staging tests failed", Config.failedStagingChecksLabel());
 
         if (!this._stagedStatuses.final()) {
@@ -1318,6 +1316,19 @@ class PullRequest {
         await this._finalize();
     }
 
+    // Whether the PR has a relevant staged commit that failed its checks.
+    // The relevant commit can be a fresh staged commit, a merged commit (for
+    // still-open PRs) or an abandoned staged commit (if it is equivalent
+    // to a staged commit that would have been created right now)
+    stagingFailed() {
+        assert(!(this._abandonedStagedStatuses && this._stagedStatuses));
+        if (this._abandonedStagedStatuses)
+            return this._abandonedStagedStatuses.failed();
+        else if (this._stagedStatuses)
+            return this._stagedStatuses.failed();
+        return false;
+    }
+
     // Updates and, if possible, advances PR towards (and including) merging.
     // If reprocessing is needed in X milliseconds, returns X.
     // Otherwise, returns null.
@@ -1346,7 +1357,7 @@ class PullRequest {
             else
                 this._removePositiveStagingLabels();
 
-            if (this._stagingFailed)
+            if (this.stagingFailed())
                 this._labels.add(Config.failedStagingChecksLabel()); // may be set already in the exception
 
             if (knownProblem) {
