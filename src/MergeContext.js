@@ -979,23 +979,28 @@ class PullRequest {
         assert(!this._stagedSha());
 
         const allEvents = await GH.getIssueEvents(this._prNumber());
-        // we consider all commits created by the bot user and referencing this PR as staged commits
-        let stagedEvents = allEvents.filter(ev => ev.event === "referenced" && ev.actor.login === Config.githubUserLogin());
-        if (!stagedEvents.length)
+        // staging events are PR events where the bot user created a commit referencing this PR
+        let stagingEvents = allEvents.filter(ev => ev.event === "referenced" && ev.actor.login === Config.githubUserLogin());
+        if (!stagingEvents.length)
             return;
 
-        // just in case: events should be already sorted by date
-        stagedEvents = stagedEvents.sort((ev1, ev2) => Date.parse(ev1.created_at) - Date.parse(ev2.created_at));
-        const lastStaged = stagedEvents[stagedEvents.length - 1];
+        // just in case: events should be already in chronological order already
+        stagingEvents = stagingEvents.sort((ev1, ev2) => Date.parse(ev1.created_at) - Date.parse(ev2.created_at));
+        const lastStagingEvent = stagingEvents[stagingEvents.length - 1];
         const mergeCommit = await this._getMergeCommit();
-        const mergeCommitCreatedAt = Date.parse(mergeCommit.author.date);
-        const stagedCommitCreatedAt = Date.parse(lastStaged.created_at);
+        const mergeCommitCreatedAt = Date.parse(mergeCommit.author.date); // for merge commits author.date and committer.date should be the same
+        const lastStagingEventCreatedAt = Date.parse(lastStagingEvent.created_at);
         assert(mergeCommitCreatedAt);
-        assert(stagedCommitCreatedAt);
-        // whether the merge commit is fresher than the last staged commit
-        if (stagedCommitCreatedAt < mergeCommitCreatedAt)
-            return;
-        this._abandonedStagedStatuses = await this._getStagingStatuses(lastStaged.commit_id);
+        assert(lastStagingEventCreatedAt);
+        // the staging event for merge commit X is always created after X so we do not
+        // need to deal with the lastStagingEventCreatedAt == mergeCommitCreatedAt case
+        assert(lastStagingEventCreatedAt != mergeCommitCreatedAt);
+        if (lastStagingEventCreatedAt < mergeCommitCreatedAt)
+            return; // merge commit created after the last staging event
+
+        // Merge commit created before the last staging event.
+        // Thus, we can get statuses of that event commit SHA.
+        this._abandonedStagedStatuses = await this._getStagingStatuses(lastStagingEvent.commit_id);
         // TODO: If something made this (previously failed) commit succeed, then
         // we should use it further, if possible.
     }
@@ -1030,6 +1035,7 @@ class PullRequest {
         const stagedStatuses = await this._getStagingStatuses(this._stagedSha());
         // if staging failed, enter the "brewing (with failed staging tests)" state
         if (stagedStatuses.failed()) {
+            this._abandonedStagedStatuses = stagedStatuses;
             await this._enterBrewing();
             return;
         }
