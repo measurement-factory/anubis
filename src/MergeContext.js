@@ -513,9 +513,9 @@ class CommitMessage
         this._checkRaw(this._title);
 
         if (rawPr.body !== undefined && rawPr.body !== null) {
-            const trimmedPrDescription = this._trim(rawPr.body.replace(/\r+\n/g, '\n'));
-            this._checkRaw(trimmedPrDescription);
-            this._parse(trimmedPrDescription);
+            const prDescription = rawPr.body.replace(/\r+\n/g, '\n');
+            this._checkRaw(prDescription);
+            this._parse(prDescription);
         }
     }
 
@@ -555,7 +555,8 @@ class CommitMessage
     _checkRaw(message) {
         // CRs in CRLF sequences already removed
         // other CRs are not treated specially (and are banned)
-        const lines = message.split('\n');
+        const trimmedMessage = this._trim(message);
+        const lines = trimmedMessage.split('\n');
         for (let i = 0; i < lines.length; ++i) {
             const line = lines[i];
             const invalidPosition = this._invalidCharacterPosition(line);
@@ -569,20 +570,19 @@ class CommitMessage
     }
 
     // parses attributes of the raw PR description
-    _parse(trimmedPrDescription) {
-        const removedHeaderDescription = this._extractHeader(trimmedPrDescription);
+    _parse(prDescription) {
+        const prDescriptionWithoutHeader = this._extractHeader(prDescription);
 
         try {
-            this._extractTrailer(removedHeaderDescription);
+            const prDescriptionWithoutHeaderAndTrailer = this._extractTrailer(prDescriptionWithoutHeader);
+            this._parseBody(prDescriptionWithoutHeaderAndTrailer);
         } catch (e) {
             // TODO: supply debugString() prefix
             Log.Logger.info("assuming no trailer: " + e.message);
-            this._body = removedHeaderDescription;
+            this._parseBody(prDescriptionWithoutHeader);
         }
 
         assert(this._body !== undefined && this._body !== null);
-
-        this._checkForTypos();
     }
 
     // author is a {name, value}
@@ -597,20 +597,22 @@ class CommitMessage
         return {name: cred[1].trim(), email: cred[2].trim()};
     }
 
-    _extractHeader(trimmedPrDescription) {
-        if (trimmedPrDescription.startsWith('Authored-by:')) {
-            let tokenizer = new FieldsTokenizer(trimmedPrDescription);
+    _extractHeader(prDescriptionRaw) {
+        const prDescription = this._trim(prDescriptionRaw);
+        if (prDescription.startsWith('Authored-by:')) {
+            let tokenizer = new FieldsTokenizer(prDescription);
             const authorField = tokenizer.nextField();
             this._author = this._parseAuthor(authorField);
             if (!tokenizer.atEnd())
                 throw new Error(`header must have nothing but a single 'Authored-by' attribute`);
             return this._trim(tokenizer.remaining());
         } else {
-            return trimmedPrDescription;
+            return prDescription;
         }
     }
 
-    _parseTrailer(trailer) {
+    _parseTrailer(trailerRaw) {
+        const trailer = this._trim(trailerRaw);
         let tokenizer = new FieldsTokenizer(trailer);
 
         if (tokenizer.atEnd())
@@ -618,34 +620,45 @@ class CommitMessage
 
         while (!tokenizer.atEnd()) {
             const field = tokenizer.nextField();
-            if (field.name === "Co-authored-by")
+            if (field.name === "Co-authored-by") {
                 this._parseAuthor(field);
+                const coAuthor = JSON.stringify(this._parseAuthor(field));
+                this._log(`accepting trailer field: ${coAuthor}`);
+            }
             // and skip any other field
         }
-        // successfully parsed
+
         this._trailer = trailer;
     }
 
-    _extractTrailer(removedHeaderDescription) {
+    _extractTrailer(prDescriptionWithoutHeaderRaw) {
+        const prDescriptionWithoutHeader = this._trim(prDescriptionWithoutHeaderRaw);
         // index of the last occurrence of '\n\n'
-        const trailerIndex = removedHeaderDescription.search(/\n\n(?!.+\n\n)/s);
+        const trailerIndex = prDescriptionWithoutHeader.search(/\n\n(?!.*\n\n)/s);
 
-        if (trailerIndex < 0) {
-            // check a special case when the entire message may represent a trailer
-            this._parseTrailer(removedHeaderDescription);
-            this._body = "";
-        } else {
-            const trailer = this._trim(removedHeaderDescription.substring(trailerIndex));
-            this._parseTrailer(trailer);
-            this._body = this._trim(removedHeaderDescription.substring(0, trailerIndex));
-        }
+        if (trailerIndex < 0) // the text has at most one paragraph
+            trailerIndex = 0;
+
+        this._parseTrailer(prDescriptionWithoutHeader.substring(trailerIndex));
+        return prDescriptionWithoutHeader.substring(0, trailerIndex);
     }
 
-    // checks whether the message has a misused attribute
-    _checkForTypos() {
-        const authorExp = /^\s*\S*[aA]uthored[-_]?[bB]y/m;
-        if (this._body.search(authorExp) >= 0)
-            throw new Error(`a misused '*Authored-by' attribute in the message`);
+    _parseBody(prDescriptionWithoutHeaderAndTrailerRaw) {
+        const prDescriptionWithoutHeaderAndTrailer = this._trim(prDescriptionWithoutHeaderAndTrailerRaw);
+        this._checkForTypos(prDescriptionWithoutHeaderAndTrailer);
+        this._body = prDescriptionWithoutHeaderAndTrailer;
+    }
+
+    // checks the PR message (or its part) for some common/expected typos that may occur
+    // when filling in PR attributes
+    _checkForTypos(text) {
+        const possibleAuthoredByTypoRegex = /^\s*\S*[aA]uthored[-_]?[bB]y/m;
+        if (text.search(possibleAuthoredByTypoRegex) >= 0)
+            throw new Error(`suspicious '*Authored-by' attribute in the PR description`);
+    }
+
+    _log(msg) {
+        Log.Logger.info(msg);
     }
 }
 
@@ -1343,7 +1356,7 @@ class PullRequest {
         // yes, _checkStagingPreconditions() has checked the same message
         // already, but our _criteria_ might have changed since that check
         if (!this._commitMessage)
-            throw this._exLabeledFailure("invalid commit message", Config.failedDescriptionLabel());
+            throw this._exLabeledFailure("commit message is now considered invalid", Config.failedDescriptionLabel());
 
         // yes, _checkStagingPreconditions() has checked this already, but
         // humans may have changed the PR stage since that check, and our
