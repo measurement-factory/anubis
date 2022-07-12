@@ -239,6 +239,7 @@ GitHub markdown to plain text. However, both texts must conform to the
 further reduces the maximum PR title length to ~65 characters. PRs violating
 these limits are labeled `M-failed-description` and are not merged.
 
+
 ## Voting and PR approvals
 
 The following events disqualify a pull request from automatic merging. A
