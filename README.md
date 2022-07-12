@@ -184,6 +184,49 @@ All labels except `M-failed-staging-checks`, `M-failed-staging-other`,
 them useful when determining the current state of a PR.
 
 
+## Commit metadata in PR description
+
+Pull request description may contain a header and/or a trailer paragraphs with
+special `name: value` metadata fields documented below. Header fields are
+recognized only by the bot. Some trailer fields are recognized by the bot,
+GitHub, and/or git. When assembling the commit message, Anubis strips the
+header but keeps the trailer. Pull requests with descriptions containing
+invalid metadata are labeled `M-failed-description` and are not merged.
+
+```
+Authored-by: Actual Author <user@host>
+
+Regular PR description paragraph(s), if any, go here...
+
+Co-authored-by: Co-Author One <user1@host1>
+Co-authored-by: Co-Author Two <user2@host2>
+```
+
+* `Authored-by: Author Name <user@host>`: A custom commit author. Add this
+  field to the PR description header when Anubis should not use the pull
+  request author as the commit author. Mentioning this (or similarly spelled)
+  fields elsewhere in the PR description should trigger an
+  `M-failed-description` violation. At most one `Authored-by` field is
+  permitted. Anubis removes the header paragraph when assembling the commit
+  message because neither GitHub nor git recognize this field and because the
+  information will be preserved as the commit author field.
+
+* `Co-authored-by: Another Author Name <other@host>`: A commit co-author. This
+  field documents additional commit authors. It is recognized by
+  [GitHub](https://docs.github.com/en/pull-requests/committing-changes-to-your-project/creating-and-editing-commits/creating-a-commit-with-multiple-authors)
+  and, to an extent, [git](https://git-scm.com/docs/git-interpret-trailers).
+  Multiple unique fields are permitted.
+
+* Other trailer fields: The PR description trailer may contain fields that are
+  not recognized by Anubis. To avoid typos, the bot prohibits trailer fields
+  matching `/\S*Authored-by/i` except for the `Co-authored-by` field
+  documented above.
+
+Field names are case-insensitive, but the variants shown above are recommended
+for consistency sake. Anubis preserves trailer fields original spelling and
+formatting but strips any trailing whitespace.
+
+
 ## Commit message
 
 The staging commit message and, hence, the target branch commit is
@@ -195,46 +238,6 @@ GitHub markdown to plain text. However, both texts must conform to the
 72 characters/line limit. The automatically added ` #(NNN)` title suffix
 further reduces the maximum PR title length to ~65 characters. PRs violating
 these limits are labeled `M-failed-description` and are not merged.
-
-
-### Message attributes
-
-Commit description may contain special attributes, which are recognized and
-processed by the bot. If the bot cannot parse an attribute, it marks the PR
-with `M-failed-description` label.
-
-1.`*Authored-by*` - The commit message author.
-We need to provide this attribute when the actual PR author is different from
-the author automatically provided by GitHub (which is the author of the PR branch
-first commit). The attribute should be specified at the beginning of the PR
-description and separated by an empty line from the rest of the message.  In order
-to avoid typos, the main part of the description (that is all lines excluding the
-first line and the message trailer) is subjected to a typo check, whereby lines
-starting with /\s*\S*Authored-By/ are considered as invalid.
-After the attribute value is parsed, the entire line (including empty lines
-below it) is removed from the message.
-The attribute is parsed according to the following ABNF rules:
-```
-    pr-author-paragraph = "Authored-By:" <SP> credentials eol empty-line+
-    credentials = name+ "<" login "@" host ">"
-    empty-line = eol
-    eol = <CR>*<LF>
-```
-
-2. *Co-Authored-by* - The commit message co-author.
-This GitHub-recognized attribute allows to create a commit with multiple
-authors. It will be parsed by Anubis if it is specified within the last
-paragraph of the description (a.k.a. the trailer). Note that the bot recognizes
-the last paragraph as a trailer if and only if it contains attribute fields
-(i.e., `name: value` lines) and nothing else - otherwise this text block is
-considered belonging to the main part of the description and subjected to
-the typo check outlined above.
-The attribute is parsed according to the following ABNF rules:
-```
-    co-authors-paragraph = eol empty-line co-author-line+ empty-line\*
-    co-author-line = "Co-Authored-By:" <SP> credentials eol
-```
-
 
 ## Voting and PR approvals
 
