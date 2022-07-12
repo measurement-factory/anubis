@@ -238,6 +238,7 @@ PR merge, the target branch commit) from the following parts:
 * `author`: The name and email from the author object of the PR merge commit
   unless overwritten by the `Authored-by` header field value from the PR
   description header.
+* `date`: The date from the author object of the PR merge commit.
 
 Note that the individual commits on the PR branch (including their messages
 and authors) are ignored. The bot is effectively performing a squash merge
