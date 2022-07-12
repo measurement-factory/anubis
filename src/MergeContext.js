@@ -469,15 +469,15 @@ class FieldsTokenizer
         const line = this._lines.shift();
 
         if (/^\s/.test(line))
-            throw new Error(`the line starts with a delimiter: '${line}'`);
+            throw new Error(`a field cannot start with whitespace: ${line}`);
 
         assert(line.trim().length > 0);
 
         const pos = line.search(':');
         if (pos < 0)
-            throw new Error(`':' is missing in the line: '${line}'`);
+            throw new Error(`a field without a name:value delimiter: '${line}'`);
 
-        return {name: line.substring(0, pos), value: line.substring(pos+1)};
+        return {name: line.substring(0, pos), value: line.substring(pos+1), raw: line};
     }
 
     // whether we are at the end of input
@@ -486,7 +486,7 @@ class FieldsTokenizer
         return this._lines.length === 0 || this._lines[0].trim().length === 0;
     }
 
-    // returns the unparsed (yet) string
+    // returns the (yet) unparsed string
     remaining() {
         return this._lines.join('\n');
     }
@@ -505,23 +505,21 @@ class CommitMessage
         this._trailer = undefined;
         // The 'Authored-by' meta information extracted from the optional description header,
         // separated from the body by an empty line.
-        this._author = undefined;
+        this._customAuthor = undefined;
         // Author in the {name, email, date} format.
         // The default author will be used in the future commit if the 'Authored-by' attribute is missing.
+        assert(defaultAuthor);
         this._defaultAuthor = defaultAuthor;
 
         this._checkRaw(this._title);
 
-        if (rawPr.body !== undefined && rawPr.body !== null) {
-            const prDescription = rawPr.body.replace(/\r+\n/g, '\n');
-            this._checkRaw(prDescription);
-            this._parse(prDescription);
-        }
+        if (rawPr.body !== undefined && rawPr.body !== null)
+            this._parse(rawPr.body);
     }
 
     // complete message for the future commit
     whole() {
-        assert(this._author !== null && this._body !== null && this._trailer !== null);
+        assert(this._title.length); // the only required part
         let message = this._title;
         if (this._body)
             message += '\n\n' + this._body;
@@ -533,9 +531,9 @@ class CommitMessage
     // the future commit author in the {name, email, date} format
     author()
     {
-        if (!this._author)
+        if (!this._customAuthor)
             return this._defaultAuthor;
-        return {name: this._author.name, email: this._author.email, date: this._defaultAuthor.date};
+        return {name: this._customAuthor.name, email: this._customAuthor.email, date: this._defaultAuthor.date};
     }
 
     // returns the position of the first non-ASCII_printable character (or -1)
@@ -555,8 +553,7 @@ class CommitMessage
     _checkRaw(message) {
         // CRs in CRLF sequences already removed
         // other CRs are not treated specially (and are banned)
-        const trimmedMessage = this._trim(message);
-        const lines = trimmedMessage.split('\n');
+        const lines = message.split('\n');
         for (let i = 0; i < lines.length; ++i) {
             const line = lines[i];
             const invalidPosition = this._invalidCharacterPosition(line);
@@ -564,13 +561,17 @@ class CommitMessage
             if (invalidPosition !== -1)
                 throw new Error(`bad character at line ${i}, offset ${invalidPosition}`);
 
-            if (line.length > 72)
-                throw new Error(`too long line '${line}'`);
+            // allow excessively long whitespace-only lines
+            // that some copy-pasted PR descriptions may include
+            const trimmedLine = this._trim(line);
+            if (trimmedLine.length > 72)
+                throw new Error(`too long line '${trimmedLine}'`);
         }
     }
 
-    // parses attributes of the raw PR description
-    _parse(prDescription) {
+    _parse(prDescriptionRaw) {
+        const prDescription = prDescriptionRaw.replace(/\r+\n/g, '\n');
+        this._checkRaw(prDescription);
         const prDescriptionWithoutHeader = this._extractHeader(prDescription);
 
         try {
@@ -585,14 +586,15 @@ class CommitMessage
         assert(this._body !== undefined && this._body !== null);
     }
 
-    // author is a {name, value}
-    _parseAuthor(author) {
-        const cred = author.value.match(/^ ([\w][^@<>,]*) <(\S+@\S+\.\S+)>$/);
+    // authorField is a {name, value, raw}
+    _parseAuthor(authorField) {
+        const trimmedValue = this._trim(authorField.value);
+        const cred = trimmedValue.match(/^ ([\w][^@<>,]*) <(\S+@\S+\.\S+)>$/);
         if (!cred)
-            throw new Error(`invalid '${author.name}' value format`);
+            throw new Error(`unsupported ${authorField.name} value format: ${authorField.value}`);
 
         if (cred[0].includes(','))
-            throw new Error(`invalid '${author.name}' value: commas are not allowed`);
+            throw new Error(`${authorField.name} author name with a comma: ${authorField.value}`);
 
         return {name: cred[1].trim(), email: cred[2].trim()};
     }
@@ -602,13 +604,31 @@ class CommitMessage
         if (prDescription.startsWith('Authored-by:')) {
             let tokenizer = new FieldsTokenizer(prDescription);
             const authorField = tokenizer.nextField();
-            this._author = this._parseAuthor(authorField);
+            this._customAuthor = this._parseAuthor(authorField);
             if (!tokenizer.atEnd())
-                throw new Error(`header must have nothing but a single 'Authored-by' attribute`);
-            return this._trim(tokenizer.remaining());
+                throw new Error(`unexpected header lines after a single Authored-by attribute`);
+            return tokenizer.remaining();
         } else {
             return prDescription;
         }
+    }
+
+    _extractTrailer(prDescriptionWithoutHeaderRaw) {
+        const prDescriptionWithoutHeader = this._trim(prDescriptionWithoutHeaderRaw);
+
+        // index of the last occurrence of '\n\n'
+        const trailerIndex = prDescriptionWithoutHeader.search(/\n\n(?!.*\n\n)/s);
+        if (trailerIndex < 0) // the text has at most one paragraph
+            trailerIndex = 0;
+
+        this._parseTrailer(prDescriptionWithoutHeader.substring(trailerIndex));
+        return prDescriptionWithoutHeader.substring(0, trailerIndex);
+    }
+
+    _parseBody(prDescriptionWithoutHeaderAndTrailerRaw) {
+        const prDescriptionWithoutHeaderAndTrailer = this._trim(prDescriptionWithoutHeaderAndTrailerRaw);
+        this._checkForTypos(prDescriptionWithoutHeaderAndTrailer);
+        this._body = prDescriptionWithoutHeaderAndTrailer;
     }
 
     _parseTrailer(trailerRaw) {
@@ -621,32 +641,14 @@ class CommitMessage
         while (!tokenizer.atEnd()) {
             const field = tokenizer.nextField();
             if (field.name === "Co-authored-by") {
-                this._parseAuthor(field);
                 const coAuthor = JSON.stringify(this._parseAuthor(field));
                 this._log(`accepting trailer field: ${coAuthor}`);
+            } else {
+                this._checkForTypos(field.raw);
             }
-            // and skip any other field
         }
 
         this._trailer = trailer;
-    }
-
-    _extractTrailer(prDescriptionWithoutHeaderRaw) {
-        const prDescriptionWithoutHeader = this._trim(prDescriptionWithoutHeaderRaw);
-        // index of the last occurrence of '\n\n'
-        const trailerIndex = prDescriptionWithoutHeader.search(/\n\n(?!.*\n\n)/s);
-
-        if (trailerIndex < 0) // the text has at most one paragraph
-            trailerIndex = 0;
-
-        this._parseTrailer(prDescriptionWithoutHeader.substring(trailerIndex));
-        return prDescriptionWithoutHeader.substring(0, trailerIndex);
-    }
-
-    _parseBody(prDescriptionWithoutHeaderAndTrailerRaw) {
-        const prDescriptionWithoutHeaderAndTrailer = this._trim(prDescriptionWithoutHeaderAndTrailerRaw);
-        this._checkForTypos(prDescriptionWithoutHeaderAndTrailer);
-        this._body = prDescriptionWithoutHeaderAndTrailer;
     }
 
     // checks the PR message (or its part) for some common/expected typos that may occur
@@ -1436,8 +1438,6 @@ class PullRequest {
         if (this._dryRun("create staged commit"))
             throw this._exObviousFailure("dryRun");
 
-        assert(this._commitMessage);
-        assert(this._mergeCommit);
         this._stagedCommit = await GH.createCommit(this._mergeCommit.tree.sha, this._commitMessage.whole(), [baseSha], this._commitMessage.author(), committer);
 
         assert(!this._stagingBanned);
