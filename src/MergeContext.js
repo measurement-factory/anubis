@@ -457,8 +457,13 @@ class BranchPosition
 // Forward iterator for fields in the 'name:value' format.
 class FieldsTokenizer
 {
-    constructor(str) {
+    constructor(str, allowDuplicates = true) {
         this._lines = str.split('\n');
+        if (!allowDuplicates) {
+            const uniqueLines = [...new Set(this._lines)];
+            if (this._lines.length !== uniqueLines.length)
+                throw new Error(`duplicate fields are not allowed`);
+        }
     }
 
     // Extracts the next line from the input and checks that it matches the
@@ -633,7 +638,7 @@ class CommitMessage
 
     _parseTrailer(trailerRaw) {
         const trailer = this._trim(trailerRaw);
-        let tokenizer = new FieldsTokenizer(trailer);
+        let tokenizer = new FieldsTokenizer(trailer, false);
 
         if (tokenizer.atEnd())
             throw new Error(`an empty trailer`);
