@@ -498,14 +498,14 @@ class CommitMessage
     constructor(rawPr, defaultAuthor) {
         // the (required) commit message title
         this._title = rawPr.title + ' (#' + rawPr.number + ')';
-        // the main description part, without header and trailer
-        this._body = undefined;
+        // the optional main description part, without header and trailer
+        this._body = null;
         // The optional finalizing description part with GitHub-related attributes,
         // separated from the body by an empty line.
-        this._trailer = undefined;
+        this._trailer = null;
         // The 'Authored-by' meta information extracted from the optional description header,
         // separated from the body by an empty line.
-        this._customAuthor = undefined;
+        this._customAuthor = null;
         // Author in the {name, email, date} format.
         // The default author will be used in the future commit if the 'Authored-by' attribute is missing.
         assert(defaultAuthor);
@@ -521,9 +521,9 @@ class CommitMessage
     whole() {
         assert(this._title.length); // the only required part
         let message = this._title;
-        if (this._body)
+        if (this._body !== null)
             message += '\n\n' + this._body;
-        if (this._trailer)
+        if (this._trailer !== null)
             message += '\n\n' + this._trailer;
         return message;
     }
@@ -531,7 +531,7 @@ class CommitMessage
     // the future commit author in the {name, email, date} format
     author()
     {
-        if (!this._customAuthor)
+        if (this._customAuthor === null)
             return this._defaultAuthor;
         return {name: this._customAuthor.name, email: this._customAuthor.email, date: this._defaultAuthor.date};
     }
@@ -582,8 +582,6 @@ class CommitMessage
             Log.Logger.info("assuming no trailer: " + e.message);
             this._parseBody(prDescriptionWithoutHeader);
         }
-
-        assert(this._body !== undefined && this._body !== null);
     }
 
     // authorField is a {name, value, raw}
@@ -627,8 +625,10 @@ class CommitMessage
 
     _parseBody(prDescriptionWithoutHeaderAndTrailerRaw) {
         const prDescriptionWithoutHeaderAndTrailer = this._trim(prDescriptionWithoutHeaderAndTrailerRaw);
-        this._checkForTypos(prDescriptionWithoutHeaderAndTrailer);
-        this._body = prDescriptionWithoutHeaderAndTrailer;
+        if (prDescriptionWithoutHeaderAndTrailer.length > 0) {
+            this._checkForTypos(prDescriptionWithoutHeaderAndTrailer);
+            this._body = prDescriptionWithoutHeaderAndTrailer;
+        }
     }
 
     _parseTrailer(trailerRaw) {
@@ -648,7 +648,8 @@ class CommitMessage
             }
         }
 
-        this._trailer = trailer;
+        if (trailer.length > 0)
+            this._trailer = trailer;
     }
 
     // checks the PR message (or its part) for some common/expected typos that may occur
