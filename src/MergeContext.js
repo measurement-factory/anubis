@@ -1156,7 +1156,7 @@ class PullRequest {
     async _mergedSomeTimeAgo() {
         const dateSince = this._dateForDaysAgo(100);
         let mergedSha = null;
-        let commits = await GH.getCommits(this._prBaseBranch(), dateSince, this._prAuthor());
+        let commits = await GH.getCommits(this._prBaseBranch(), dateSince);
         for (let commit of commits) {
             const num = Util.ParsePrNumber(commit.commit.message);
             if (num && num === this._prNumber().toString()) {
