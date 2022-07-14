@@ -459,42 +459,46 @@ class FieldsTokenizer
 {
     constructor(str, allowDuplicates = true) {
         this._lines = str.split('\n');
-        if (!allowDuplicates) {
-            const uniqueLines = [...new Set(this._lines)];
-            if (this._lines.length !== uniqueLines.length)
-                throw new Error(`duplicate fields are not allowed`);
+        this._remainingFields = [];
+        this._tokenizeAll();
+    }
+
+    // returns the next parsed field in the {name, value, raw} format
+    nextField() {
+        assert(!this.atEnd());
+        return this._remainingFields.shift();
+    }
+
+    // parses all input in advance
+    _tokenizeAll() {
+        while (this._lines.length) {
+            const line = this._lines.shift();
+
+            // treat an empty line as the end of input
+            if (line.trim().length === 0)
+                break;
+
+            if (/^\s/.test(line))
+                throw new Error(`a field cannot start with whitespace: ${line}`);
+
+            const pos = line.search(':');
+            if (pos < 0)
+                throw new Error(`a field without a name:value delimiter: '${line}'`);
+
+            const name = line.substring(0, pos);
+            const value = line.substring(pos+1);
+            if (this._remainingFields.some(el => el.name.toUpperCase() === name.toUpperCase() &&
+                        el.value.toUpperCase() === value.toUpperCase())) {
+                throw new Error(`duplicates are not allowed: ${line}`);
+            }
+            this._remainingFields.push({name: name, value: value, raw: line});
         }
     }
 
-    // Extracts the next line from the input and checks that it matches the
-    // 'attrName:attrValue' pattern.
-    // Returns the matched {attrName, attrValue} pair.
-    nextField() {
-        assert(!this.atEnd());
-        const line = this._lines.shift();
-
-        if (/^\s/.test(line))
-            throw new Error(`a field cannot start with whitespace: ${line}`);
-
-        assert(line.trim().length > 0);
-
-        const pos = line.search(':');
-        if (pos < 0)
-            throw new Error(`a field without a name:value delimiter: '${line}'`);
-
-        return {name: line.substring(0, pos), value: line.substring(pos+1), raw: line};
-    }
-
-    // whether we are at the end of input
-    atEnd() {
-        // treat an empty line as the end of input
-        return this._lines.length === 0 || this._lines[0].trim().length === 0;
-    }
+    atEnd() { return this._remainingFields.length === 0; }
 
     // returns the (yet) unparsed string
-    remaining() {
-        return this._lines.join('\n');
-    }
+    remaining() { return this._lines.join('\n'); }
 }
 
 // computes future commit message from raw PR
@@ -607,6 +611,7 @@ class CommitMessage
         if (prDescription.startsWith('Authored-by:')) {
             let tokenizer = new FieldsTokenizer(prDescription);
             const authorField = tokenizer.nextField();
+            assert(authorField);
             this._customAuthor = this._parseAuthor(authorField);
             if (!tokenizer.atEnd())
                 throw new Error(`unexpected header lines after a single Authored-by attribute`);
