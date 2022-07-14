@@ -457,7 +457,7 @@ class BranchPosition
 // Forward iterator for fields in the 'name:value' format.
 class FieldsTokenizer
 {
-    constructor(str, allowDuplicates = true) {
+    constructor(str) {
         this._lines = str.split('\n');
         this._remainingFields = [];
         this._tokenizeAll();
@@ -643,7 +643,7 @@ class CommitMessage
 
     _parseTrailer(trailerRaw) {
         const trailer = this._trim(trailerRaw);
-        let tokenizer = new FieldsTokenizer(trailer, false);
+        let tokenizer = new FieldsTokenizer(trailer);
 
         if (tokenizer.atEnd())
             throw new Error(`an empty trailer`);
@@ -654,8 +654,9 @@ class CommitMessage
                 const coAuthor = JSON.stringify(this._parseAuthor(field));
                 this._log(`accepting trailer field: ${coAuthor}`);
             } else {
-                this._checkForTypos(field.raw);
+                this._checkForTypos(field.name);
             }
+            this._checkForTypos(field.value);
         }
 
         if (trailer.length > 0)
@@ -665,7 +666,7 @@ class CommitMessage
     // checks the PR message (or its part) for some common/expected typos that may occur
     // when filling in PR attributes
     _checkForTypos(text) {
-        const possibleAuthoredByTypoRegex = /^\s*\S*[aA]uthored[-_]?[bB]y/m;
+        const possibleAuthoredByTypoRegex = /^\s*\S*authored[-_]?by/mi;
         if (text.search(possibleAuthoredByTypoRegex) >= 0)
             throw new Error(`suspicious '*Authored-by' attribute in the PR description`);
     }
@@ -906,7 +907,7 @@ class PullRequest {
             // check this separately because GitHub does not recreate PR merge commits
             // for conflicted PR branches (leaving stale PR merge commits).
             this._prMergeable() &&
-            this._messageIsFresh()) {
+            this._stagedCommitMetadataIsFresh()) {
 
             const prMergeSha = await GH.getReference(this._mergePath());
             const prCommit = await GH.getCommit(prMergeSha);
@@ -1267,8 +1268,8 @@ class PullRequest {
         }
     }
 
-    // Whether the commit message configuration remained intact since staging.
-    _messageIsFresh() {
+    // Whether the staged commit metadata remained intact since staging.
+    _stagedCommitMetadataIsFresh() {
         if (!this._commitMessage) {
             this._log("staged commit message became invalid (and will be treated as stale)");
             return false;
