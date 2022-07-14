@@ -583,14 +583,14 @@ class CommitMessage
         this._checkRaw(prDescription);
         const prDescriptionWithoutHeader = this._extractHeader(prDescription);
 
+        let prDescriptionWithoutHeaderAndTrailer = prDescriptionWithoutHeader; // may be adjusted below
         try {
-            const prDescriptionWithoutHeaderAndTrailer = this._extractTrailer(prDescriptionWithoutHeader);
-            this._parseBody(prDescriptionWithoutHeaderAndTrailer);
+            prDescriptionWithoutHeaderAndTrailer = this._extractTrailer(prDescriptionWithoutHeader);
         } catch (e) {
             // TODO: supply debugString() prefix
             Log.Logger.info("assuming no trailer: " + e.message);
-            this._parseBody(prDescriptionWithoutHeader);
         }
+        this._parseBody(prDescriptionWithoutHeaderAndTrailer);
     }
 
     // authorField is a {name, value, raw}
