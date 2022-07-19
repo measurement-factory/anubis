@@ -520,8 +520,18 @@ class CommitMessage
         assert(defaultAuthor);
         this._defaultAuthor = defaultAuthor;
 
-        // last paragraphs started with these keywords are not trailers
-        this.falseTrailers = ['typo', 'np', 'error', 'todo', 'motivation', 'note'];
+        // last paragraphs started with these expressions are not trailers
+        this.phonyTrailers = [
+            /^typo:/i,
+            /^np:/i,
+            /^error:/i,
+            /^todo:/i,
+            /^motivation:/i,
+            /^note:/i,
+            /^\[\^\d+\]:/,  // GitHub footnotes
+            /^\w+::/,       // method names
+            /^http[s]?:/i
+        ];
 
         this._checkRaw(this._title);
 
@@ -585,13 +595,7 @@ class CommitMessage
         const prDescription = prDescriptionRaw.replace(/\r+\n/g, '\n');
         this._checkRaw(prDescription);
         const prDescriptionWithoutHeader = this._extractHeader(prDescription);
-
-        let prDescriptionWithoutHeaderAndTrailer = prDescriptionWithoutHeader; // may be adjusted below
-        const trailerIndex = this._locateTrailer(prDescriptionWithoutHeader);
-        if (trailerIndex >= 0) {
-            this._parseTrailer(prDescriptionWithoutHeader.substring(trailerIndex));
-            prDescriptionWithoutHeaderAndTrailer = prDescriptionWithoutHeader.substring(0, trailerIndex);
-        }
+        const prDescriptionWithoutHeaderAndTrailer = this._extractTrailer(prDescriptionWithoutHeader);
         this._parseBody(prDescriptionWithoutHeaderAndTrailer);
     }
 
@@ -623,19 +627,20 @@ class CommitMessage
         }
     }
 
-    // returns the trailer index in the description or -1
-    _locateTrailer(prDescriptionWithoutHeaderRaw) {
+    _extractTrailer(prDescriptionWithoutHeaderRaw) {
+        const prDescriptionWithoutHeader = this._trim(prDescriptionWithoutHeaderRaw);
         // index of the last occurrence of '\n\n'
-        let trailerCandidateIndex = prDescriptionWithoutHeaderRaw.search(/\n\n(?!.*\n\n)/s);
+        let trailerCandidateIndex = prDescriptionWithoutHeader.search(/\n\n(?!.*\n\n)/s);
         // Does the text have at most one paragraph?
         trailerCandidateIndex = trailerCandidateIndex < 0 ? 0 : trailerCandidateIndex + 2
-        const trailerCandidate = prDescriptionWithoutHeaderRaw.substring(trailerCandidateIndex);
-        const trailerStart = trailerCandidate.match(/^ {0,3}(\S+): /);
-        if (trailerStart && !this.falseTrailers.includes(trailerStart[1].toLowerCase()))
-            return trailerCandidateIndex;
-
+        const trailerCandidate = prDescriptionWithoutHeader.substring(trailerCandidateIndex);
+        const trailerStart = trailerCandidate.match(/^ {0,3}(\S+:)/);
+        if (trailerStart && !this.phonyTrailers.some(el => el.test(trailerStart[1]))) {
+            this._parseTrailer(prDescriptionWithoutHeader.substring(trailerCandidateIndex));
+            return prDescriptionWithoutHeader.substring(0, trailerCandidateIndex);
+        }
         Log.Logger.info("assuming no trailer");
-        return -1;
+        return prDescriptionWithoutHeader;
     }
 
     _parseBody(prDescriptionWithoutHeaderAndTrailerRaw) {
