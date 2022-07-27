@@ -1055,8 +1055,7 @@ class PullRequest {
 
         assert(!this._prState.merged());
 
-        // paranoid null check: must be undefined or non-null
-        this._log("messageValid: " + (this._commitMessage !== undefined && this._commitMessage !== null));
+        this._log("messageValid: " + (this._commitMessage !== undefined));
 
         this._approval = await this._checkApproval();
         this._log("checkApproval: " + this._approval);
