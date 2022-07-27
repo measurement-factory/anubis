@@ -533,17 +533,36 @@ class CommitMessage
         // overwrites this._defaultAuthor's name and email
         this._customAuthor = null;
 
-        // a paragraph that starts with one of these expressions is not a trailer
+        // We want to validate all trailers and only trailers for formatting
+        // errors. Unfortunately, there is no reliable way to detect trailer
+        // presence. Thus, we will miss some trailers (and merge some PRs with
+        // buggy trailers), and we will validate some non-trailers (and block
+        // some valid PRs). The current implementation considers excessive
+        // blocking to be the lesser of the two evils: We treat any last
+        // paragraph that starts with /\S+:/ as a trailer _unless_ it starts
+        // with one of these common expressions.
         this.phonyTrailers = [
-            /^typo:/i,
-            /^np:/i,
+            // common paragraph labels or introductory words
+            /^TODO:/i,
+            /^XXX:/i,
+            /^Motivation:/i,
+            /^Context:/i,
+            /^Note:/i,
+            /^NP:/i,
+            /^Typo:/i,
+
+            // quoted messages (that should have been indented but were not)
             /^error:/i,
-            /^todo:/i,
-            /^motivation:/i,
-            /^note:/i,
-            /^\[\^\d+\]:/,  // GitHub footnotes
-            /^\w+::/,       // method names
-            /^http[s]?:/i
+            /^warning:/i,
+
+            // e.g., a C++ class member name or a name inside a namespace
+            /^\w+::/,
+
+            // raw URLs
+            /^http[s]?:/i,
+
+            // markdown citations/references and footnotes
+            /^\[\^\d+\]:/
         ];
 
         this._checkRaw(this._title);
