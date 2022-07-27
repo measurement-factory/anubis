@@ -558,8 +558,8 @@ class CommitMessage
             // e.g., a C++ class member name or a name inside a namespace
             /^\w+::/,
 
-            // raw URLs
-            /^http[s]?:/i,
+            // raw HTTP URLs
+            new RegExp('^http[s]?://', 'i'),
 
             // markdown citations/references and footnotes
             /^\[\^\d+\]:/
