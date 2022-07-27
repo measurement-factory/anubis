@@ -505,22 +505,35 @@ class FieldsTokenizer
 class CommitMessage
 {
     constructor(rawPr, defaultAuthor) {
+
         // the (required) commit message title
         this._title = rawPr.title + ' (#' + rawPr.number + ')';
-        // the optional main description part, without header and trailer
+
+        // PR description has three optional parts: [header]+[body]+[trailer]
+        // The parts are separated by empty lines.
+
+        // The header is dedicated to Anubis-recognized/consumed PR metadata.
+        // The commit message only retains the body and the trailer.
+
+        // PR description without the header and trailer parts
         this._body = null;
-        // The optional finalizing description part with GitHub-related attributes,
-        // separated from the body by an empty line.
+
+        // optional commit attributes recognized by GitHub, git, and/or Project
+        // these attributes are partially validated by Anubis
+        // stored in the original text format
         this._trailer = null;
-        // The 'Authored-by' meta information extracted from the optional description header,
-        // separated from the body by an empty line.
-        this._customAuthor = null;
-        // Author in the {name, email, date} format.
-        // The default author will be used in the future commit if the 'Authored-by' attribute is missing.
+
+        // GitHub-suggested commit author
+        // uses {name, email, date} format
         assert(defaultAuthor);
         this._defaultAuthor = defaultAuthor;
 
-        // last paragraphs started with these expressions are not trailers
+        // optional commit author specified by 'Authored-by' header field
+        // uses {name, email} format
+        // overwrites this._defaultAuthor's name and email
+        this._customAuthor = null;
+
+        // a paragraph that starts with one of these expressions is not a trailer
         this.phonyTrailers = [
             /^typo:/i,
             /^np:/i,
