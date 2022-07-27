@@ -497,7 +497,7 @@ class FieldsTokenizer
 
     atEnd() { return this._remainingFields.length === 0; }
 
-    // returns the (yet) unparsed string
+    // zero or more paragraphs after the parsed fields and field terminator
     remaining() { return this._lines.join('\n'); }
 }
 
