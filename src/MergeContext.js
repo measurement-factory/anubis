@@ -933,12 +933,11 @@ class PullRequest {
             this._prMergeable() &&
             this._stagedCommitMetadataIsFresh()) {
 
-            const prMergeSha = await GH.getReference(this._mergePath());
-            const prCommit = await GH.getCommit(prMergeSha);
+            assert(this._mergeCommit);
             // whether the PR branch has not changed
-            if (this._stagedCommit.tree.sha === prCommit.tree.sha) {
+            if (this._stagedCommit.tree.sha === this._mergeCommit.tree.sha) {
                 const stagedCommitDate = new Date(this._stagedCommit.committer.date);
-                const prCommitDate = new Date(prCommit.committer.date);
+                const prCommitDate = new Date(this._mergeCommit.committer.date);
                 // check that a 'no-change' PR commit did not update the merge commit
                 // (which keeps the old tree object in this case)
                 if (stagedCommitDate >= prCommitDate) {
@@ -1281,7 +1280,7 @@ class PullRequest {
         this._rawPr = pr;
 
         if (this._prMergeable()) {
-            const mergeSha = await GH.getReference("pull/" + this._prNumber() + "/merge");
+            const mergeSha = await GH.getReference(this._mergePath());
             this._mergeCommit = await GH.getCommit(mergeSha);
             try {
                 this._commitMessage = new CommitMessage(this._rawPr, this._mergeCommit.author);
