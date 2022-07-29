@@ -933,18 +933,8 @@ class PullRequest {
             this._prMergeable() &&
             this._stagedCommitMetadataIsFresh()) {
 
-            assert(this._mergeCommit);
-            // whether the PR branch has not changed
-            if (this._stagedCommit.tree.sha === this._mergeCommit.tree.sha) {
-                const stagedCommitDate = new Date(this._stagedCommit.committer.date);
-                const prCommitDate = new Date(this._mergeCommit.committer.date);
-                // check that a 'no-change' PR commit did not update the merge commit
-                // (which keeps the old tree object in this case)
-                if (stagedCommitDate >= prCommitDate) {
-                    this._log("the staged commit is fresh");
-                    return true;
-                }
-            }
+            this._log("the staged commit is fresh");
+            return true;
         }
         this._log("the staged commit is stale");
         return false;
@@ -1308,7 +1298,18 @@ class PullRequest {
         if (!authorIsFresh)
             return false;
 
-        return true;
+        const treeShaIsFresh = this._stagedCommit.tree.sha === this._mergeCommit.tree.sha;
+        this._log("staged commit tree sha freshness: " + treeShaIsFresh);
+        if (!treeShaIsFresh)
+            return false;
+
+        const stagedCommitDate = new Date(this._stagedCommit.author.date);
+        const prCommitDate = new Date(this._commitMessage.author().date);
+        // check that a 'no-change' PR commit did not update the merge commit
+        // (which keeps the old tree object in this case)
+        const dateIsFresh = stagedCommitDate >= prCommitDate;
+        this._log("staged commit date freshness: " + dateIsFresh);
+        return dateIsFresh;
     }
 
     async _processStagingStatuses() {
