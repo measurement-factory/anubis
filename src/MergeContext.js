@@ -533,38 +533,6 @@ class CommitMessage
         // overwrites this._defaultAuthor's name and email
         this._customAuthor = null;
 
-        // We want to validate all trailers and only trailers for formatting
-        // errors. Unfortunately, there is no reliable way to detect trailer
-        // presence. Thus, we will miss some trailers (and merge some PRs with
-        // buggy trailers), and we will validate some non-trailers (and block
-        // some valid PRs). The current implementation considers excessive
-        // blocking to be the lesser of the two evils: We treat any last
-        // paragraph that starts with /\S+:/ as a trailer _unless_ it starts
-        // with one of these common expressions.
-        this.phonyTrailers = [
-            // common paragraph labels or introductory words
-            /^TODO:/i,
-            /^XXX:/i,
-            /^Motivation:/i,
-            /^Context:/i,
-            /^Note:/i,
-            /^NP:/i,
-            /^Typo:/i,
-
-            // quoted messages (that should have been indented but were not)
-            /^error:/i,
-            /^warning:/i,
-
-            // e.g., a C++ class member name or a name inside a namespace
-            /^\w+::/,
-
-            // raw HTTP URLs
-            new RegExp('^http[s]?://', 'i'),
-
-            // markdown citations/references and footnotes
-            /^\[\^\d+\]:/
-        ];
-
         this._checkRaw(this._title);
 
         if (rawPr.body !== undefined && rawPr.body !== null)
@@ -601,6 +569,21 @@ class CommitMessage
     _trim(str) {
         // cannot just use trim() to preserve the first line indentation (if any).
         return str.replace(/^\s*\n+/g, '').trimEnd();
+    }
+
+    _paragraphLabel(str) {
+        if (/^\s{4}/.test(str)) // not a regular paragraph but a quotation
+            return null;
+        const rawLabel = str.match(/^\s*(\S+)\s*:/);
+        if (!rawLabel)
+            return null;
+        const label = rawLabel[1].toLowerCase();
+        return label[0].toUpperCase() + label.substring(1);
+    }
+
+    _startsWithFieldName(str) {
+        const label = this._paragraphLabel(str);
+        return (label && label.includes('-')) ? label : null;
     }
 
     // basic checks for an unparsed message
@@ -646,7 +629,7 @@ class CommitMessage
 
     _extractHeader(prDescriptionRaw) {
         const prDescription = this._trim(prDescriptionRaw);
-        if (/^ {0,3}Authored-by:/.test(prDescription)) {
+        if (this._startsWithFieldName(prDescription) === 'Authored-by') {
             let tokenizer = new FieldsTokenizer(prDescription);
             const authorField = tokenizer.nextField();
             assert(authorField);
@@ -666,8 +649,7 @@ class CommitMessage
         // Does the text have at most one paragraph?
         trailerCandidateIndex = trailerCandidateIndex < 0 ? 0 : trailerCandidateIndex + 2
         const trailerCandidate = prDescriptionWithoutHeader.substring(trailerCandidateIndex);
-        const trailerStart = trailerCandidate.match(/^ {0,3}(\S+:)/);
-        if (trailerStart && !this.phonyTrailers.some(el => el.test(trailerStart[1]))) {
+        if (this._startsWithFieldName(trailerCandidate) !== null) {
             this._parseTrailer(prDescriptionWithoutHeader.substring(trailerCandidateIndex));
             return prDescriptionWithoutHeader.substring(0, trailerCandidateIndex);
         }
