@@ -481,12 +481,12 @@ class FieldsTokenizer
             if (/^\s/.test(line))
                 throw new Error(`a field cannot start with whitespace: ${line}`);
 
-            const pos = line.search(':');
+            const pos = line.search(': ');
             if (pos < 0)
-                throw new Error(`a field without a name:value delimiter: '${line}'`);
+                throw new Error(`a field without a name: value delimiter: '${line}'`);
 
             const name = line.substring(0, pos);
-            const value = line.substring(pos+1);
+            const value = line.substring(pos+2).trim();
             if (this._remainingFields.some(el => el.name.toUpperCase() === name.toUpperCase() &&
                         el.value.toUpperCase() === value.toUpperCase())) {
                 throw new Error(`duplicates are not allowed: ${line}`);
@@ -601,6 +601,8 @@ class CommitMessage
             // allow excessively long whitespace-only lines
             // that some copy-pasted PR descriptions may include
             const trimmedLine = this._trim(line);
+
+            // TODO: Allow longer header (and possibly even trailer) lines.
             if (trimmedLine.length > 72)
                 throw new Error(`too long line '${trimmedLine}'`);
         }
@@ -617,7 +619,7 @@ class CommitMessage
     // authorField is a {name, value, raw}
     _parseAuthor(authorField) {
         const trimmedValue = this._trim(authorField.value);
-        const cred = trimmedValue.match(/^ ([\w][^@<>,]*) <(\S+@\S+\.\S+)>$/);
+        const cred = trimmedValue.match(/^([\w][^@<>,]*) <(\S+@\S+\.\S+)>$/);
         if (!cred)
             throw new Error(`unsupported ${authorField.name} value format: ${authorField.value}`);
 
@@ -647,7 +649,7 @@ class CommitMessage
         // index of the last occurrence of '\n\n'
         let trailerCandidateIndex = prDescriptionWithoutHeader.search(/\n\n(?!.*\n\n)/s);
         // Does the text have at most one paragraph?
-        trailerCandidateIndex = trailerCandidateIndex < 0 ? 0 : trailerCandidateIndex + 2
+        trailerCandidateIndex = trailerCandidateIndex < 0 ? 0 : (trailerCandidateIndex + 2);
         const trailerCandidate = prDescriptionWithoutHeader.substring(trailerCandidateIndex);
         if (this._startsWithFieldName(trailerCandidate) !== null) {
             this._parseTrailer(prDescriptionWithoutHeader.substring(trailerCandidateIndex));
