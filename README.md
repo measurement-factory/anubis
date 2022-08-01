@@ -150,10 +150,10 @@ request state:
   determine what happened.  The bot does not attempt to merge this PR again
   until a human decides that this problem is resolved and removes the label
   manually.
-* `M-failed-description`: The PR title and/or description is invalid
-  (see below for PR commit message rules). The bot removes this label
-  when it revisits the PR and notices that the commit message components
-  were fixed.
+* `M-failed-description`: The PR title and/or description is invalid (see
+  below for PR description and commit message rules). The bot removes this
+  label when it revisits the PR and notices that the future commit message
+  components were fixed.
 * `M-failed-other`: All other fatal PR-specific errors. It is probably
   necessary to consult CI logs to determine what happened. Anubis will process
   the labeled PR again, optimistically assuming that the problems are
