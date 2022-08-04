@@ -581,7 +581,7 @@ class CommitMessage
     _paragraphLabel(str) {
         if (/^\s{4}/.test(str)) // not a regular paragraph but a quotation
             return null;
-        const rawLabel = str.match(/^\s*(\S+)\s*:/);
+        const rawLabel = str.match(/^\s*(\S+):/);
         if (!rawLabel)
             return null;
         const label = rawLabel[1].toLowerCase();
