@@ -491,6 +491,9 @@ class FieldsTokenizer
                 throw new Error(`a field without a name: value delimiter: '${line}'`);
 
             const name = line.substring(0, pos);
+            if (/\s/.test(name))
+                throw new Error(`the field name cannot contain a whitespace: ${name}`);
+
             const value = line.substring(pos+2).trim();
             if (this._remainingFields.some(el => el.name.toUpperCase() === name.toUpperCase() &&
                         el.value.toUpperCase() === value.toUpperCase())) {
