@@ -624,7 +624,7 @@ class CommitMessage
 
     // authorField is a {name, value, raw}
     _parseAuthor(authorField) {
-        const cred = authorField.value.match(/^([\w][^@<>,]*) <(\S+@\S+\.\S+)>$/);
+        const cred = authorField.value.match(/^([\w][^@<>,]*)\s<(\S+@\S+\.\S+)>$/);
         if (!cred)
             throw new Error(`unsupported ${authorField.name} value format: ${authorField.value}`);
 
