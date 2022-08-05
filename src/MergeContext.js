@@ -634,6 +634,7 @@ class CommitMessage
         return {name: cred[1].trim(), email: cred[2].trim()};
     }
 
+    // returns the passed description without header (if any)
     _extractHeader(prDescriptionRaw) {
         const prDescription = this._trim(prDescriptionRaw);
         const headerFieldName = 'Authored-by';
@@ -651,6 +652,7 @@ class CommitMessage
         }
     }
 
+    // returns the passed description without trailer (if any)
     _extractTrailer(prDescriptionWithoutHeaderRaw) {
         const prDescriptionWithoutHeader = this._trim(prDescriptionWithoutHeaderRaw);
         // index of the last occurrence of '\n\n'
@@ -666,6 +668,7 @@ class CommitMessage
         return prDescriptionWithoutHeader;
     }
 
+    // parses the extracted body into this._body
     _parseBody(prDescriptionWithoutHeaderAndTrailerRaw) {
         const prDescriptionWithoutHeaderAndTrailer = this._trim(prDescriptionWithoutHeaderAndTrailerRaw);
         if (prDescriptionWithoutHeaderAndTrailer.length > 0) {
@@ -674,6 +677,7 @@ class CommitMessage
         }
     }
 
+    // parses the extracted trailer into this._trailer
     _parseTrailer(trailerRaw) {
         const trailer = this._trim(trailerRaw);
         let tokenizer = new FieldsTokenizer(trailer);
