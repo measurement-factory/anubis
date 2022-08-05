@@ -457,10 +457,8 @@ class BranchPosition
 // Forward iterator for fields in the 'name:value' format.
 class FieldsTokenizer
 {
-    constructor(str, maxFieldNumber) {
+    constructor(str) {
         this._lines = str.split('\n');
-        // if provided, limits the number of fields to parse
-        this._maxFieldNumber = maxFieldNumber;
         this._remainingFields = [];
         this._tokenizeAll();
     }
@@ -480,9 +478,6 @@ class FieldsTokenizer
             if (line.trim().length === 0)
                 break;
 
-            if (this._maxFieldNumber && this._remainingFields.length == this._maxFieldNumber)
-                throw new Error(`exceeded the maximum number of fields: ${this._maxFieldNumber}`);
-
             if (/^\s/.test(line))
                 throw new Error(`a field cannot start with whitespace: ${line}`);
 
@@ -491,8 +486,8 @@ class FieldsTokenizer
                 throw new Error(`a field without a name: value delimiter: '${line}'`);
 
             const name = line.substring(0, pos);
-            if (/\s/.test(name))
-                throw new Error(`the field name cannot contain a whitespace: ${name}`);
+            if (/[^\w-]/.test(name))
+                throw new Error(`the field name cannot contain non-word characters: ${name}`);
 
             const value = line.substring(pos+2).trim();
             if (this._remainingFields.some(el => el.name.toUpperCase() === name.toUpperCase() &&
@@ -584,7 +579,7 @@ class CommitMessage
     _paragraphLabel(str) {
         if (/^\s{4}/.test(str)) // not a regular paragraph but a quotation
             return null;
-        const rawLabel = str.match(/^\s*(\S+):/);
+        const rawLabel = str.match(/^\s*([\w-]+):/);
         if (!rawLabel)
             return null;
         const label = rawLabel[1].toLowerCase();
@@ -643,15 +638,14 @@ class CommitMessage
         const prDescription = this._trim(prDescriptionRaw);
         const headerFieldName = 'Authored-by';
         if (this._startsWithFieldName(prDescription) === headerFieldName) {
-            let tokenizer = new FieldsTokenizer(prDescription, 1);
+            let tokenizer = new FieldsTokenizer(prDescription);
             const authorField = tokenizer.nextField();
             assert(authorField);
-            if (authorField.name === headerFieldName) {
-                this._customAuthor = this._parseAuthor(authorField);
-                return tokenizer.remaining();
-            }
-            this._checkForTypos(authorField.name); // will throw
-            assert(0); // unreachable
+            assert(authorField.name == headerFieldName);
+            this._customAuthor = this._parseAuthor(authorField);
+            if (!tokenizer.atEnd())
+                throw new Error(`unexpected header lines after a single Authored-by attribute`);
+            return tokenizer.remaining();
         } else {
             return prDescription;
         }
