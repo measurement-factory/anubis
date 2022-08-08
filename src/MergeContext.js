@@ -454,6 +454,265 @@ class BranchPosition
     }
 }
 
+// Forward iterator for fields in the 'name:value' format.
+class FieldsTokenizer
+{
+    constructor(str) {
+        this._lines = str.split('\n');
+        this._remainingFields = [];
+        this._tokenizeAll();
+    }
+
+    // returns the next parsed field in the {name, value, raw} format
+    nextField() {
+        assert(!this.atEnd());
+        return this._remainingFields.shift();
+    }
+
+    // parses all input in advance
+    _tokenizeAll() {
+        while (this._lines.length) {
+            const line = this._lines.shift();
+
+            // treat an empty line as the end of input
+            if (line.trim().length === 0)
+                break;
+
+            if (/^\s/.test(line))
+                throw new Error(`a field cannot start with whitespace: ${line}`);
+
+            const pos = line.search(': ');
+            if (pos < 0)
+                throw new Error(`a field without a name: value delimiter: '${line}'`);
+
+            const name = line.substring(0, pos);
+            if (/[^\w-]/.test(name))
+                throw new Error(`the field name cannot contain non-word characters: ${name}`);
+
+            const value = line.substring(pos+2).trim();
+            if (this._remainingFields.some(el => el.name.toUpperCase() === name.toUpperCase() &&
+                        el.value.toUpperCase() === value.toUpperCase())) {
+                throw new Error(`duplicates are not allowed: ${line}`);
+            }
+            this._remainingFields.push({name: name, value: value, raw: line});
+        }
+    }
+
+    atEnd() { return this._remainingFields.length === 0; }
+
+    // zero or more paragraphs after the parsed fields and field terminator
+    remaining() { return this._lines.join('\n'); }
+}
+
+// computes future commit message from raw PR
+class CommitMessage
+{
+    constructor(rawPr, defaultAuthor) {
+
+        // the (required) commit message title
+        this._title = rawPr.title + ' (#' + rawPr.number + ')';
+
+        // PR description has three optional parts: [header]+[body]+[trailer]
+        // The parts are separated by empty lines.
+
+        // The header is dedicated to Anubis-recognized/consumed PR metadata.
+        // The commit message only retains the body and the trailer.
+
+        // PR description without the header and trailer parts
+        this._body = null;
+
+        // optional commit attributes recognized by GitHub, git, and/or Project
+        // these attributes are partially validated by Anubis
+        // stored in the original text format
+        this._trailer = null;
+
+        // GitHub-suggested commit author
+        // uses {name, email, date} format
+        assert(defaultAuthor);
+        this._defaultAuthor = defaultAuthor;
+
+        // optional commit author specified by 'Authored-by' header field
+        // uses {name, email} format
+        // overwrites this._defaultAuthor's name and email
+        this._customAuthor = null;
+
+        this._checkRaw(this._title);
+
+        if (rawPr.body !== undefined && rawPr.body !== null)
+            this._parse(rawPr.body);
+    }
+
+    // complete message for the future commit
+    whole() {
+        assert(this._title.length); // the only required part
+        let message = this._title;
+        if (this._body !== null)
+            message += '\n\n' + this._body;
+        if (this._trailer !== null)
+            message += '\n\n' + this._trailer;
+        return message;
+    }
+
+    // the future commit author in the {name, email, date} format
+    author()
+    {
+        if (this._customAuthor === null)
+            return this._defaultAuthor;
+        return {name: this._customAuthor.name, email: this._customAuthor.email, date: this._defaultAuthor.date};
+    }
+
+    // returns the position of the first non-ASCII_printable character (or -1)
+    _invalidCharacterPosition(str) {
+        const prohibitedCharacters = /[^\u{20}-\u{7e}]/u;
+        const match = prohibitedCharacters.exec(str);
+        return match ? match.index : -1;
+    }
+
+    // removes leading empty lines and trims the end
+    _trim(str) {
+        // cannot just use trim() to preserve the first line indentation (if any).
+        return str.replace(/^\s*\n+/g, '').trimEnd();
+    }
+
+    // returns either a string containing canonical spelling of the first paragraph word
+    // that is followed by a colon, or null
+    _paragraphLabel(str) {
+        if (/^\s{4}/.test(str)) // not a regular paragraph but a quotation
+            return null;
+        const rawLabel = str.match(/^\s*([\w-]+):/);
+        if (!rawLabel)
+            return null;
+        const label = rawLabel[1].toLowerCase();
+        return label[0].toUpperCase() + label.substring(1);
+    }
+
+    // returns either paragraphLabel(x) if that value contains a dash, or null
+    _startsWithFieldName(str) {
+        const label = this._paragraphLabel(str);
+        return (label && label.includes('-')) ? label : null;
+    }
+
+    // basic checks for an unparsed message
+    _checkRaw(message) {
+        // CRs in CRLF sequences already removed
+        // other CRs are not treated specially (and are banned)
+        const lines = message.split('\n');
+        for (let i = 0; i < lines.length; ++i) {
+            const line = lines[i];
+            const invalidPosition = this._invalidCharacterPosition(line);
+
+            if (invalidPosition !== -1)
+                throw new Error(`bad character at line ${i}, offset ${invalidPosition}`);
+
+            // allow excessively long whitespace-only lines
+            // that some copy-pasted PR descriptions may include
+            const trimmedLine = this._trim(line);
+
+            // TODO: Allow longer header (and possibly even trailer) lines.
+            if (trimmedLine.length > 72)
+                throw new Error(`too long line '${trimmedLine}'`);
+        }
+    }
+
+    _parse(prDescriptionRaw) {
+        const prDescription = prDescriptionRaw.replace(/\r+\n/g, '\n');
+        this._checkRaw(prDescription);
+        const prDescriptionWithoutHeader = this._extractHeader(prDescription);
+        const prDescriptionWithoutHeaderAndTrailer = this._extractTrailer(prDescriptionWithoutHeader);
+        this._parseBody(prDescriptionWithoutHeaderAndTrailer);
+    }
+
+    // authorField is a {name, value, raw}
+    _parseAuthor(authorField) {
+        const cred = authorField.value.match(/^([\w][^@<>,]*)\s<(\S+@\S+\.\S+)>$/);
+        if (!cred)
+            throw new Error(`unsupported ${authorField.name} value format: ${authorField.value}`);
+
+        if (cred[0].includes(','))
+            throw new Error(`${authorField.name} author name with a comma: ${authorField.value}`);
+
+        return {name: cred[1].trim(), email: cred[2].trim()};
+    }
+
+    // returns the passed description without header (if any)
+    _extractHeader(prDescriptionRaw) {
+        const prDescription = this._trim(prDescriptionRaw);
+        const headerFieldName = 'Authored-by';
+        if (this._startsWithFieldName(prDescription) === headerFieldName) {
+            let tokenizer = new FieldsTokenizer(prDescription);
+            const authorField = tokenizer.nextField();
+            assert(authorField);
+            assert(authorField.name == headerFieldName);
+            this._customAuthor = this._parseAuthor(authorField);
+            if (!tokenizer.atEnd())
+                throw new Error(`unexpected header lines after a single Authored-by attribute`);
+            return tokenizer.remaining();
+        } else {
+            return prDescription;
+        }
+    }
+
+    // returns the passed description without trailer (if any)
+    _extractTrailer(prDescriptionWithoutHeaderRaw) {
+        const prDescriptionWithoutHeader = this._trim(prDescriptionWithoutHeaderRaw);
+        // index of the last occurrence of '\n\n'
+        let trailerCandidateIndex = prDescriptionWithoutHeader.search(/\n\n(?!.*\n\n)/s);
+        // Does the text have at most one paragraph?
+        trailerCandidateIndex = trailerCandidateIndex < 0 ? 0 : (trailerCandidateIndex + 2);
+        const trailerCandidate = prDescriptionWithoutHeader.substring(trailerCandidateIndex);
+        if (this._startsWithFieldName(trailerCandidate) !== null) {
+            this._parseTrailer(prDescriptionWithoutHeader.substring(trailerCandidateIndex));
+            return prDescriptionWithoutHeader.substring(0, trailerCandidateIndex);
+        }
+        Log.Logger.info("assuming no trailer");
+        return prDescriptionWithoutHeader;
+    }
+
+    // parses the extracted body into this._body
+    _parseBody(prDescriptionWithoutHeaderAndTrailerRaw) {
+        const prDescriptionWithoutHeaderAndTrailer = this._trim(prDescriptionWithoutHeaderAndTrailerRaw);
+        if (prDescriptionWithoutHeaderAndTrailer.length > 0) {
+            this._checkForTypos(prDescriptionWithoutHeaderAndTrailer);
+            this._body = prDescriptionWithoutHeaderAndTrailer;
+        }
+    }
+
+    // parses the extracted trailer into this._trailer
+    _parseTrailer(trailerRaw) {
+        const trailer = this._trim(trailerRaw);
+        let tokenizer = new FieldsTokenizer(trailer);
+
+        if (tokenizer.atEnd())
+            throw new Error(`an empty trailer`);
+
+        while (!tokenizer.atEnd()) {
+            const field = tokenizer.nextField();
+            if (field.name === "Co-authored-by") {
+                const coAuthor = JSON.stringify(this._parseAuthor(field));
+                this._log(`accepting trailer field: ${coAuthor}`);
+            } else {
+                this._checkForTypos(field.name);
+            }
+            this._checkForTypos(field.value);
+        }
+
+        if (trailer.length > 0)
+            this._trailer = trailer;
+    }
+
+    // checks the PR message (or its part) for some common/expected typos that may occur
+    // when filling in PR attributes
+    _checkForTypos(text) {
+        const possibleAuthoredByTypoRegex = /^\s*\S*authored[-_]?by/mi;
+        if (text.search(possibleAuthoredByTypoRegex) >= 0)
+            throw new Error(`suspicious '*Authored-by' attribute in the PR description`);
+    }
+
+    _log(msg) {
+        Log.Logger.info(msg);
+    }
+}
+
 // a single GitHub pull request
 class PullRequest {
 
@@ -469,13 +728,14 @@ class PullRequest {
 
         this._stagedPosition = null;
 
+        // this PR merge commit received from GitHub, if any
+        this._mergeCommit = null;
+
         // this PR staged commit received from GitHub, if any
         this._stagedCommit = null;
 
         // major methods we have called, in the call order (for debugging only)
         this._breadcrumbs = [];
-
-        this._messageValid = null;
 
         this._prState = null; // calculated PrState
 
@@ -497,6 +757,8 @@ class PullRequest {
 
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
         this._labelPushBan = false;
+
+        this._commitMessage = undefined;
     }
 
     // this PR will need to be reprocessed in this many milliseconds
@@ -682,21 +944,10 @@ class PullRequest {
             // check this separately because GitHub does not recreate PR merge commits
             // for conflicted PR branches (leaving stale PR merge commits).
             this._prMergeable() &&
-            await this._messageIsFresh()) {
+            this._stagedCommitMetadataIsFresh()) {
 
-            const prMergeSha = await GH.getReference(this._mergePath());
-            const prCommit = await GH.getCommit(prMergeSha);
-            // whether the PR branch has not changed
-            if (this._stagedCommit.tree.sha === prCommit.tree.sha) {
-                const stagedCommitDate = new Date(this._stagedCommit.committer.date);
-                const prCommitDate = new Date(prCommit.committer.date);
-                // check that a 'no-change' PR commit did not update the merge commit
-                // (which keeps the old tree object in this case)
-                if (stagedCommitDate >= prCommitDate) {
-                    this._log("the staged commit is fresh");
-                    return true;
-                }
-            }
+            this._log("the staged commit is fresh");
+            return true;
         }
         this._log("the staged commit is stale");
         return false;
@@ -755,7 +1006,7 @@ class PullRequest {
         if (this._draftPr())
             throw this._exObviousFailure("just a draft");
 
-        if (!this._messageValid)
+        if (!this._commitMessage)
             throw this._exLabeledFailure("invalid commit message", Config.failedDescriptionLabel());
 
         if (!this._prMergeable())
@@ -788,8 +1039,7 @@ class PullRequest {
 
         assert(!this._prState.merged());
 
-        this._messageValid = this._prMessageValid();
-        this._log("messageValid: " + this._messageValid);
+        this._log("messageValid: " + (this._commitMessage !== undefined));
 
         this._approval = await this._checkApproval();
         this._log("checkApproval: " + this._approval);
@@ -837,34 +1087,6 @@ class PullRequest {
 
     _prHeadSha() { return this._rawPr.head.sha; }
 
-    _prMessage() {
-        return (this._rawPr.title + ' (#' + this._rawPr.number + ')' + '\n\n' + this._prBody()).trim();
-    }
-
-    // returns the position of the first non-ASCII_printable character (or -1)
-    _invalidCharacterPosition(str) {
-        const prohibitedCharacters = /[^\u{20}-\u{7e}]/u;
-        const match = prohibitedCharacters.exec(str);
-        return match ? match.index : -1;
-    }
-
-    _prMessageValid() {
-        // _prBody() removed CRs in CRLF sequences
-        // other CRs are not treated specially (and are banned)
-        const lines = this._prMessage().split('\n');
-        for (let i = 0; i < lines.length; ++i) {
-            const line = lines[i];
-            const invalidPosition = this._invalidCharacterPosition(line);
-            if (invalidPosition !== -1) {
-                this._warn(`PR message has an invalid character at line ${i}, offset ${invalidPosition}`);
-                return false;
-            }
-            if (line.length > 72)
-                return false;
-        }
-        return true;
-    }
-
     _draftPr() {
         // TODO: Remove this backward compatibility code after 2021-12-24.
         if (this._rawPr.title.startsWith('WIP:'))
@@ -899,12 +1121,6 @@ class PullRequest {
     _prBaseBranchPath() { return "heads/" + this._prBaseBranch(); }
 
     _prOpen() { return this._rawPr.state === 'open'; }
-
-    _prBody() {
-        if (this._rawPr.body === undefined || this._rawPr.body === null)
-            return "";
-        return this._rawPr.body.replace(/\r+\n/g, '\n');
-    }
 
     _createdAt() { return this._rawPr.created_at; }
 
@@ -971,7 +1187,7 @@ class PullRequest {
     async _mergedSomeTimeAgo() {
         const dateSince = this._dateForDaysAgo(100);
         let mergedSha = null;
-        let commits = await GH.getCommits(this._prBaseBranch(), dateSince, this._prAuthor());
+        let commits = await GH.getCommits(this._prBaseBranch(), dateSince);
         for (let commit of commits) {
             const num = Util.ParsePrNumber(commit.commit.message);
             if (num && num === this._prNumber().toString()) {
@@ -1063,14 +1279,50 @@ class PullRequest {
         const waitForMergeable = !(this._stagedPosition && this._stagedPosition.merged());
         const pr = await GH.getPR(this._prNumber(), waitForMergeable);
         assert(pr.number === this._prNumber());
+
         this._rawPr = pr;
+
+        if (this._prMergeable()) {
+            const mergeSha = await GH.getReference(this._mergePath());
+            this._mergeCommit = await GH.getCommit(mergeSha);
+            try {
+                this._commitMessage = new CommitMessage(this._rawPr, this._mergeCommit.author);
+            } catch (e) {
+                this._logEx(e, "cannot parse commit message");
+            }
+        }
     }
 
-    // Whether the commit message configuration remained intact since staging.
-    async _messageIsFresh() {
-        const result = this._prMessage() === this._stagedCommit.message;
+    // Whether the staged commit metadata remained intact since staging.
+    _stagedCommitMetadataIsFresh() {
+        if (!this._commitMessage) {
+            this._log("staged commit message became invalid (and will be treated as stale)");
+            return false;
+        }
+        const result = this._commitMessage.whole() === this._stagedCommit.message;
         this._log("staged commit message freshness: " + result);
-        return result;
+        if (!result)
+            return false;
+
+        const oldAuthor = this._stagedCommit.author;
+        const newAuthor = this._commitMessage.author();
+        const authorIsFresh = oldAuthor.name === newAuthor.name && oldAuthor.email === newAuthor.email;
+        this._log("staged commit author freshness: " + authorIsFresh);
+        if (!authorIsFresh)
+            return false;
+
+        const treeShaIsFresh = this._stagedCommit.tree.sha === this._mergeCommit.tree.sha;
+        this._log("staged commit tree sha freshness: " + treeShaIsFresh);
+        if (!treeShaIsFresh)
+            return false;
+
+        const stagedCommitDate = new Date(this._stagedCommit.author.date);
+        const prCommitDate = new Date(this._commitMessage.author().date);
+        // check that a 'no-change' PR commit did not update the merge commit
+        // (which keeps the old tree object in this case)
+        const dateIsFresh = stagedCommitDate >= prCommitDate;
+        this._log("staged commit date freshness: " + dateIsFresh);
+        return dateIsFresh;
     }
 
     async _processStagingStatuses() {
@@ -1153,7 +1405,7 @@ class PullRequest {
 
         // yes, _checkStagingPreconditions() has checked the same message
         // already, but our _criteria_ might have changed since that check
-        if (!this._messageValid)
+        if (!this._commitMessage)
             throw this._exLabeledFailure("commit message is now considered invalid", Config.failedDescriptionLabel());
 
         // yes, _checkStagingPreconditions() has checked this already, but
@@ -1226,8 +1478,6 @@ class PullRequest {
 
     async _createStaged() {
         const baseSha = await GH.getReference(this._prBaseBranchPath());
-        const mergeSha = await GH.getReference("pull/" + this._prNumber() + "/merge");
-        const mergeCommit = await GH.getCommit(mergeSha);
         if (!Config.githubUserName())
             await this._acquireUserProperties();
         let now = new Date();
@@ -1236,7 +1486,7 @@ class PullRequest {
         if (this._dryRun("create staged commit"))
             throw this._exObviousFailure("dryRun");
 
-        this._stagedCommit = await GH.createCommit(mergeCommit.tree.sha, this._prMessage(), [baseSha], mergeCommit.author, committer);
+        this._stagedCommit = await GH.createCommit(this._mergeCommit.tree.sha, this._commitMessage.whole(), [baseSha], this._commitMessage.author(), committer);
 
         assert(!this._stagingBanned);
         await GH.updateReference(Config.stagingBranchPath(), this._stagedSha(), true);

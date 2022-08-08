@@ -63,19 +63,9 @@ request (in the ascending PR number order), but merging may still fail.
 Each eligible pull request is processed according to the following
 algorithm:
 
-1. [Create](https://developer.github.com/v3/git/commits/#create-a-commit
-   ) a new "staging commit" with the following components:
-   * `tree`: The git tree object of the PR
-     [merge commit](https://developer.github.com/v3/pulls/#get-a-single-pull-request)
-     created by GitHub.
-   * `parents`: The HEAD commit of the PR base branch.
-   * `message`: PR title (with an appended PR number) plus the PR
-     description.
-   * `author`: The PR author object (containing login and email) of the
-     PR merge commit.
-   Note that the individual commits (including their messages) on the PR
-   branch are ignored. The bot is effectively performing a squash merge
-   using a GitHub-editable commit message.
+1. [Create](https://developer.github.com/v3/git/commits/#create-a-commit) a
+   new "staging commit" with the components described in "Staging commit"
+   section further below.
 2. Reset the staging (a.k.a. "auto") branch to the PR staging commit.
    The previous state of the staging branch is ignored.
 3. Wait for GitHub to report exactly `config::staging_checks` CI test
@@ -160,10 +150,10 @@ request state:
   determine what happened.  The bot does not attempt to merge this PR again
   until a human decides that this problem is resolved and removes the label
   manually.
-* `M-failed-description`: The PR title and/or description is invalid
-  (see below for PR commit message rules). The bot removes this label
-  when it revisits the PR and notices that the commit message components
-  were fixed.
+* `M-failed-description`: The PR title and/or description is invalid (see
+  below for PR description and commit message rules). The bot removes this
+  label when it revisits the PR and notices that the future commit message
+  components were fixed.
 * `M-failed-other`: All other fatal PR-specific errors. It is probably
   necessary to consult CI logs to determine what happened. Anubis will process
   the labeled PR again, optimistically assuming that the problems are
@@ -184,11 +174,83 @@ All labels except `M-failed-staging-checks`, `M-failed-staging-other`,
 them useful when determining the current state of a PR.
 
 
-## Commit message
+## PR description
 
-The staging commit message and, hence, the target branch commit is
-formed by concatenating the PR title (with an appended PR number), an
-empty line and the PR description.
+Pull request description may have up to three kinds of paragraphs: a header,
+regular paragraphs, and a trailer:
+
+```
+Authored-by: Actual Author <user@host>
+
+Regular PR description paragraph(s), if any, go here...
+
+Co-authored-by: Co-Author One <user1@host1>
+Co-authored-by: Co-Author Two <user2@host2>
+```
+
+All parts are optional. Header and trailer parts are separated from the
+regular PR description paragraph(s) (or each other) by an empty line.
+Additional PR description formatting requirements are documented in the
+"Commit message" section further below.
+
+A header and trailer paragraphs consist of special `name: value` metadata
+fields documented below. Header fields are recognized only by the bot. Some
+trailer fields are recognized by the bot, GitHub, and/or git. When assembling
+the commit message, Anubis strips the header but keeps the trailer. Pull
+requests with descriptions containing invalid metadata are labeled
+`M-failed-description` and are not merged.
+
+* `Authored-by: Author Name <user@host>`: A custom commit author. Add this
+  field to the PR description header when Anubis should not use the pull
+  request author as the commit author. Mentioning this (or similarly spelled)
+  fields elsewhere in the PR description should trigger an
+  `M-failed-description` violation. At most one `Authored-by` field is
+  permitted. Anubis removes the header paragraph when assembling the commit
+  message because neither GitHub nor git recognize this field and because the
+  information will be preserved as the commit author field.
+
+* `Co-authored-by: Another Author Name <other@host>`: A commit co-author. This
+  field documents additional commit authors. It is recognized by
+  [GitHub](https://docs.github.com/en/pull-requests/committing-changes-to-your-project/creating-and-editing-commits/creating-a-commit-with-multiple-authors)
+  and, to an extent, [git](https://git-scm.com/docs/git-interpret-trailers).
+  Multiple unique fields are permitted.
+
+* Other trailer fields: The PR description trailer may contain fields that are
+  not recognized by Anubis. To avoid typos, the bot prohibits trailer fields
+  matching `/\S*Authored-by/i` except for the `Co-authored-by` field
+  documented above.
+
+Field names are case-insensitive, but the variants shown above are recommended
+for consistency sake. Anubis preserves trailer fields original spelling and
+formatting but strips any trailing whitespace.
+
+
+## Staging commit
+
+Anubis assembles the staging git commit (and, hence, in case of a successful
+PR merge, the target branch commit) from the following parts:
+
+* `tree`: The git tree object of the PR [merge
+  commit](https://developer.github.com/v3/pulls/#get-a-single-pull-request)
+  created by GitHub.
+* `parents`: The HEAD commit of the PR base branch.
+* `message`: See the "Commit message" subsection for details.
+* `author`: The name and email from the author object of the PR merge commit
+  unless overwritten by the `Authored-by` header field value from the PR
+  description header.
+* `author.date`: The date from the author object of the PR merge commit.
+
+Note that the individual commits on the PR branch (including their messages
+and authors) are ignored. The bot is effectively performing a squash merge
+using PR description for commit message and optional metadata.
+
+
+### Commit message
+
+The staging commit message is formed by concatenating the PR title (with a PR
+number appended) and the PR description (without the header, if any) delimited
+by an empty line. Empty and header-only PR descriptions are allowed and result
+in a title-only commit message.
 
 Neither the title nor the description are currently processed to convert
 GitHub markdown to plain text. However, both texts must conform to the
