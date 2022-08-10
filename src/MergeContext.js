@@ -510,7 +510,7 @@ class CommitMessage
     constructor(rawPr, defaultAuthor) {
 
         // the (required) commit message title
-        this._title = rawPr.title + ' (#' + rawPr.number + ')';
+        this._title = this._checkAndTrimRaw(rawPr.title) + ' (#' + rawPr.number + ')';
 
         // PR description has three optional parts: [header]+[body]+[trailer]
         // The parts are separated by empty lines.
@@ -535,8 +535,6 @@ class CommitMessage
         // uses {name, email} format
         // overwrites this._defaultAuthor's name and email
         this._customAuthor = null;
-
-        this._checkRaw(this._title);
 
         if (rawPr.body !== undefined && rawPr.body !== null)
             this._parse(rawPr.body);
@@ -592,11 +590,13 @@ class CommitMessage
         return (label && label.includes('-')) ? label : null;
     }
 
-    // basic checks for an unparsed message
-    _checkRaw(message) {
+    // performs basic checks for an unparsed message
+    // trims the end of each message line and returns the result
+    _checkAndTrimRaw(message) {
         // CRs in CRLF sequences already removed
         // other CRs are not treated specially (and are banned)
         const lines = message.split('\n');
+        let trimmedLines = [];
         for (let i = 0; i < lines.length; ++i) {
             const line = lines[i];
             const invalidPosition = this._invalidCharacterPosition(line);
@@ -606,17 +606,19 @@ class CommitMessage
 
             // allow excessively long whitespace-only lines
             // that some copy-pasted PR descriptions may include
-            const trimmedLine = this._trim(line);
+            trimmedLines.push(line.trimEnd());
 
             // TODO: Allow longer header (and possibly even trailer) lines.
-            if (trimmedLine.length > 72)
-                throw new Error(`too long line '${trimmedLine}'`);
+            if (trimmedLines[i].length > 72)
+                throw new Error(`too long line '${trimmedLines[i]}'`);
         }
+
+        return trimmedLines.join('\n');
     }
 
     _parse(prDescriptionRaw) {
-        const prDescription = prDescriptionRaw.replace(/\r+\n/g, '\n');
-        this._checkRaw(prDescription);
+        const prDescriptionUntrimmed = prDescriptionRaw.replace(/\r+\n/g, '\n');
+        const prDescription = this._checkAndTrimRaw(prDescriptionUntrimmed);
         const prDescriptionWithoutHeader = this._extractHeader(prDescription);
         const prDescriptionWithoutHeaderAndTrailer = this._extractTrailer(prDescriptionWithoutHeader);
         this._parseBody(prDescriptionWithoutHeaderAndTrailer);
@@ -642,7 +644,7 @@ class CommitMessage
             let tokenizer = new FieldsTokenizer(prDescription);
             const authorField = tokenizer.nextField();
             assert(authorField);
-            assert(authorField.name == headerFieldName);
+            assert(authorField.name === headerFieldName);
             this._customAuthor = this._parseAuthor(authorField);
             if (!tokenizer.atEnd())
                 throw new Error(`unexpected header lines after a single Authored-by attribute`);
