@@ -509,8 +509,7 @@ class CommitMessage
 {
     constructor(rawPr, defaultAuthor) {
 
-        // the (required) commit message title
-        this._title = this._checkAndTrimRaw(rawPr.title) + ' (#' + rawPr.number + ')';
+        this._parseTitle(rawPr.title, rawPr.number);
 
         // PR description has three optional parts: [header]+[body]+[trailer]
         // The parts are separated by empty lines.
@@ -540,6 +539,14 @@ class CommitMessage
             this._parse(rawPr.body);
     }
 
+    _parseTitle(rawTitle, prNumber) {
+        const title = rawTitle.trim();
+        this._parseRawCharacters(title);
+        // the (required) commit message title
+        this._title = title + ' (#' + prNumber + ')';
+        this._checkLineLength(this._title);
+    }
+
     // complete message for the future commit
     whole() {
         assert(this._title.length); // the only required part
@@ -559,11 +566,36 @@ class CommitMessage
         return {name: this._customAuthor.name, email: this._customAuthor.email, date: this._defaultAuthor.date};
     }
 
-    // returns the position of the first non-ASCII_printable character (or -1)
-    _invalidCharacterPosition(str) {
+    // checks that the line represents only ASCII_printable characters
+    _parseRawCharacters(line) {
         const prohibitedCharacters = /[^\u{20}-\u{7e}]/u;
-        const match = prohibitedCharacters.exec(str);
-        return match ? match.index : -1;
+        const match = prohibitedCharacters.exec(line);
+        if (match)
+            throw new Error(`bad character at ${match.index} in '${line}'`);
+    }
+
+    _checkLineLength(line) {
+        if (line.length > 72)
+            throw new Error(`too long line '${line}'`);
+    }
+
+    // performs basic checks for a multi-line message
+    // trims the end of each message line and returns the result
+    _parseRawLines(rawMessage) {
+        // CRs in CRLF sequences already removed
+        // other CRs are not treated specially (and are banned)
+        const rawLines = rawMessage.split('\n');
+        let trimmedLines = [];
+        for (let rawLine of rawLines) {
+            this._parseRawCharacters(rawLine);
+            // allow excessively long whitespace-only lines
+            // that some copy-pasted PR descriptions may include
+            const line = rawLine.trimEnd();
+            // TODO: Allow longer header (and possibly even trailer) lines.
+            this._checkLineLength(line);
+            trimmedLines.push(line);
+        }
+        return trimmedLines.join('\n');
     }
 
     // removes leading empty lines and trims the end
@@ -590,35 +622,9 @@ class CommitMessage
         return (label && label.includes('-')) ? label : null;
     }
 
-    // performs basic checks for an unparsed message
-    // trims the end of each message line and returns the result
-    _checkAndTrimRaw(message) {
-        // CRs in CRLF sequences already removed
-        // other CRs are not treated specially (and are banned)
-        const lines = message.split('\n');
-        let trimmedLines = [];
-        for (let i = 0; i < lines.length; ++i) {
-            const line = lines[i];
-            const invalidPosition = this._invalidCharacterPosition(line);
-
-            if (invalidPosition !== -1)
-                throw new Error(`bad character at line ${i}, offset ${invalidPosition}`);
-
-            // allow excessively long whitespace-only lines
-            // that some copy-pasted PR descriptions may include
-            trimmedLines.push(line.trimEnd());
-
-            // TODO: Allow longer header (and possibly even trailer) lines.
-            if (trimmedLines[i].length > 72)
-                throw new Error(`too long line '${trimmedLines[i]}'`);
-        }
-
-        return trimmedLines.join('\n');
-    }
-
     _parse(prDescriptionRaw) {
         const prDescriptionUntrimmed = prDescriptionRaw.replace(/\r+\n/g, '\n');
-        const prDescription = this._checkAndTrimRaw(prDescriptionUntrimmed);
+        const prDescription = this._parseRawLines(prDescriptionUntrimmed);
         const prDescriptionWithoutHeader = this._extractHeader(prDescription);
         const prDescriptionWithoutHeaderAndTrailer = this._extractTrailer(prDescriptionWithoutHeader);
         this._parseBody(prDescriptionWithoutHeaderAndTrailer);
