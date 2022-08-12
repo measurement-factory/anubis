@@ -541,7 +541,7 @@ class CommitMessage
 
     _parseTitle(rawTitle, prNumber) {
         const title = rawTitle.trim();
-        this._parseRawCharacters(title);
+        this._checkRawCharacters(title);
         // the (required) commit message title
         this._title = title + ' (#' + prNumber + ')';
         this._checkLineLength(this._title);
@@ -567,7 +567,7 @@ class CommitMessage
     }
 
     // checks that the line represents only ASCII_printable characters
-    _parseRawCharacters(line) {
+    _checkRawCharacters(line) {
         const prohibitedCharacters = /[^\u{20}-\u{7e}]/u;
         const match = prohibitedCharacters.exec(line);
         if (match)
@@ -587,7 +587,7 @@ class CommitMessage
         const rawLines = rawMessage.split('\n');
         let trimmedLines = [];
         for (let rawLine of rawLines) {
-            this._parseRawCharacters(rawLine);
+            this._checkRawCharacters(rawLine);
             // allow excessively long whitespace-only lines
             // that some copy-pasted PR descriptions may include
             const line = rawLine.trimEnd();
