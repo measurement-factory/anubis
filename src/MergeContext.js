@@ -582,20 +582,21 @@ class CommitMessage
     // performs basic checks for a multi-line message
     // trims the end of each message line and returns the result
     _parseRawLines(rawMessage) {
-        // CRs in CRLF sequences already removed
+        // remove CRs in CRLF sequences
         // other CRs are not treated specially (and are banned)
-        const rawLines = rawMessage.split('\n');
-        let trimmedLines = [];
-        for (let rawLine of rawLines) {
-            this._checkRawCharacters(rawLine);
+        const untrimmedMessage = rawMessage.replace(/\r+\n/g, '\n');
+        const untrimmedLines = untrimmedMessage.split('\n');
+        let lines = [];
+        for (let untrimmedLine of untrimmedLines) {
+            this._checkRawCharacters(untrimmedLine);
             // allow excessively long whitespace-only lines
             // that some copy-pasted PR descriptions may include
-            const line = rawLine.trimEnd();
+            const line = untrimmedLine.trimEnd();
             // TODO: Allow longer header (and possibly even trailer) lines.
             this._checkLineLength(line);
-            trimmedLines.push(line);
+            lines.push(line);
         }
-        return trimmedLines.join('\n');
+        return lines.join('\n');
     }
 
     // removes leading empty lines and trims the end
@@ -623,8 +624,7 @@ class CommitMessage
     }
 
     _parse(prDescriptionRaw) {
-        const prDescriptionUntrimmed = prDescriptionRaw.replace(/\r+\n/g, '\n');
-        const prDescription = this._parseRawLines(prDescriptionUntrimmed);
+        const prDescription = this._parseRawLines(prDescriptionRaw);
         const prDescriptionWithoutHeader = this._extractHeader(prDescription);
         const prDescriptionWithoutHeaderAndTrailer = this._extractTrailer(prDescriptionWithoutHeader);
         this._parseBody(prDescriptionWithoutHeaderAndTrailer);
