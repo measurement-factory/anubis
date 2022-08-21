@@ -123,10 +123,10 @@ async function getLabels(prNum) {
     return await rateLimitedPromise(promise);
 }
 
-function getIssueEvents(prNum) {
+async function getIssueEvents(prNum) {
     let params = commonParams();
     params.issue_number = prNum;
-    return new Promise( (resolve, reject) => {
+    const promise = new Promise( (resolve, reject) => {
         GitHub.authenticate(GitHubAuthentication);
         GitHub.issues.getEvents(params, async (err, res) => {
             if (err) {
@@ -136,9 +136,10 @@ function getIssueEvents(prNum) {
             res = await pager(res);
             const result = res.data.length;
             logApiResult(getIssueEvents.name, params, result);
-            resolve(res.data);
+            resolve(res);
         });
     });
+    return await rateLimitedPromise(promise);
 }
 
 // Gets PR metadata from GitHub
