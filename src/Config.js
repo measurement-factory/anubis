@@ -32,6 +32,7 @@ class ConfigOptions {
         this._stagingChecks = conf.staging_checks;
         this._loggerParams = conf.logger_params;
         this._approvalUrl = conf.approval_url;
+        this._coreDevelopers = conf.core_developers;
 
         // unused
         this._githubUserNoreplyEmail = null;
@@ -43,6 +44,21 @@ class ConfigOptions {
         for (let v of allOptions) {
             assert(v !== undefined );
         }
+
+        this._coreDeveloperIds = new Map();
+        const developerPairs = this._coreDevelopers.split(',').map(i => i.trim());
+        for (let pair of developerPairs) {
+            const p = pair.split('=').map(i => i.trim()).filter(i => i);
+            assert(p.length === 2);
+            assert(!this._coreDeveloperIds.has(p[0]));
+            const id = Number(p[1]);
+            assert(Number.isInteger(id));
+            assert(id > 0);
+            this._coreDeveloperIds.set(p[0], id);
+        }
+        // check that it is actually possible to get all the configured votes
+        assert(this._sufficientApprovals <= this._coreDeveloperIds.size);
+        assert(this._necessaryApprovals <= this._coreDeveloperIds.size);
     }
 
     githubUserLogin() { return this._githubUserLogin; }
@@ -82,6 +98,8 @@ class ConfigOptions {
     votingDelayMin() { return this._votingDelayMin; }
     stagingChecks() { return this._stagingChecks; }
     loggerParams() { return this._loggerParams; }
+    // returns a Map of (login,id) pairs
+    coreDeveloperIds() { return this._coreDeveloperIds; }
 
     // an unexpected error occurred outside the "staged" phase
     failedOtherLabel() { return "M-failed-other"; }
