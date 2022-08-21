@@ -980,22 +980,14 @@ class PullRequest {
         // just in case: events should be already in chronological order already
         stagingEvents = stagingEvents.sort((ev1, ev2) => Date.parse(ev1.created_at) - Date.parse(ev2.created_at));
         const lastStagingEvent = stagingEvents[stagingEvents.length - 1];
+        const lastStagedCommit = await GH.getCommit(lastStagingEvent.commit_id);
         const mergeCommit = await this._getMergeCommit();
-        const mergeCommitCreatedAt = Date.parse(mergeCommit.author.date); // for merge commits author.date and committer.date should be the same
-        const lastStagingEventCreatedAt = Date.parse(lastStagingEvent.created_at);
-        assert(mergeCommitCreatedAt);
-        assert(lastStagingEventCreatedAt);
-        // the staging event for merge commit X is always created after X so we do not
-        // need to deal with the lastStagingEventCreatedAt == mergeCommitCreatedAt case
-        assert(lastStagingEventCreatedAt != mergeCommitCreatedAt);
-        if (lastStagingEventCreatedAt < mergeCommitCreatedAt)
-            return; // merge commit created after the last staging event
-
-        // Merge commit created before the last staging event.
-        // Thus, we can get statuses of that event commit SHA.
-        this._abandonedStagedStatuses = await this._getStagingStatuses(lastStagingEvent.commit_id);
-        // TODO: If something made this (previously failed) commit succeed, then
-        // we should use it further, if possible.
+        if (lastStagedCommit.tree.sha !== mergeCommit.tree.sha) {
+            // do not calculate abandoned statuses because there is a newer merge commit
+            // (i.e., the staged commit created right now will be different)
+            return;
+        }
+        this._abandonedStagedStatuses = await this._getStagingStatuses(lastStagedEvent.commit_id);
     }
 
     async _loadPrState() {
