@@ -273,11 +273,10 @@ async function compareCommits(baseRef, headRef) {
     return (await rateLimitedPromise(promise)).status;
 }
 
-async function getCommits(branch, since, author) {
+async function getCommits(branch, since) {
     let params = commonParams();
     params.sha = branch; // sha or branch to start listing commits from
     params.since = since;
-    params.author = author;
     const promise = new Promise( (resolve, reject) => {
         GitHub.authenticate(GitHubAuthentication);
         GitHub.repos.getCommits(params, async (err, res) => {
