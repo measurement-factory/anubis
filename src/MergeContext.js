@@ -755,10 +755,9 @@ class PullRequest {
         // GitHub statuses of the staged commit
         this._stagedStatuses = null;
 
-        // GitHub statuses of an abandoned staged commit, if that commit is
-        // equivalent to a staged commit that would have been created right now.
-        // _stagedStatuses and _abandonedStagedStatuses are mutually exclusive
-        this._abandonedStagedStatuses = null;
+        // Whether the last staged (and abandoned) commit has failed and nothing
+        // changed since then that would allow to create a fresh staged commit.
+        this._restagingFailed = false;
 
         // GitHub statuses of the PR branch head commit
         this._prStatuses = null;
@@ -1014,10 +1013,8 @@ class PullRequest {
         // already checked in _checkForHumanLabels()
         assert(!this._labels.has(Config.failedStagingOtherLabel()));
 
-        // Do not vainly recreate staged commit which will definitely fail again,
-        // since the PR+base code is yet unchanged and the existing errors still persist
-        if (this._abandonedStagedStatuses && this._abandonedStagedStatuses.failed())
-            throw this._exLabeledFailure("staged commit tests failed", Config.failedStagingChecksLabel());
+        if (this._restagingFailed)
+            throw this._exLabeledFailure("restaging candidate failed its tests", Config.failedStagingChecksLabel());
 
         if (this._draftPr())
             throw this._exObviousFailure("just a draft");
@@ -1224,31 +1221,50 @@ class PullRequest {
         return await GH.getCommit(mergeSha);
     }
 
-    // obtains abandoned staging checks
-    async _getAbandonedStagingStatuses() {
-        assert(!this._stagedSha());
-
+    async _findAbandonedStagedCommit() {
         const allEvents = await GH.getIssueEvents(this._prNumber());
         // staging events are PR events where the bot user created a commit referencing this PR
         let stagingEvents = allEvents.filter(ev => ev.event === "referenced" && ev.actor.login === Config.githubUserLogin());
         if (!stagingEvents.length)
-            return;
-
+            return null;
         // just in case: events should be already in chronological order already
+        // XXX: stable sort should be guaranteed only in node >= 11
         stagingEvents = stagingEvents.sort((ev1, ev2) => Date.parse(ev1.created_at) - Date.parse(ev2.created_at));
         const lastStagingEvent = stagingEvents[stagingEvents.length - 1];
-        const lastStagedCommit = await GH.getCommit(lastStagingEvent.commit_id);
-        if (lastStagedCommit.tree.sha !== this._mergeCommit.tree.sha) {
-            // do not calculate abandoned statuses because there is a newer merge commit
-            // (i.e., the staged commit created right now will be different)
-            return;
-        }
-        this._abandonedStagedStatuses = await this._getStagingStatuses(lastStagedEvent.commit_id);
+        return await GH.getCommit(lastStagingEvent.commit_id);
+    }
+
+    _isRestagingCandidate(abandonedStagedCommit) {
+        assert(this._mergeCommit);
+        return abandonedStagedCommit.tree.sha === this._mergeCommit.tree.sha;
+    }
+
+    // whether we should prevent staging if it is likely to fail again
+    async _checkStagingInVain() {
+        assert(!this._stagedSha());
+
+        // TODO: How to force Anubis to stage after fixing buggy _tests_ (assuming the
+        // fixed tests cannot be rerun to update the last staged PR commit statuses)?
+
+        const abandonedStagedCommit = await this._findAbandonedStagedCommit();
+
+        if (!abandonedStagedCommit)
+            return false; // we have not staged this PR (in recent memory)
+
+        if (!this._isRestagingCandidate(abandonedStagedCommit))
+            return false; // something has changed
+
+        // note that any unfinished tests are acceptable
+        const abandonedStagedCommitStatuses = await this._getStagingStatuses(abandonedStagedCommit.sha);
+
+        // TODO: Support restaging instead of creating a new staged commit (when possible).
+
+        return abandonedStagedCommitStatuses.failed();
     }
 
     async _loadPrState() {
         if (!this._stagedSha()) {
-            await this._getAbandonedStagingStatuses();
+            this._restagingFailed = await this._checkStagingInVain();
             if (await this._mergedSomeTimeAgo()) {
                 this._enterMerged();
                 return;
@@ -1265,6 +1281,7 @@ class PullRequest {
             return;
         }
 
+        debugger;
         if (!(await this._stagedCommitIsFresh())) {
             this._signalAbandonmentOfStagingChecks = true;
             await this._enterBrewing();
@@ -1276,7 +1293,7 @@ class PullRequest {
         const stagedStatuses = await this._getStagingStatuses(this._stagedSha());
         // if staging failed, enter the "brewing (with failed staging tests)" state
         if (stagedStatuses.failed()) {
-            this._abandonedStagedStatuses = stagedStatuses;
+            this._restagingFailed = true;
             await this._enterBrewing();
             return;
         }
@@ -1301,7 +1318,7 @@ class PullRequest {
             this._stagedStatuses = stagedStatuses;
         else
             this._stagedStatuses = await this._getStagingStatuses(this._stagedSha());
-        this._abandonedStagedStatuses = null;
+        this._restagingFailed = false;
         this._prStatuses = await this._getPrStatuses();
     }
 
@@ -1613,9 +1630,8 @@ class PullRequest {
     // still-open PRs) or an abandoned staged commit (if it is equivalent
     // to a staged commit that would have been created right now)
     stagingFailed() {
-        assert(!(this._abandonedStagedStatuses && this._stagedStatuses));
-        if (this._abandonedStagedStatuses)
-            return this._abandonedStagedStatuses.failed();
+        if (this._restagingFailed)
+            return true;
         else if (this._stagedStatuses)
             return this._stagedStatuses.failed();
         return false;
