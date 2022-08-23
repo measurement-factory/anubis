@@ -1307,7 +1307,6 @@ class PullRequest {
 
         try {
             this._commitMessage = new CommitMessage(this._rawPr, defaultAuthor, stageable);
-
         } catch (e) {
             this._logEx(e, "cannot parse commit message");
         }
