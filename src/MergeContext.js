@@ -507,9 +507,12 @@ class FieldsTokenizer
 // computes future commit message from raw PR
 class CommitMessage
 {
-    constructor(rawPr, defaultAuthor) {
+    constructor(rawPr, defaultAuthor, stageable) {
 
         this._parseTitle(rawPr.title, rawPr.number);
+
+        assert(stageable !== undefined && stageable !== null);
+        this.stageable = stageable; // whether this message can be used for staged commit
 
         // PR description has three optional parts: [header]+[body]+[trailer]
         // The parts are separated by empty lines.
@@ -1290,14 +1293,22 @@ class PullRequest {
 
         this._rawPr = pr;
 
+        let defaultAuthor = null;
+        let stageable = false;
         if (this._prMergeable()) {
             const mergeSha = await GH.getReference(this._mergePath());
             this._mergeCommit = await GH.getCommit(mergeSha);
-            try {
-                this._commitMessage = new CommitMessage(this._rawPr, this._mergeCommit.author);
-            } catch (e) {
-                this._logEx(e, "cannot parse commit message");
-            }
+            defaultAuthor = this._mergeCommit.author;
+            stageable = true;
+        } else {
+            const headCommit = await GH.getCommit(this._prHeadSha());
+            defaultAuthor = headCommit.author;
+        }
+
+        try {
+            this._commitMessage = new CommitMessage(this._rawPr, defaultAuthor, stageable);
+        } catch (e) {
+            this._logEx(e, "cannot parse commit message");
         }
     }
 
@@ -1493,6 +1504,8 @@ class PullRequest {
 
         if (this._dryRun("create staged commit"))
             throw this._exObviousFailure("dryRun");
+
+        assert(this._commitMessage.stageable);
 
         this._stagedCommit = await GH.createCommit(this._mergeCommit.tree.sha, this._commitMessage.whole(), [baseSha], this._commitMessage.author(), committer);
 
