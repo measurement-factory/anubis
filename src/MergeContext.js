@@ -494,6 +494,12 @@ class FieldsTokenizer
                         el.value.toUpperCase() === value.toUpperCase())) {
                 throw new Error(`duplicates are not allowed: ${line}`);
             }
+
+            const maxLength = 512;
+            const length = (name + ': ' + value).length;
+            if (length > maxLength)
+                throw new Error(`the field is too long: ${length}>${maxLength}`);
+
             this._remainingFields.push({name: name, value: value, raw: line});
         }
     }
@@ -595,11 +601,15 @@ class CommitMessage
             // allow excessively long whitespace-only lines
             // that some copy-pasted PR descriptions may include
             const line = untrimmedLine.trimEnd();
-            // TODO: Allow longer header (and possibly even trailer) lines.
-            this._checkLineLength(line);
             lines.push(line);
         }
         return lines.join('\n');
+    }
+
+    _checkMessageLength(message) {
+        const lines = message.split('\n');
+        for (let line of lines)
+            this._checkLineLength(line);
     }
 
     // removes leading empty lines and trims the end
@@ -683,6 +693,7 @@ class CommitMessage
     _parseBody(prDescriptionWithoutHeaderAndTrailerRaw) {
         const prDescriptionWithoutHeaderAndTrailer = this._trim(prDescriptionWithoutHeaderAndTrailerRaw);
         if (prDescriptionWithoutHeaderAndTrailer.length > 0) {
+            this._checkMessageLength(prDescriptionWithoutHeaderAndTrailer);
             this._checkForTypos(prDescriptionWithoutHeaderAndTrailer);
             this._body = prDescriptionWithoutHeaderAndTrailer;
         }
