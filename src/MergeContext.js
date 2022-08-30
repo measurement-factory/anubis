@@ -454,6 +454,11 @@ class BranchPosition
     }
 }
 
+function checkLineLength(line, limit) {
+    if (line.length > limit)
+        throw new Error(`the line is too long ${line.length}>${limit}: ${line}'`);
+}
+
 // Forward iterator for fields in the 'name:value' format.
 class FieldsTokenizer
 {
@@ -495,10 +500,7 @@ class FieldsTokenizer
                 throw new Error(`duplicates are not allowed: ${line}`);
             }
 
-            const maxLength = 512;
-            const length = (name + ': ' + value).length;
-            if (length > maxLength)
-                throw new Error(`the field is too long: ${length}>${maxLength}`);
+            checkLineLength(name + ': ' + value, 512);
 
             this._remainingFields.push({name: name, value: value, raw: line});
         }
@@ -553,7 +555,7 @@ class CommitMessage
         this._checkRawCharacters(title);
         // the (required) commit message title
         this._title = title + ' (#' + prNumber + ')';
-        this._checkLineLength(this._title);
+        checkLineLength(this._title, 72);
     }
 
     // complete message for the future commit
@@ -583,11 +585,6 @@ class CommitMessage
             throw new Error(`bad character at ${match.index} in '${line}'`);
     }
 
-    _checkLineLength(line) {
-        if (line.length > 72)
-            throw new Error(`too long line '${line}'`);
-    }
-
     // performs basic checks for a multi-line message
     // trims the end of each message line and returns the result
     _parseRawLines(rawMessage) {
@@ -609,7 +606,7 @@ class CommitMessage
     _checkMessageLength(message) {
         const lines = message.split('\n');
         for (let line of lines)
-            this._checkLineLength(line);
+            checkLineLength(line, 72);
     }
 
     // removes leading empty lines and trims the end
