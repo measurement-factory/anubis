@@ -454,7 +454,7 @@ class BranchPosition
     }
 }
 
-function checkLineLength(line, limit) {
+function checkLineLength(line, limit = 72) {
     if (line.length > limit)
         throw new Error(`the line is too long ${line.length}>${limit}: ${line}'`);
 }
@@ -555,7 +555,7 @@ class CommitMessage
         this._checkRawCharacters(title);
         // the (required) commit message title
         this._title = title + ' (#' + prNumber + ')';
-        checkLineLength(this._title, 72);
+        checkLineLength(this._title);
     }
 
     // complete message for the future commit
@@ -606,7 +606,7 @@ class CommitMessage
     _checkMessageLength(message) {
         const lines = message.split('\n');
         for (let line of lines)
-            checkLineLength(line, 72);
+            checkLineLength(line);
     }
 
     // removes leading empty lines and trims the end
