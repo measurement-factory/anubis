@@ -174,6 +174,14 @@ All labels except `M-failed-staging-checks`, `M-failed-staging-other`,
 them useful when determining the current state of a PR.
 
 
+## PR title
+
+PR titles are used as staged commit message title prefixes. Commit
+message titles are limited to 72 characters. The automatically added
+`#(NNNN)` title suffix reduces the maximum PR title length to ~64
+characters. PR titles violating line length limits are labeled
+`M-failed-description` and are not merged.
+
 ## PR description
 
 Pull request description may have up to three kinds of paragraphs: a header,
@@ -190,8 +198,12 @@ Co-authored-by: Co-Author Two <user2@host2>
 
 All parts are optional. Header and trailer parts are separated from the
 regular PR description paragraph(s) (or each other) by an empty line.
-Additional PR description formatting requirements are documented in the
-"Commit message" section further below.
+
+The length of each header and trailer line is limited to 512 characters,
+which should be enough to accommodate most long emails/URLs. The length
+of regular paragraphs is limited to 72 characters. PR descriptions
+violating line length limits are labeled `M-failed-description` and are
+not merged.
 
 A header and trailer paragraphs consist of special `name: value` metadata
 fields documented below. Header fields are recognized only by the bot. Some
@@ -252,11 +264,8 @@ number appended) and the PR description (without the header, if any) delimited
 by an empty line. Empty and header-only PR descriptions are allowed and result
 in a title-only commit message.
 
-Neither the title nor the description are currently processed to convert
-GitHub markdown to plain text. However, both texts must conform to the
-72 characters/line limit. The automatically added ` #(NNN)` title suffix
-further reduces the maximum PR title length to ~65 characters. PRs violating
-these limits are labeled `M-failed-description` and are not merged.
+Neither the title nor the description are currently processed to convert GitHub
+markdown to plain text.
 
 
 ## Voting and PR approvals

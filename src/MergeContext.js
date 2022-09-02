@@ -454,6 +454,11 @@ class BranchPosition
     }
 }
 
+function checkLineLength(line, limit = 72) {
+    if (line.length > limit)
+        throw new Error(`the line is too long ${line.length}>${limit}: ${line}'`);
+}
+
 // Forward iterator for fields in the 'name:value' format.
 class FieldsTokenizer
 {
@@ -494,6 +499,9 @@ class FieldsTokenizer
                         el.value.toUpperCase() === value.toUpperCase())) {
                 throw new Error(`duplicates are not allowed: ${line}`);
             }
+
+            checkLineLength(name + ': ' + value, 512);
+
             this._remainingFields.push({name: name, value: value, raw: line});
         }
     }
@@ -547,7 +555,7 @@ class CommitMessage
         this._checkRawCharacters(title);
         // the (required) commit message title
         this._title = title + ' (#' + prNumber + ')';
-        this._checkLineLength(this._title);
+        checkLineLength(this._title);
     }
 
     // complete message for the future commit
@@ -577,11 +585,6 @@ class CommitMessage
             throw new Error(`bad character at ${match.index} in '${line}'`);
     }
 
-    _checkLineLength(line) {
-        if (line.length > 72)
-            throw new Error(`too long line '${line}'`);
-    }
-
     // performs basic checks for a multi-line message
     // trims the end of each message line and returns the result
     _parseRawLines(rawMessage) {
@@ -595,11 +598,15 @@ class CommitMessage
             // allow excessively long whitespace-only lines
             // that some copy-pasted PR descriptions may include
             const line = untrimmedLine.trimEnd();
-            // TODO: Allow longer header (and possibly even trailer) lines.
-            this._checkLineLength(line);
             lines.push(line);
         }
         return lines.join('\n');
+    }
+
+    _checkMessageLength(message) {
+        const lines = message.split('\n');
+        for (let line of lines)
+            checkLineLength(line);
     }
 
     // removes leading empty lines and trims the end
@@ -683,6 +690,7 @@ class CommitMessage
     _parseBody(prDescriptionWithoutHeaderAndTrailerRaw) {
         const prDescriptionWithoutHeaderAndTrailer = this._trim(prDescriptionWithoutHeaderAndTrailerRaw);
         if (prDescriptionWithoutHeaderAndTrailer.length > 0) {
+            this._checkMessageLength(prDescriptionWithoutHeaderAndTrailer);
             this._checkForTypos(prDescriptionWithoutHeaderAndTrailer);
             this._body = prDescriptionWithoutHeaderAndTrailer;
         }
