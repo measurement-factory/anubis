@@ -127,8 +127,8 @@ async function getLabels(prNum) {
 // If requested and needed, retries until GitHub calculates PR mergeable flag.
 // Those retries, if any, are limited to a few minutes.
 async function getPR(prNum, awaitMergeable) {
-    const max = 64 * 1000 + 1; // ~2 min. overall
-    for (let d = 1000; d < max; d *= 2) {
+    const max = 64 * 1000; // limits total wait to ~2 minutes
+    for (let d = 1000; d <= max; d *= 2) {
         const pr = await getRawPR(prNum);
         // pr.mergeable is useless (and not calculated?) for a closed PR
         if (pr.mergeable !== null || pr.state === 'closed' || !awaitMergeable)
@@ -323,10 +323,10 @@ async function updateReferenceRaw(ref, sha, force) {
 }
 
 async function updateReference(ref, sha, force) {
-    const max = 16 * 1000 + 1; // ~30 sec. overall
-    for (let d = 1000; d < max; d *= 2) {
+    const max = 16 * 1000; // limits total wait to ~30 seconds
+    for (let d = 1000; d <= max; d *= 2) {
         try {
-            await updateReferenceRaw(ref, sha, force);
+            return await updateReferenceRaw(ref, sha, force);
         } catch (e) {
             if (e.name === 'ErrorContext' && e.notFound()) {
                 Log.Logger.info("GitHub still unable to find " + sha + ". Will retry in " + (d/1000) + " seconds");
