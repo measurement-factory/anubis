@@ -299,7 +299,7 @@ async function getReference(ref) {
     return (await rateLimitedPromise(promise)).object.sha;
 }
 
-async function updateReference(ref, sha, force) {
+async function updateReferenceRaw(ref, sha, force) {
     assert(!Config.dryRun());
     assert((ref === Config.stagingBranchPath()) || !Config.stagedRun());
 
@@ -320,6 +320,23 @@ async function updateReference(ref, sha, force) {
        });
     });
     return (await rateLimitedPromise(promise)).object.sha;
+}
+
+async function updateReference(ref, sha, force) {
+    const max = 16 * 1000 + 1; // ~30 sec. overall
+    for (let d = 1000; d < max; d *= 2) {
+        try {
+            await updateReferenceRaw(ref, sha, force);
+        } catch (e) {
+            if (e.name === 'ErrorContext' && e.notFound()) {
+                Log.Logger.info("GitHub still unable to find " + sha + ". Will retry in " + (d/1000) + " seconds");
+                await Util.sleep(d);
+                continue;
+            }
+            throw e;
+        }
+    }
+    return Promise.reject(new ErrorContext("Timed out waiting for GitHub to find " + sha));
 }
 
 async function updatePR(prNum, state) {
