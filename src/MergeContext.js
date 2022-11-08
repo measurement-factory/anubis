@@ -137,6 +137,27 @@ class StatusCheck
         this.description = raw.description;
     }
 
+    // A simple way to convert GitHub Check Runs (https://docs.github.com/en/rest/checks) state to StatusCheck.
+    // The Check Runs state is determined by two variables:
+    // status: one of 'queued', 'in_progress', 'completed'
+    // conclusion: one of 'action_required', 'cancelled', 'failure', 'neutral', 'success', 'skipped', 'stale', 'timed_out'
+    static FromCheckRun(checkRun) {
+        let state = null;
+        if (checkRun.status !== 'completed')
+            state = 'pending';
+        else
+            state = (checkRun.conclusion === 'success') ? 'success' : 'failure';
+
+        let raw = {
+            state: state,
+            target_url: checkRun.details_url,
+            description: checkRun.name,
+            context: checkRun.name
+        };
+
+        return new StatusCheck(raw);
+    }
+
     failed() { return !(this.pending() || this.success()); }
 
     success() { return this.state === 'success'; }
@@ -370,7 +391,7 @@ class Labels
     // adds a single label to GitHub
     async _addToGitHub(label) {
         let params = Util.commonParams();
-        params.number = this._prNum;
+        params.issue_number = this._prNum;
         params.labels = [];
         params.labels.push(label.name);
 
@@ -923,6 +944,15 @@ class PullRequest {
             else
                 statusChecks.addOptionalStatus(new StatusCheck(st));
         }
+
+        const checkRuns = await GH.getCheckRuns(this._prHeadSha());
+        for (let st of checkRuns) {
+            if (this._contextsRequiredByGitHubConfig.some(el => el.trim() === st.name.trim()))
+                statusChecks.addRequiredStatus(StatusCheck.FromCheckRun(st));
+            else
+                statusChecks.addOptionalStatus(StatusCheck.FromCheckRun(st));
+        }
+
         this._log("pr status details: " + statusChecks);
         return statusChecks;
     }
@@ -949,6 +979,11 @@ class PullRequest {
             assert(st.context.trim() !== Config.approvalContext());
             statusChecks.addOptionalStatus(new StatusCheck(st));
         }
+
+        // all check runs are 'required'
+        const checkRuns = await GH.getCheckRuns(this._stagedSha());
+        for (let st of checkRuns)
+            statusChecks.addRequiredStatus(StatusCheck.FromCheckRun(st));
 
         this._log("staging status details: " + statusChecks);
         return statusChecks;

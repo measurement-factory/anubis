@@ -122,6 +122,15 @@ async function getReviews(prNum) {
     return reviews;
 }
 
+async function getCheckRuns(ref) {
+    let params = commonParams();
+    params.ref = ref;
+
+    const checkRuns = await GitHub.paginate(GitHub.rest.checks.listForRef, params);
+    logApiResult(getCheckRuns.name, params, {checkRuns: checkRuns.length});
+    return checkRuns;
+}
+
 async function getStatuses(ref) {
     let params = commonParams();
     params.ref = ref;
@@ -298,6 +307,7 @@ module.exports = {
     getPR: getPR,
     getReviews: getReviews,
     getStatuses: getStatuses,
+    getCheckRuns: getCheckRuns,
     getCommit: getCommit,
     getCommits: getCommits,
     createCommit: createCommit,
