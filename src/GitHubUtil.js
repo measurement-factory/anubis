@@ -1,9 +1,14 @@
 const assert = require('assert');
 const Config = require('./Config.js');
-const GitHub = require('@octokit/rest')({
-    timeout: Config.requestTimeout(),
-    host: 'api.github.com',
-    version: '3.0.0'
+const { Octokit }  = require("@octokit/rest");
+const GitHub = new Octokit({
+    auth: Config.githubToken(),
+    request: {
+        agent: undefined,
+        fetch: undefined,
+        timeout: Config.requestTimeout(),
+    },
+    baseUrl: 'https://api.github.com'
 });
 const Util = require('./Util.js');
 const Log = require('./Logger.js');
@@ -11,8 +16,6 @@ const Log = require('./Logger.js');
 const ErrorContext = Util.ErrorContext;
 const commonParams = Util.commonParams;
 const logApiResult = Log.logApiResult;
-
-const GitHubAuthentication = { type: 'token', username: Config.githubUserLogin(), token: Config.githubToken() };
 
 function defaultAppender(allPages, aPage) {
     allPages.data = allPages.data.concat(aPage.data);
@@ -33,94 +36,53 @@ function protectedBranchAppender(protectedBranchPages, aPage) {
 // This delay is required to overcome the "API rate limit exceeded" GitHub error for
 // "core" (non-search) API calls. The current GitHub limitation is 5000/hour,
 // as documented at https://docs.github.com/en/rest/reference/rate-limit.
-function calculateRateLimitDelay(result) {
-    if (result.meta["x-ratelimit-resource"] !== "core")
+function calculateRateLimitDelay(headers) {
+    if (headers["x-ratelimit-resource"] !== "core")
         return 0;
-    const used = parseInt(result.meta["x-ratelimit-used"]);
+    const used = parseInt(headers["x-ratelimit-used"]);
     // Optimization: Do not delay the first 20% of the requests.
     // This avoids most artificial delays for less busy projects while
     // keeping the remaining delays small enough for the busiest ones.
-    const limit = parseInt(result.meta["x-ratelimit-limit"]);
+    const limit = parseInt(headers["x-ratelimit-limit"]);
     if (used < limit/5)
         return 0;
-    const resetTime = parseInt(result.meta["x-ratelimit-reset"]) * 1000;
+    const resetTime = parseInt(headers["x-ratelimit-reset"]) * 1000;
     const now = Date.now();
     if (resetTime <= now) {
         Log.Logger.info("stale x-ratelimit-reset value: " +  resetTime + '<=' + now);
         return 0;
     }
-    const remaining = parseInt(result.meta["x-ratelimit-remaining"]);
+    const remaining = parseInt(headers["x-ratelimit-remaining"]);
     const delay = Math.round((resetTime - now)/remaining);
     Log.Logger.info("calculateRateLimitDelay: " +  delay + "(ms), used: " + used + " out of " + limit);
     return delay;
 }
 
-async function rateLimitedPromise(promise) {
-    const result = await promise;
-    const ms = calculateRateLimitDelay(result);
+async function rateLimitedPromise(result) {
+    const ms = calculateRateLimitDelay(result.headers);
     if (ms) {
         await Util.sleep(ms);
     }
     return result.data;
 }
 
-async function pager(firstPage, appender) {
-    assert(firstPage);
-
-    let allPages = null;
-    if (appender === undefined)
-        appender = defaultAppender;
-
-    function doPager (nPage) {
-        if (allPages === null)
-            allPages = nPage;
-        else
-            appender(allPages, nPage);
-
-       if (GitHub.hasNextPage(nPage)) {
-            return GitHub.getNextPage(nPage).then(doPager);
-       }
-       return allPages;
-    }
-    return await doPager(firstPage);
-}
-
 async function getOpenPrs() {
-    const params = commonParams();
-    const promise = new Promise( (resolve, reject) => {
-        GitHub.authenticate(GitHubAuthentication);
-        GitHub.pullRequests.getAll(params, async (err, res) => {
-            if (err) {
-                reject(new ErrorContext(err, getOpenPrs.name, params));
-                return;
-            }
-            res = await pager(res);
-            const result = res.data.length;
-            logApiResult(getOpenPrs.name, params, result);
-            for (let pr of res.data)
-                pr.anubisProcessor = null;
-            resolve(res);
-        });
-    });
-    return await rateLimitedPromise(promise);
+    let params = commonParams();
+
+    let data = await GitHub.paginate(GitHub.rest.pulls.list, params);
+    logApiResult(getOpenPrs.name, params, {PRs: data.length});
+    for (let pr of data)
+       pr.anubisProcessor = null;
+    return data;
 }
 
 async function getLabels(prNum) {
     let params = commonParams();
-    params.number = prNum;
-    const promise = new Promise( (resolve, reject) => {
-        GitHub.authenticate(GitHubAuthentication);
-        GitHub.issues.getIssueLabels(params, (err, res) => {
-           if (err) {
-               reject(new ErrorContext(err, getLabels.name, params));
-               return;
-           }
-           const result = {labels: res.data.length};
-           logApiResult(getLabels.name, params, result);
-           resolve(res);
-        });
-    });
-    return await rateLimitedPromise(promise);
+    params.issue_number = prNum;
+
+    const result = await GitHub.rest.issues.listLabelsOnIssue(params);
+    logApiResult(getLabels.name, params, {labels: result.data.length});
+    return await rateLimitedPromise(result)
 }
 
 // Gets PR metadata from GitHub
@@ -143,73 +105,39 @@ async function getPR(prNum, awaitMergeable) {
 // gets a PR from GitHub (as is)
 async function getRawPR(prNum) {
     let params = commonParams();
-    params.number = prNum;
-    const promise = new Promise( (resolve, reject) => {
-        GitHub.authenticate(GitHubAuthentication);
-        GitHub.pullRequests.get(params, (err, pr) => {
-            if (err) {
-                reject(new ErrorContext(err, getRawPR.name, params));
-                return;
-            }
-            const result = {number: pr.data.number};
-            logApiResult(getRawPR.name, params, result);
-            resolve(pr);
-       });
-    });
-    return await rateLimitedPromise(promise);
+    params.pull_number = prNum;
+
+    const result = await GitHub.rest.pulls.get(params);
+    logApiResult(getRawPR.name, params, {number: result.data.number});
+    return await rateLimitedPromise(result);
 }
 
 async function getReviews(prNum) {
     let params = commonParams();
-    params.number = prNum;
-    const promise = new Promise((resolve, reject) => {
-        GitHub.authenticate(GitHubAuthentication);
-        GitHub.pullRequests.getReviews(params, async (err, res) => {
-            if (err) {
-                reject(new ErrorContext(err, getReviews.name, params));
-                return;
-            }
-            res = await pager(res);
-            resolve(res);
-        });
-    });
-    return await rateLimitedPromise(promise);
+    params.pull_number = prNum;
+
+    const reviews = await GitHub.paginate(GitHub.rest.pulls.listReviews, params);
+    logApiResult(getReviews.name, params, {reviews: reviews.length});
+    // TODO: implement rateLimitedPromise() for 'paginated' results
+    return reviews;
 }
 
 async function getStatuses(ref) {
     let params = commonParams();
     params.ref = ref;
-    const promise = new Promise( (resolve, reject) => {
-        GitHub.authenticate(GitHubAuthentication);
-        GitHub.repos.getCombinedStatusForRef(params, async (err, res) => {
-            if (err) {
-                reject(new ErrorContext(err, getStatuses.name, params));
-                return;
-            }
-            res = await pager(res, statusAppender);
-            logApiResult(getStatuses.name, params, {statuses: res.data.statuses.length});
-            assert(res.data.state === 'success' || res.data.state === 'pending' || res.data.state === 'failure');
-            resolve(res);
-        });
-    });
-    return await rateLimitedPromise(promise);
+
+    const result = await GitHub.rest.repos.getCombinedStatusForRef(params);
+    logApiResult(getStatuses.name, params, {statuses: result.data.statuses.length});
+    return await rateLimitedPromise(result);
 }
 
 async function getCommit(sha) {
     let params = commonParams();
-    params.sha = sha;
-    const promise = new Promise( (resolve, reject) => {
-        GitHub.authenticate(GitHubAuthentication);
-        GitHub.gitdata.getCommit(params, (err, res) => {
-            if (err) {
-                reject(new ErrorContext(err, getCommit.name, params));
-                return;
-            }
-            logApiResult(getCommit.name, params, res.data);
-            resolve(res);
-        });
-    });
-    return await rateLimitedPromise(promise);
+    params.commit_sha = sha;
+
+    const result = await GitHub.rest.git.getCommit(params);
+    logApiResult(getCommit.name, params, result.data);
+    return await rateLimitedPromise(result);
 }
 
 async function createCommit(treeSha, message, parents, author, committer) {
@@ -220,83 +148,40 @@ async function createCommit(treeSha, message, parents, author, committer) {
     params.parents = parents;
     params.author = author;
     params.committer = committer;
-    const promise = new Promise( (resolve, reject) => {
-        GitHub.authenticate(GitHubAuthentication);
-        GitHub.gitdata.createCommit(params, (err, res) => {
-            if (err) {
-                reject(new ErrorContext(err, createCommit.name, params));
-                return;
-            }
-            const result = {sha: res.data.sha};
-            logApiResult(createCommit.name, params, result);
-            resolve(res);
-        });
-    });
-    return await rateLimitedPromise(promise);
+
+    const result = await GitHub.rest.git.createCommit(params);
+    logApiResult(createCommit.name, params, {sha: result.data.sha});
+    return await rateLimitedPromise(result);
 }
 
 // returns one of: "ahead", "behind", "identical" or "diverged"
 async function compareCommits(baseRef, headRef) {
     let params = commonParams();
-    params.base = baseRef;
-    params.head = headRef;
-    const promise = new Promise( (resolve, reject) => {
-        GitHub.authenticate(GitHubAuthentication);
-        GitHub.repos.compareCommits(params, (err, res) => {
-            if (err) {
-                reject(new ErrorContext(err, compareCommits.name, params));
-                return;
-            }
-            const result = {status: res.data.status};
-            logApiResult(compareCommits.name, params, result);
-            resolve(res);
-        });
-    });
-    return (await rateLimitedPromise(promise)).status;
+    params.basehead = `${baseRef}...${headRef}`;
+
+    const result = await GitHub.rest.repos.compareCommitsWithBasehead(params);
+    logApiResult(compareCommits.name, params, {status: result.data.status});
+    return (await rateLimitedPromise(result)).status;
 }
 
 async function getCommits(branch, since) {
     let params = commonParams();
     params.sha = branch; // sha or branch to start listing commits from
     params.since = since;
-    const promise = new Promise( (resolve, reject) => {
-        GitHub.authenticate(GitHubAuthentication);
-        GitHub.repos.getCommits(params, async (err, res) => {
-            if (err) {
-                reject(new ErrorContext(err, getCommits.name, params));
-                return;
-            }
-            res = await pager(res);
-            const result = {commits: res.data.length};
-            logApiResult(getCommits.name, params, result);
-            resolve(res);
-        });
-    });
-    return await rateLimitedPromise(promise);
+
+    const commits = await GitHub.paginate(GitHub.rest.repos.listCommits, params);
+    logApiResult(getCommits.name, params, {commits: commits.length});
+    return commits;
 }
 
 async function getReference(ref) {
     let params = commonParams();
     params.ref = ref;
-    const promise = new Promise( (resolve, reject) => {
-        GitHub.authenticate(GitHubAuthentication);
-        GitHub.gitdata.getReference(params, (err, res) => {
-            if (err) {
-                reject(new ErrorContext(err, getReference.name, params));
-                return;
-            }
-            // If the requested ref does not exist in the repository, but some
-            // existing refs start with it, they will be returned as an array.
-            if (Array.isArray(res.data)) {
-                reject(new ErrorContext("Could not find " + params.ref + " reference", getReference.name, params));
-                return;
-            }
-            const result = {ref: res.data.ref, sha: res.data.object.sha};
-            logApiResult(getReference.name, params, result);
-            resolve(res);
-        });
-    });
-    return (await rateLimitedPromise(promise)).object.sha;
+
+    debugger;
+    const result = await GitHub.rest.git.getRef(params);
+    logApiResult(getReference.name, params, {ref: result.data.ref, sha: result.data.object.sha});
+    return (await rateLimitedPromise(result)).object.sha;
 }
 
 async function updateReference(ref, sha, force) {
@@ -307,76 +192,43 @@ async function updateReference(ref, sha, force) {
     params.ref = ref;
     params.sha = sha;
     params.force = force; // default (ensure we do ff merge).
-    const promise = new Promise( (resolve, reject) => {
-        GitHub.authenticate(GitHubAuthentication);
-        GitHub.gitdata.updateReference(params, (err, res) => {
-            if (err) {
-                reject(new ErrorContext(err, updateReference.name, params));
-                return;
-            }
-            const result = {ref: res.data.ref, sha: res.data.object.sha};
-            logApiResult(updateReference.name, params, result);
-            resolve(res);
-       });
-    });
-    return (await rateLimitedPromise(promise)).object.sha;
+
+    const result = await GitHub.rest.git.updateRef(params);
+    logApiResult(updateReference.name, params, {ref: result.data.ref, sha: result.data.object.sha});
+    return await rateLimitedPromise(result);
 }
 
+
 async function updatePR(prNum, state) {
-   assert(!Config.dryRun());
-   let params = commonParams();
-   params.state = state;
-   params.number = prNum;
-   const promise = new Promise( (resolve, reject) => {
-     GitHub.authenticate(GitHubAuthentication);
-     GitHub.pullRequests.update(params, (err, res) => {
-        if (err) {
-            reject(new ErrorContext(err, updatePR.name, params));
-            return;
-        }
-        const result = {state: res.data.state};
-        logApiResult(updatePR.name, params, result);
-        resolve(res);
-     });
-   });
-   return await rateLimitedPromise(promise);
+    assert(!Config.dryRun());
+
+    let params = commonParams();
+    params.state = state;
+    params.pull_number = prNum;
+
+    const result = await GitHub.rest.pulls.update(params);
+    logApiResult(updatePR.name, params, {state: result.data.state});
+    return await rateLimitedPromise(result);
 }
 
 async function addLabels(params) {
-   assert(!Config.dryRun());
-   const promise = new Promise( (resolve, reject) => {
-     GitHub.authenticate(GitHubAuthentication);
-     GitHub.issues.addLabels(params, (err, res) => {
-        if (err) {
-            reject(new ErrorContext(err, addLabels.name, params));
-            return;
-        }
-        const result = {added: true};
-        logApiResult(addLabels.name, params, result);
-        resolve(res);
-     });
-   });
-   return await rateLimitedPromise(promise);
+    assert(!Config.dryRun());
+
+    const result = await GitHub.rest.issues.addLabels(params);
+    logApiResult(addLabels.name, params, {added: true});
+    return await rateLimitedPromise(result);
 }
 
 async function removeLabel(label, prNum) {
     assert(!Config.dryRun());
+
     let params = commonParams();
-    params.number = prNum;
+    params.issue_number = prNum;
     params.name = label;
-    const promise = new Promise( (resolve, reject) => {
-      GitHub.authenticate(GitHubAuthentication);
-      GitHub.issues.removeLabel(params, (err, res) => {
-          if (err) {
-             reject(new ErrorContext(err, removeLabel.name, params));
-             return;
-          }
-          const result = {removed: true};
-          logApiResult(removeLabel.name, params, result);
-          resolve(res);
-      });
-    });
-    return await rateLimitedPromise(promise);
+
+    const result = await GitHub.rest.issues.removeLabel(params);
+    logApiResult(removeLabel.name, params, {removed: true});
+    return await rateLimitedPromise(result);
 }
 
 // XXX: remove if not needed, since the "required_status_checks" api call sometimes
@@ -401,79 +253,43 @@ async function removeLabel(label, prNum) {
 
 async function createStatus(sha, state, targetUrl, description, context) {
     assert(!Config.dryRun());
+
     let params = commonParams();
     params.sha = sha;
     params.state = state;
     params.target_url = targetUrl;
     params.description = description;
     params.context = context;
-    const promise = new Promise( (resolve, reject) => {
-      GitHub.authenticate(GitHubAuthentication);
-      GitHub.repos.createStatus(params, (err, res) => {
-          if (err) {
-             reject(new ErrorContext(err, createStatus.name, params));
-             return;
-          }
-          const result = {context: res.data.context};
-          logApiResult(createStatus.name, params, result);
-          resolve(res);
-        });
-    });
-    return (await rateLimitedPromise(promise)).context;
+
+    const result = await GitHub.rest.repos.createCommitStatus(params);
+    logApiResult(createStatus.name, params, {context: result.data.context});
+    return (await rateLimitedPromise(result)).context;
 }
 
 async function getProtectedBranchRequiredStatusChecks(branch) {
     let params = commonParams();
     params.branch = branch;
-    const promise = new Promise( (resolve, reject) => {
-      GitHub.authenticate(GitHubAuthentication);
-      GitHub.repos.getBranch(params, async (err, res) => {
-          if (err) {
-             reject(new ErrorContext(err, getProtectedBranchRequiredStatusChecks.name, params));
-             return;
-          }
-          res = await pager(res, protectedBranchAppender);
-          const result = {checks: res.data.protection.required_status_checks.contexts.length};
-          logApiResult(getProtectedBranchRequiredStatusChecks.name, params, result);
-          resolve(res);
-      });
-    });
-    return (await rateLimitedPromise(promise)).protection.required_status_checks.contexts;
+
+    const result = await GitHub.rest.repos.getBranch(params);
+    logApiResult(getProtectedBranchRequiredStatusChecks.name, {checks: result.data.protection.required_status_checks.contexts.length});
+    return (await rateLimitedPromise(result)).protection.required_status_checks.contexts;
 }
 
 async function getUser(username) {
     const params = commonParams();
     params.username = username;
-    const promise = new Promise( (resolve, reject) => {
-      GitHub.authenticate(GitHubAuthentication);
-      GitHub.users.getForUser(params, (err, res) => {
-          if (err) {
-             reject(new ErrorContext(err, getUser.name, params));
-             return;
-          }
-          const result = {user: res.data};
-          logApiResult(getUser.name, params, result);
-          resolve(res);
-      });
-    });
-    return await rateLimitedPromise(promise);
+
+    const result = await GitHub.rest.users.getByUsername(params);
+    logApiResult(getUser.name, params, {user: result.data});
+    return await rateLimitedPromise(result);
 }
 
 async function getUserEmails() {
     const params = commonParams();
-    const promise = new Promise( (resolve, reject) => {
-      GitHub.authenticate(GitHubAuthentication);
-      GitHub.users.getEmails(params, (err, res) => {
-          if (err) {
-             reject(new ErrorContext(err, getUserEmails.name, params));
-             return;
-          }
-          const result = {emails: res.data};
-          logApiResult(getUserEmails.name, params, result);
-          resolve(res);
-      });
-    });
-    return await rateLimitedPromise(promise);
+
+    const result = await GitHub.rest.users.listEmailsForAuthenticatedUser(params);
+    logApiResult(getUserEmails.name, params, {emails: result.data});
+    return await rateLimitedPromise(result);
 }
 
 module.exports = {
