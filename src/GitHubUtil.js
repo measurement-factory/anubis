@@ -17,21 +17,6 @@ const ErrorContext = Util.ErrorContext;
 const commonParams = Util.commonParams;
 const logApiResult = Log.logApiResult;
 
-function defaultAppender(allPages, aPage) {
-    allPages.data = allPages.data.concat(aPage.data);
-}
-
-function statusAppender(statusPages, aPage) {
-    let statuses = statusPages.data.statuses;
-    statusPages.data.statuses = statuses.concat(aPage.data.statuses);
-}
-
-function protectedBranchAppender(protectedBranchPages, aPage) {
-    let contexts = protectedBranchPages.data.protection.required_status_checks.contexts;
-    protectedBranchPages.data.protection.required_status_checks.contexts =
-        contexts.concat(aPage.data.protection.required_status_checks.contexts);
-}
-
 // Calculates the artificial delay for an API call (in milliseconds).
 // This delay is required to overcome the "API rate limit exceeded" GitHub error for
 // "core" (non-search) API calls. The current GitHub limitation is 5000/hour,
@@ -280,7 +265,7 @@ async function getProtectedBranchRequiredStatusChecks(branch) {
     params.branch = branch;
 
     const result = await GitHub.rest.repos.getBranch(params);
-    logApiResult(getProtectedBranchRequiredStatusChecks.name, {checks: result.data.protection.required_status_checks.contexts.length});
+    logApiResult(getProtectedBranchRequiredStatusChecks.name, params, {checks: result.data.protection.required_status_checks.contexts.length});
     return (await rateLimitedPromise(result)).protection.required_status_checks.contexts;
 }
 
