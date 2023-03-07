@@ -837,10 +837,9 @@ class PullRequest {
         // where 'reviewer' is a core developer, 'date' the review date and 'state' is either
         // 'approved' or 'changes_requested'.
         let usersVoted = [];
-        const currentDate = new Date();
         // add the author if needed
         if (this._coreDeveloper('PR author', this._prAuthor(), this._prAuthorId()))
-            usersVoted.push({reviewer: this._prAuthor(), date: currentDate.toISOString(), state: 'approved'});
+            usersVoted.push({reviewer: this._prAuthor(), date: this._createdAt(), state: 'approved'});
 
         // Reviews are returned in chronological order; the list may contain several
         // reviews from the same reviewer, so the actual 'state' is the most recent one.
@@ -878,24 +877,13 @@ class PullRequest {
             return Approval.Suspend("waiting for more votes");
         }
 
-        let staleUnanimousMessage = "";
-        if (usersApproved.length === Config.coreDeveloperIds().size) {
-            const prCommitDate = new Date(this._commitMessage.author().date);
-            for (let userApproved of usersApproved) {
-                const approvedDate = new Date(userApproved.date);
-                if (prCommitDate > approvedDate) {
-                    staleUnanimousMessage = " due to stale unanimous approval";
-                    break;
-                }
-            }
-            if (staleUnanimousMessage === "")
-                return Approval.GrantNow("approved (unanimously)");
-        }
+        if (usersApproved.length === Config.coreDeveloperIds().size)
+            return Approval.GrantNow("approved (unanimously)");
 
         const prAgeMs = new Date() - new Date(this._createdAt());
         if (usersApproved.length >= Config.sufficientApprovals()) {
             if (prAgeMs < Config.votingDelayMin())
-                return Approval.GrantAfterTimeout("waiting for fast track objections" + staleUnanimousMessage, Config.votingDelayMin() - prAgeMs);
+                return Approval.GrantAfterTimeout("waiting for fast track objections", Config.votingDelayMin() - prAgeMs);
             else
                 return Approval.GrantNow("approved");
         }
