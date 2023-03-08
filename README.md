@@ -277,7 +277,15 @@ single event is sufficient for PR disqualification:
 * A GitHub review request naming a core developer.
 
 A PR without disqualifications is considered approved for merging if
-either of the following two conditions is met:
+either of the following three conditions has been met:
+
+* Unanimous: A PR has been approved by all core developers
+  (`config::core_developers`). There is usually no point in waiting longer if
+  each and every decision maker is happy with the PR state. However, a core
+  developer approving a PR must keep in mind that their action may have an
+  _immediate_ merging effect. For example, "LGTM with changes" approvals may
+  not work as intended (especially when `config::guarded_run` is not enabled,
+  or the PR already has an `M-cleared-for-merge` label).
 
 * Fast track: A PR has at least two approvals
   (`config::sufficient_approvals`) by core developers and has been open
