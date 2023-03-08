@@ -869,8 +869,10 @@ class PullRequest {
             this._log("changes requested by " + userRequested.reviewer);
             return Approval.Block("blocked (see change requests)");
         }
-        const usersApproved = usersVoted.filter(u => u.state !== 'changes_requested');
-        this._log("approved by " + usersApproved.length + " core developer(s)");
+
+        const usersApproved = usersVoted.filter(u => u.state === 'approved');
+        this._log("approved by " + usersApproved.length + " out of " + Config.coreDeveloperIds().size + " core developer(s)");
+        assert.strictEqual(usersApproved.length, usersVoted.length);
 
         if (usersApproved.length < Config.necessaryApprovals()) {
             this._log("not approved by necessary " + Config.necessaryApprovals() + " votes");
