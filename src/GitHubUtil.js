@@ -172,6 +172,7 @@ async function getReference(ref) {
     let params = commonParams();
     params.ref = ref;
 
+    debugger;
     const result = await GitHub.rest.git.getRef(params);
     logApiResult(getReference.name, params, {ref: result.data.ref, sha: result.data.object.sha});
     return (await rateLimitedPromise(result)).object.sha;
