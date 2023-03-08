@@ -877,6 +877,7 @@ class PullRequest {
             return Approval.Suspend("waiting for more votes");
         }
 
+        assert(usersApproved.length <= Config.coreDeveloperIds().size);
         if (usersApproved.length === Config.coreDeveloperIds().size)
             return Approval.GrantNow("approved (unanimously)");
 
