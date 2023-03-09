@@ -864,6 +864,8 @@ class PullRequest {
             usersVoted.push({reviewer: review.user.login, date: review.submitted_at, state: reviewState});
         }
 
+        // The loop could not just Approval.Block() on the first 'changes_requested'
+        // vote because that vote could have been dismissed later in the loop.
         const userRequested = usersVoted.find(el => el.state === 'changes_requested');
         if (userRequested !== undefined) {
             this._log("changes requested by " + userRequested.reviewer);
