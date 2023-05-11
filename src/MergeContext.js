@@ -456,11 +456,11 @@ class BranchPosition
         for (let d = 1000; d < max; d *= 2) {
             await this.compute();
             if (this._status === aStatus)
-                break;
+                return; // success
             Log.Logger.info("GitHub may be still updating branch status. Will retry in " + (d/1000) + " seconds");
             await Util.sleep(d);
         }
-        assert(this._status === aStatus);
+        throw new Error(`failed to reach desired compute() outcome; want ${aStatus}; got ${this._status}`);
     }
 
     // feature > base:
