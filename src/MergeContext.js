@@ -451,7 +451,7 @@ class BranchPosition
         this._status = await GH.compareCommits(this._baseRef, this._featureRef);
     }
 
-    async waitUntil(aStatus) {
+    async computeUntil(aStatus) {
         const max = 16 * 1000 + 1; // ~30 sec. overall
         for (let d = 1000; d < max; d *= 2) {
             await this.compute();
@@ -1578,7 +1578,7 @@ class PullRequest {
         this._stagedPosition = new BranchPosition(this._prBaseBranch(), Config.stagingBranch());
         // GitHub may be still updating the stating branch even though the API call above
         // returned success. Give it some time if needed.
-        await this._stagedPosition.waitUntil("ahead");
+        await this._stagedPosition.computeUntil("ahead");
 
         await this._enterStaged();
     }
