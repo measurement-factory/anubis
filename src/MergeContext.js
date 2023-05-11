@@ -451,6 +451,18 @@ class BranchPosition
         this._status = await GH.compareCommits(this._baseRef, this._featureRef);
     }
 
+    async waitUntil(aStatus) {
+        const max = 16 * 1000 + 1; // ~30 sec. overall
+        for (let d = 1000; d < max; d *= 2) {
+            await this.compute();
+            if (this._status === aStatus)
+                break;
+            Log.Logger.info("GitHub may be still updating branch status. Will retry in " + (d/1000) + " seconds");
+            await Util.sleep(d);
+        }
+        assert(this._status === aStatus);
+    }
+
     // feature > base:
     // the feature branch contains the base branch and some additional commits
     ahead() {
@@ -1564,8 +1576,9 @@ class PullRequest {
         await GH.updateReference(Config.stagingBranchPath(), this._stagedSha(), true);
 
         this._stagedPosition = new BranchPosition(this._prBaseBranch(), Config.stagingBranch());
-        await this._stagedPosition.compute();
-        assert(this._stagedPosition.ahead());
+        // GitHub may be still updating the stating branch even though the API call above
+        // returned success. Give it some time if needed.
+        await this._stagedPosition.waitUntil("ahead");
 
         await this._enterStaged();
     }
