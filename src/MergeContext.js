@@ -1580,9 +1580,10 @@ class PullRequest {
         await GH.updateReference(Config.stagingBranchPath(), this._stagedSha(), true);
 
         this._stagedPosition = new BranchPosition(this._prBaseBranch(), Config.stagingBranch());
-        // GitHub may still be updating the stating branch even though the API call above
-        // returned success. Give it some time if needed.
+        // If needed, give GitHub extra time to update the staging branch,
+        // even though the GH.updateReference() call above have succeeded.
         await this._stagedPosition.computeUntilAhead();
+        assert(this._stagedPosition.ahead());
 
         await this._enterStaged();
     }
