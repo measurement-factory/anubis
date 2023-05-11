@@ -452,7 +452,8 @@ class BranchPosition
         return this._status;
     }
 
-    async computeUntil(desiredStatus) {
+    async computeUntilAhead() {
+        const desiredStatus = "ahead";
         // TODO: Stop (poorly) duplicating these Util.sleep() loops.
         const longestSleep = 16 * 1000; // ms; ~30 seconds overall
         let nextSleep = 0;
@@ -1581,7 +1582,7 @@ class PullRequest {
         this._stagedPosition = new BranchPosition(this._prBaseBranch(), Config.stagingBranch());
         // GitHub may still be updating the stating branch even though the API call above
         // returned success. Give it some time if needed.
-        await this._stagedPosition.computeUntil("ahead");
+        await this._stagedPosition.computeUntilAhead();
 
         await this._enterStaged();
     }
