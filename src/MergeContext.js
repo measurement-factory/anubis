@@ -457,7 +457,7 @@ class BranchPosition
             await this.compute();
             if (this._status === aStatus)
                 return; // success
-            Log.Logger.info("GitHub may be still updating branch status. Will retry in " + (d/1000) + " seconds");
+            Log.Logger.info("GitHub may still be updating branch status. Will retry in " + (d/1000) + " seconds");
             await Util.sleep(d);
         }
         throw new Error(`failed to reach desired compute() outcome; want ${aStatus}; got ${this._status}`);
@@ -1576,7 +1576,7 @@ class PullRequest {
         await GH.updateReference(Config.stagingBranchPath(), this._stagedSha(), true);
 
         this._stagedPosition = new BranchPosition(this._prBaseBranch(), Config.stagingBranch());
-        // GitHub may be still updating the stating branch even though the API call above
+        // GitHub may still be updating the stating branch even though the API call above
         // returned success. Give it some time if needed.
         await this._stagedPosition.computeUntil("ahead");
 
