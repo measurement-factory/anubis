@@ -449,18 +449,21 @@ class BranchPosition
 
     async compute() {
         this._status = await GH.compareCommits(this._baseRef, this._featureRef);
+        return this._status;
     }
 
-    async computeUntil(aStatus) {
-        const max = 16 * 1000 + 1; // ~30 sec. overall
-        for (let d = 1000; d < max; d *= 2) {
-            await this.compute();
-            if (this._status === aStatus)
-                return; // success
-            Log.Logger.info("GitHub may still be updating branch status. Will retry in " + (d/1000) + " seconds");
-            await Util.sleep(d);
+    async computeUntil(desiredStatus) {
+        // TODO: Stop (poorly) duplicating these Util.sleep() loops.
+        const longestSleep = 16 * 1000; // ms; ~30 seconds overall
+        let nextSleep = 0;
+        while (await this.compute() !== desiredStatus) {
+            if (nextSleep >= longestSleep)
+                throw new Error(`failed to reach the desired branch state; wanted ${desiredStatus} but got ${this._status} despite waiting for ${nextSleep/1000} seconds`);
+            nextSleep = nextSleep > 0 ? nextSleep * 2 : 1000; // ms
+            Log.Logger.info(`GitHub may still be updating the branch. Sleeping for ${nextSleep/1000} seconds...`);
+            await Util.sleep(nextSleep);
         }
-        throw new Error(`failed to reach desired compute() outcome; want ${aStatus}; got ${this._status}`);
+        // success
     }
 
     // feature > base:
