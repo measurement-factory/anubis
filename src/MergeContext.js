@@ -455,12 +455,16 @@ class BranchPosition
     async computeUntilAhead() {
         const desiredStatus = "ahead";
         // TODO: Stop (poorly) duplicating these Util.sleep() loops.
-        const longestSleep = 16 * 1000; // ms; ~30 seconds overall
+        const firstSleep = 1000; // ms
+        const longestSleep = 16 * firstSleep; // ~30 seconds overall
         let nextSleep = 0;
+        const startedAt = new Date();
         while (await this.compute() !== desiredStatus) {
-            if (nextSleep >= longestSleep)
-                throw new Error(`failed to reach the desired branch state; wanted ${desiredStatus} but got ${this._status} despite waiting for ${nextSleep/1000} seconds`);
-            nextSleep = nextSleep > 0 ? nextSleep * 2 : 1000; // ms
+            if (nextSleep >= longestSleep) {
+                const elapsedSeconds = Math.round((new Date() - startedAt)/1000);
+                throw new Error(`failed to reach the desired branch state; wanted ${desiredStatus} but got ${this._status} despite waiting for ${elapsedSeconds} seconds`);
+            }
+            nextSleep = nextSleep > 0 ? nextSleep * 2 : firstSleep; // ms
             Log.Logger.info(`GitHub may still be updating the branch. Sleeping for ${nextSleep/1000} seconds...`);
             await Util.sleep(nextSleep);
         }
