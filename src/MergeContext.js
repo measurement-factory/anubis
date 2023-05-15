@@ -449,6 +449,26 @@ class BranchPosition
 
     async compute() {
         this._status = await GH.compareCommits(this._baseRef, this._featureRef);
+        return this._status;
+    }
+
+    async computeUntilAhead() {
+        const desiredStatus = "ahead";
+        // TODO: Stop (poorly) duplicating these Util.sleep() loops.
+        const firstSleep = 1000; // ms
+        const longestSleep = 16 * firstSleep; // ~30 seconds overall
+        let nextSleep = 0;
+        const startedAt = new Date();
+        while (await this.compute() !== desiredStatus) {
+            if (nextSleep >= longestSleep) {
+                const elapsedSeconds = Math.round((new Date() - startedAt)/1000);
+                throw new Error(`failed to reach the desired branch state; wanted ${desiredStatus} but got ${this._status} despite waiting for ${elapsedSeconds} seconds`);
+            }
+            nextSleep = nextSleep > 0 ? nextSleep * 2 : firstSleep; // ms
+            Log.Logger.info(`GitHub may still be updating the branch. Sleeping for ${nextSleep/1000} seconds...`);
+            await Util.sleep(nextSleep);
+        }
+        // success
     }
 
     // feature > base:
@@ -1564,7 +1584,9 @@ class PullRequest {
         await GH.updateReference(Config.stagingBranchPath(), this._stagedSha(), true);
 
         this._stagedPosition = new BranchPosition(this._prBaseBranch(), Config.stagingBranch());
-        await this._stagedPosition.compute();
+        // If needed, give GitHub extra time to update the staging branch,
+        // even though the GH.updateReference() call above have succeeded.
+        await this._stagedPosition.computeUntilAhead();
         assert(this._stagedPosition.ahead());
 
         await this._enterStaged();
