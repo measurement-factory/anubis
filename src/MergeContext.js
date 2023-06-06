@@ -973,8 +973,16 @@ class PullRequest {
                 statusChecks.addOptionalStatus(new StatusCheck(st));
         }
 
+        // Returns whole check runs history for the commit.
         const checkRuns = await GH.getCheckRuns(this._prHeadSha());
-        for (let st of checkRuns) {
+        // Filter out stale/older checks, assuming that check.id is greater in newer checks.
+        const sortedCheckRuns = checkRuns.sort((e1, e2) => parseInt(e2.id) - parseInt(e1.id));
+        let uniqueCheckRuns = [];
+        sortedCheckRuns.forEach(check => {
+            if (!uniqueCheckRuns.some(e => e.name === check.name))
+                uniqueCheckRuns.push(check);
+        });
+        for (let st of uniqueCheckRuns) {
             if (this._contextsRequiredByGitHubConfig.some(el => el.trim() === st.name.trim()))
                 statusChecks.addRequiredStatus(StatusCheck.FromCheckRun(st));
             else
