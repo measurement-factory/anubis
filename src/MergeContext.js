@@ -974,16 +974,14 @@ class PullRequest {
         }
 
         // Returns whole check runs history for the commit.
-        // We need only the freshest checks.
         const checkRuns = await GH.getCheckRuns(this._prHeadSha());
-        // check.id is greater in newer checks
-        const sortedCheckRuns = checkRuns.sort((e1, e2) => parseInt(e1.id) - parseInt(e2.id));
+        // Filter out stale/older checks, assuming that check.id is greater in newer checks.
+        const sortedCheckRuns = checkRuns.sort((e1, e2) => parseInt(e2.id) - parseInt(e1.id));
         let uniqueCheckRuns = [];
-        for (let i = sortedCheckRuns.length -1; i >= 0; --i) {
-            const check = sortedCheckRuns[i];
+        sortedCheckRuns.forEach(check => {
             if (!uniqueCheckRuns.some(e => e.name === check.name))
                 uniqueCheckRuns.push(check);
-        }
+        });
         for (let st of uniqueCheckRuns) {
             if (this._contextsRequiredByGitHubConfig.some(el => el.trim() === st.name.trim()))
                 statusChecks.addRequiredStatus(StatusCheck.FromCheckRun(st));
