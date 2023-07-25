@@ -51,22 +51,24 @@ async function rateLimitedPromise(result) {
     return result.data;
 }
 
-// concatenate data from an array of pages, returned by paginate()
-// producing a hash suitable for rateLimitedPromise()
-function combinePages(pages) {
-    // take headers (with fresh x-ratelimit* statistics) from the last page
-    return {data: pages.map(el => el.data).flat(), headers: pages[pages.length-1].headers};
+async function paginatedGet(githubMethod, params) {
+    const iterator = GitHub.paginate.iterator(githubMethod, params);
+    let result = [];
+    for await (let it of iterator) {
+       const data = await rateLimitedPromise(it);
+       result.push(...data);
+    }
+    return result;
 }
 
 async function getOpenPrs() {
     let params = commonParams();
 
-    const pages = await GitHub.paginate(GitHub.rest.pulls.list, params, (response) => response);
-    const result = combinePages(pages);
-    logApiResult(getOpenPrs.name, params, {PRs: result.data.length});
-    for (let pr of result.data)
+    let data = await paginatedGet(GitHub.rest.pulls.list, params);
+    logApiResult(getOpenPrs.name, params, {PRs: data.length});
+    for (let pr of data)
        pr.anubisProcessor = null;
-    return await rateLimitedPromise(result);
+    return data;
 }
 
 async function getLabels(prNum) {
@@ -109,20 +111,18 @@ async function getReviews(prNum) {
     let params = commonParams();
     params.pull_number = prNum;
 
-    const pages = await GitHub.paginate(GitHub.rest.pulls.listReviews, params, (response) => response);
-    const result = combinePages(pages);
-    logApiResult(getReviews.name, params, {reviews: result.data.length});
-    return await rateLimitedPromise(result);
+    const reviews = await paginatedGet(GitHub.rest.pulls.listReviews, params);
+    logApiResult(getReviews.name, params, {reviews: reviews.length});
+    return reviews;
 }
 
 async function getCheckRuns(ref) {
     let params = commonParams();
     params.ref = ref;
 
-    const pages = await GitHub.paginate(GitHub.rest.checks.listForRef, params, (response) => response);
-    const result = combinePages(pages);
-    logApiResult(getCheckRuns.name, params, {checkRuns: result.data.length});
-    return await rateLimitedPromise(result);
+    const checkRuns = await paginatedGet(GitHub.rest.checks.listForRef, params);
+    logApiResult(getCheckRuns.name, params, {checkRuns: checkRuns.length});
+    return checkRuns;
 }
 
 async function getStatuses(ref) {
@@ -172,17 +172,15 @@ async function getCommits(branch, since) {
     params.sha = branch; // sha or branch to start listing commits from
     params.since = since;
 
-    const pages = await GitHub.paginate(GitHub.rest.repos.listCommits, params, (response) => response);
-    const result = combinePages(pages);
-    logApiResult(getCommits.name, params, {commits: result.data.length});
-    return await rateLimitedPromise(result);
+    const commits = await paginatedGet(GitHub.rest.repos.listCommits, params);
+    logApiResult(getCommits.name, params, {commits: commits.length});
+    return commits;
 }
 
 async function getReference(ref) {
     let params = commonParams();
     params.ref = ref;
 
-    debugger;
     const result = await GitHub.rest.git.getRef(params);
     logApiResult(getReference.name, params, {ref: result.data.ref, sha: result.data.object.sha});
     return (await rateLimitedPromise(result)).object.sha;
