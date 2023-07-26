@@ -51,10 +51,20 @@ async function rateLimitedPromise(result) {
     return result.data;
 }
 
+async function paginatedGet(githubMethod, params) {
+    const iterator = GitHub.paginate.iterator(githubMethod, params);
+    let result = [];
+    for await (let it of iterator) {
+       const data = await rateLimitedPromise(it);
+       result.push(...data);
+    }
+    return result;
+}
+
 async function getOpenPrs() {
     let params = commonParams();
 
-    let data = await GitHub.paginate(GitHub.rest.pulls.list, params);
+    let data = await paginatedGet(GitHub.rest.pulls.list, params);
     logApiResult(getOpenPrs.name, params, {PRs: data.length});
     for (let pr of data)
        pr.anubisProcessor = null;
@@ -101,9 +111,8 @@ async function getReviews(prNum) {
     let params = commonParams();
     params.pull_number = prNum;
 
-    const reviews = await GitHub.paginate(GitHub.rest.pulls.listReviews, params);
+    const reviews = await paginatedGet(GitHub.rest.pulls.listReviews, params);
     logApiResult(getReviews.name, params, {reviews: reviews.length});
-    // TODO: implement rateLimitedPromise() for 'paginated' results
     return reviews;
 }
 
@@ -111,7 +120,7 @@ async function getCheckRuns(ref) {
     let params = commonParams();
     params.ref = ref;
 
-    const checkRuns = await GitHub.paginate(GitHub.rest.checks.listForRef, params);
+    const checkRuns = await paginatedGet(GitHub.rest.checks.listForRef, params);
     logApiResult(getCheckRuns.name, params, {checkRuns: checkRuns.length});
     return checkRuns;
 }
@@ -163,7 +172,7 @@ async function getCommits(branch, since) {
     params.sha = branch; // sha or branch to start listing commits from
     params.since = since;
 
-    const commits = await GitHub.paginate(GitHub.rest.repos.listCommits, params);
+    const commits = await paginatedGet(GitHub.rest.repos.listCommits, params);
     logApiResult(getCommits.name, params, {commits: commits.length});
     return commits;
 }
