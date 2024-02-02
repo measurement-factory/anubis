@@ -1077,6 +1077,9 @@ class PullRequest {
 
         if (this._labels.has(Config.mergedLabel()))
             throw this._exLostControl("premature " + Config.mergedLabel());
+
+        if (this._labels.has(Config.ignoredByMergeBotsLabel()))
+            throw this._exLostControl("unexpected " + Config.mergedLabel());
     }
 
     // whether the PR should be staged (including re-staged)
