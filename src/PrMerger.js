@@ -34,11 +34,13 @@ class PrMerger {
         while (this._todo.length) {
             try {
                 const rawPr = this._todo.shift();
+
                 if (rawPr.labels.some(el => el.name === Config.ignoredByMergeBotsLabel())) {
                     this._ignored++;
-                    Logger.info(`Skipping PR${rawPr.number} due to ${Config.ignoredByMergeBotsLabel()} label`);
+                    Logger.info(`Ignoring PR${rawPr.number} due to ${Config.ignoredByMergeBotsLabel()} label`);
                     continue;
                 }
+
                 const result = await MergeContext.Process(rawPr, somePrWasStaged);
                 assert(!somePrWasStaged || !result.prStaged());
                 somePrWasStaged = somePrWasStaged || result.prStaged();
@@ -53,7 +55,7 @@ class PrMerger {
         if (this._errors)
             throw new Error(`Failed to process ${this._errors} out of ${this._total} PRs.`);
 
-        Logger.info("Successfully processed all " + this._total + " PRs, analyzed/skipped: " + (this._total - this._ignored) + "/" + this._ignored);
+        Logger.info("Successfully handled all " + this._total + " PRs, processed/ignored: " + (this._total - this._ignored) + "/" + this._ignored);
         return minDelay;
     }
 
