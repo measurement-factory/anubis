@@ -162,16 +162,17 @@ request state:
 * `M-cleared-for-merge`: A human has allowed the bot running in
   `config::guarded_run` mode to perform the final merging step --
   updating the target branch. The label has no effect unless the bot is
-  running in that mode. This is one of the few bot-related label that is meant
+  running in that mode. This is one of a few bot-related label that is meant
   to be set by humans; the bot itself never sets this label. The bot
   removes this label after successfully merging the PR. Avoid setting
   this label unless you are a human responsible for testing the bot.
 * `M-merged`: The PR was successfully merged (and probably closed).
   The bot will not attempt to merge this PR again even if it is
   reopened. The bot never removes this label.
-* `M-ignored-by-merge-bots`: A human marked this PR to be ignored
-   by Anubis: The bot will dismiss this PR until the label is on.
-   This label should be set and unset by humans only.
+* `M-ignored-by-merge-bots`: A human marked the PR to be ignored
+   by Anubis: The bot does not modify or merge PRs with this label.
+   This label should be set and removed by humans. Anubis does not
+   set and never removes this label.
 
 All labels except `M-failed-staging-checks`, `M-failed-staging-other`,
 `M-cleared-for-merge`, `M-merged`, and `M-ignored-by-merge-bots` are ignored
