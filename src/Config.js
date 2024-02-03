@@ -119,6 +119,8 @@ class ConfigOptions {
     clearedForMergeLabel() { return "M-cleared-for-merge"; }
     // whether the PR was abandoned due to a stale staged commit
     abandonedStagingChecksLabel() { return "M-abandoned-staging-checks"; }
+    // whether this PR is marked by a human to be skipped
+    ignoredByMergeBotsLabel() { return "M-ignored-by-merge-bots"; }
 
     // an URL of the description of the approval test status
     approvalUrl() { return this._approvalUrl; }

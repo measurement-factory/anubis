@@ -13,6 +13,7 @@ class PrMerger {
     constructor() {
         this._total = 0; // the number of open PRs received from GitHub
         this._errors = 0; // the number of PRs with processing failures
+        this._ignored = 0; // the number of ignored PRs (due to human markings)
         this._todo = null; // raw PRs to be processed
     }
 
@@ -33,6 +34,13 @@ class PrMerger {
         while (this._todo.length) {
             try {
                 const rawPr = this._todo.shift();
+
+                if (rawPr.labels.some(el => el.name === Config.ignoredByMergeBotsLabel())) {
+                    this._ignored++;
+                    Logger.info(`Ignoring PR${rawPr.number} due to ${Config.ignoredByMergeBotsLabel()} label`);
+                    continue;
+                }
+
                 const result = await MergeContext.Process(rawPr, somePrWasStaged);
                 assert(!somePrWasStaged || !result.prStaged());
                 somePrWasStaged = somePrWasStaged || result.prStaged();
@@ -47,7 +55,7 @@ class PrMerger {
         if (this._errors)
             throw new Error(`Failed to process ${this._errors} out of ${this._total} PRs.`);
 
-        Logger.info("Successfully processed all " + this._total + " PRs.");
+        Logger.info("Successfully handled all " + this._total + " PRs, processed/ignored: " + (this._total - this._ignored) + "/" + this._ignored);
         return minDelay;
     }
 
