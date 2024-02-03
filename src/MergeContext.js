@@ -1079,7 +1079,7 @@ class PullRequest {
             throw this._exLostControl("premature " + Config.mergedLabel());
 
         if (this._labels.has(Config.ignoredByMergeBotsLabel()))
-            throw this._exLostControl("unexpected " + Config.mergedLabel());
+            throw this._exLostControl("unexpected " + Config.ignoredByMergeBotsLabel());
     }
 
     // whether the PR should be staged (including re-staged)
@@ -1761,7 +1761,8 @@ class PullRequest {
         return problem;
     }
 
-    // somebody else appears to perform Anubis-only PR manipulations
+    // Anubis is explicitly prohibited from manipulating this PR or
+    // somebody else appears to perform Anubis-only PR manipulations.
     // minimize changes to avoid conflicts (but do not block other PRs)
     _exLostControl(why) {
         assert(arguments.length === 1);
