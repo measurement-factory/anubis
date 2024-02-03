@@ -1761,8 +1761,9 @@ class PullRequest {
         return problem;
     }
 
-    // Anubis is explicitly prohibited from manipulating this PR or
-    // somebody else appears to perform Anubis-only PR manipulations.
+    // After it started processing a PR, Anubis was prohibited from 
+    // manipulating that PR or discovered a concurrent Anubis-only PR
+    // manipulation (evidently performed by somebody else).
     // minimize changes to avoid conflicts (but do not block other PRs)
     _exLostControl(why) {
         assert(arguments.length === 1);
