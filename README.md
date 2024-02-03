@@ -162,7 +162,7 @@ request state:
 * `M-cleared-for-merge`: A human has allowed the bot running in
   `config::guarded_run` mode to perform the final merging step --
   updating the target branch. The label has no effect unless the bot is
-  running in that mode. This is one of a few bot-related label that is meant
+  running in that mode. This is one of a few bot-related label that are meant
   to be set by humans; the bot itself never sets this label. The bot
   removes this label after successfully merging the PR. Avoid setting
   this label unless you are a human responsible for testing the bot.
