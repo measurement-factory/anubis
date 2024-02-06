@@ -83,7 +83,6 @@ class RepoMerger {
         } while (this._rerun);
         if (rerunIn)
             this._plan(rerunIn);
-
         this._running = false;
     }
 
