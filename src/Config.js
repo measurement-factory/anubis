@@ -136,9 +136,6 @@ class ConfigOptions {
     // GitHub transaction timeout, ms
     // GitHub library default is 0 which is interpreted as infinity (i.e. no timeout)
     requestTimeout() { return 3 * 60000; }
-
-    // a PR that has been modified earlier than this time(ms) ago may be ignored
-    prUnchangedDurationMin() { return 3600 * 1000; }
 }
 
 const configFile = process.argv.length > 2 ? process.argv[2] : './config.json';

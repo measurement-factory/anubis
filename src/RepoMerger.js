@@ -3,7 +3,7 @@ const http = require('http');
 const Config = require('./Config.js');
 const Log = require('./Logger.js');
 const Util = require('./Util.js');
-const PrMerger = require('./PrMerger.js');
+const Step = require('./PrMerger.js');
 
 const Logger = Log.Logger;
 
@@ -16,7 +16,6 @@ class RepoMerger {
         this._running = false;
         this._handler = null;
         this._server = null;
-        this._lastPrScan = null;
     }
 
     _createServer() {
@@ -65,14 +64,10 @@ class RepoMerger {
                 this._rerun = false;
                 if (!this._server)
                     await this._createServer();
-
-                this._lastPrScan = await PrMerger.Step(this._lastPrScan);
-
-                rerunIn = this._lastPrScan.delay;
+                rerunIn = await Step();
             } catch (e) {
                 Log.LogError(e, "RepoMerger.run");
                 this._rerun = true;
-                this._lastPrScan = null;
                 Logger.info("closing HTTP server");
                 this._server.close(this._onServerClosed.bind(this));
 

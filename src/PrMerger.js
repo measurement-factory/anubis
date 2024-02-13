@@ -9,14 +9,20 @@ const MergeContext = require('./MergeContext.js');
 class PrScanResult {
     constructor() {
         this.scanDate = new Date(); // the scan starting time
-        this.delay = null; // the next scan should start in this number of milliseconds
-        this.unchangedPrs = []; // PRs that may be ignored in the next scan
+        this.awakePrs = []; // PRs that were not delayed during the scan
     }
 
-    isStillUnchanged(pr) {
-        return this.unchangedPrs.some(el => el.number === pr.number && el.updated_at === pr.updated_at);
+    isStillUnchanged(rawPr) {
+        const pr = this.awakePrs.find(el => el.number === rawPr.number && el.updated_at === rawPr.updated_at);
+        if (pr === undefined)
+            return false;
+        const unmodifiedDurationMs = new Date() - new Date(pr.updated_at);
+        return unmodifiedDurationMs > 1000*3600;
     }
 }
+
+// PrScanResult produced by the latest PrMerger.execute() call
+let _LastScan = null;
 
 // A single Anubis processing step:
 // Updates and, to the extent possible, advances each open PR. Once.
@@ -25,14 +31,16 @@ class PrMerger {
     constructor() {
         this._total = 0; // the number of open PRs received from GitHub
         this._errors = 0; // the number of PRs with processing failures
-        this._ignored = 0; // the number of ignored PRs (due to human markings)
-        this._ignoredUnchanged = 0; // the number of ignored PRs (due to lack of PR modifications)
+
+        // here, "ignored" or "skipped" means "not given to MergeContext.Process()"
+        this._ignored = 0; // the number of PRs skipped due to human markings; TODO: Rename to _ignoredAsMarked
+        this._ignoredAsUnchanged = 0; // the number of PRs skipped due to lack of PR updates
         this._todo = null; // raw PRs to be processed
     }
 
     // Implements a single Anubis processing step.
     // Returns suggested wait time until the next step (in milliseconds).
-    async execute(oldScanResult) {
+    async execute() {
         Logger.info("runStep running");
         let scanResult = new PrScanResult();
 
@@ -42,10 +50,14 @@ class PrMerger {
 
         await this._determineProcessingOrder(await this._current());
 
+        let minDelay = null;
+
         let somePrWasStaged = false;
         while (this._todo.length) {
             try {
                 const rawPr = this._todo.shift();
+
+                scanResult.awakePrs.push(rawPr);
 
                 if (rawPr.labels.some(el => el.name === Config.ignoredByMergeBotsLabel())) {
                     this._ignored++;
@@ -60,25 +72,22 @@ class PrMerger {
                 // this scan has been started. Other (non-cleared) PRs (that are not going to be merged now anyway)
                 // can be ignored until the next scan.
                 // TODO: also handle a situation when the PR becomes 'cleared' just after this scan began.
-                if (!clearedForMerge && oldScanResult && oldScanResult.isStillUnchanged(rawPr)) {
-                    Logger.info(`Ignoring PR${rawPr.number} because it has not changed since the previous scan of ${oldScanResult.scanDate.toISOString()}`);
-                    this._ignoredUnchanged++;
-                    scanResult.unchangedPrs.push(rawPr);
+                if (!clearedForMerge && _LastScan && _LastScan.isStillUnchanged(rawPr)) {
+                    Logger.info(`Ignoring PR${rawPr.number} because it has not changed since the previous scan of ${_LastScan.scanDate.toISOString()}`);
+                    this._ignoredAsUnchanged++;
                     continue;
                 }
 
                 const result = await MergeContext.Process(rawPr, somePrWasStaged);
                 assert(!somePrWasStaged || !result.prStaged());
                 somePrWasStaged = somePrWasStaged || result.prStaged();
-                if (result.delayed() && (scanResult.delay === null || scanResult.delay > result.delayMs()))
-                    scanResult.delay = result.delayMs();
+                if (result.delayed() && (minDelay === null || minDelay > result.delayMs()))
+                    minDelay = result.delayMs();
 
-                // Delayed PRs will be handled by the bot itself in the future, do not ignore them.
-                if (!result.delayed()) {
-                    const unmodifiedDurationMs = new Date() - new Date(rawPr.updated_at);
-                    if (unmodifiedDurationMs >= Config.prUnchangedDurationMin())
-                        scanResult.unchangedPrs.push(rawPr);
-                }
+                // delayed PRs will be processed (when the delay expires) even if not updated
+                if (result.delayed())
+                    scanResult.awakePrs = scanResult.awakePrs.filter(el => el.number !== rawPr.number);
+
             } catch (e) {
                 Log.LogError(e, "PrMerger.runStep");
                 this._errors++;
@@ -88,8 +97,14 @@ class PrMerger {
         if (this._errors)
             throw new Error(`Failed to process ${this._errors} out of ${this._total} PRs.`);
 
-        Logger.info("Successfully handled all " + this._total + " PRs, processed/ignored: " + (this._total - this._ignored) + "/" + this._ignored + "+" + this._ignoredUnchanged);
-        return scanResult;
+        Logger.info("Successfully handled all " + this._total + " PRs; processed/ignored/unchanged: " +
+            (this._total - this._ignored - this._ignoredAsUnchanged) + "/" +
+            this._ignored + "/" +
+            this._ignoredAsUnchanged);
+
+        _LastScan = scanResult;
+
+        return minDelay;
     }
 
     // a string enumerating PR numbers of _todo PRs
@@ -155,13 +170,14 @@ class PrMerger {
 } // PrMerger
 
 // promises to process all PRs once, hiding PrMerger from callers
-function Step(oldScanResult) {
-    let mergerer = new PrMerger();
-    return mergerer.execute(oldScanResult);
+function Step() {
+    try {
+        let mergerer = new PrMerger();
+        return mergerer.execute();
+    } catch (e) {
+        _LastScan = null;
+        throw e;
+    }
 }
 
-module.exports = {
-    Step: Step,
-    PrScanResult: PrScanResult
-};
-
+module.exports = Step;
