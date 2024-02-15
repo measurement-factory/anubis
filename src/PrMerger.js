@@ -10,6 +10,7 @@ class PrScanResult {
     constructor(prs) {
         this.scanDate = new Date(); // the scan starting time
         this.awakePrs = [...prs]; // PRs that were not delayed during the scan
+        this.minDelay = null; // if there are delayed PRs, pause them for this number of milliseconds
     }
 
     isStillUnchanged(freshRawPr, freshScanDate) {
@@ -24,9 +25,12 @@ class PrScanResult {
         return unmodifiedDurationMs > 1000*3600;
     }
 
-    forgetPr(rawPr) {
-        assert(this.awakePrs.find(el => el.number === rawPr.number));
+    forgetDelayedPr(rawPr, delay) {
+        const oldPrs = this.awakePrs;
         this.awakePrs = this.awakePrs.filter(el => el.number !== rawPr.number);
+        assert(oldPrs.length === this.awakePrs.length + 1); // one PR was removed
+        if (this.minDelay === null || this.minDelay > delay)
+            this.minDelay = delay;
     }
 }
 
@@ -49,7 +53,7 @@ class PrMerger {
 
     // Implements a single Anubis processing step.
     // Returns suggested wait time until the next step (in milliseconds).
-    async execute() {
+    async execute(lastScan) {
         Logger.info("runStep running");
 
         this._todo = await GH.getOpenPrs();
@@ -57,8 +61,6 @@ class PrMerger {
         Logger.info(`Received ${this._total} PRs from GitHub:`, this._prNumbers());
 
         await this._determineProcessingOrder(await this._current());
-
-        let minDelay = null;
 
         let somePrWasStaged = false;
         let currentScan = new PrScanResult(this._todo);
@@ -72,14 +74,7 @@ class PrMerger {
                     continue;
                 }
 
-                const clearedForMerge = rawPr.labels.some(el => el.name === Config.clearedForMergeLabel());
-
-                // There are usually few 'cleared' PRs (i.e., ready for merge), so do not ignore them.
-                // This should help handle sutiations where some of such 'cleared' PRs were updated just after
-                // this scan has been started. Other (non-cleared) PRs (that are not going to be merged now anyway)
-                // can be ignored until the next scan.
-                // TODO: also handle a situation when the PR becomes 'cleared' just after this scan began.
-                if (!clearedForMerge && _LastScan && _LastScan.isStillUnchanged(rawPr, currentScan.scanDate)) {
+                if (lastScan && lastScan.isStillUnchanged(rawPr, currentScan.scanDate)) {
                     const updatedAt = new Date(rawPr.updated_at);
                     Logger.info(`Ignoring PR${rawPr.number} because it has not changed since ${updatedAt.toISOString()}`);
                     this._ignoredAsUnchanged++;
@@ -89,12 +84,10 @@ class PrMerger {
                 const result = await MergeContext.Process(rawPr, somePrWasStaged);
                 assert(!somePrWasStaged || !result.prStaged());
                 somePrWasStaged = somePrWasStaged || result.prStaged();
-                if (result.delayed() && (minDelay === null || minDelay > result.delayMs()))
-                    minDelay = result.delayMs();
 
                 // delayed PRs will be processed (when the delay expires) even if not updated
                 if (result.delayed())
-                    currentScan.forgetPr(rawPr);
+                    currentScan.forgetDelayedPr(rawPr, result.delayMs());
 
             } catch (e) {
                 Log.LogError(e, "PrMerger.runStep");
@@ -110,9 +103,7 @@ class PrMerger {
             this._ignored + "/" +
             this._ignoredAsUnchanged);
 
-        _LastScan = currentScan;
-
-        return minDelay;
+        return currentScan;
     }
 
     // a string enumerating PR numbers of _todo PRs
@@ -178,14 +169,12 @@ class PrMerger {
 } // PrMerger
 
 // promises to process all PRs once, hiding PrMerger from callers
-function Step() {
-    try {
-        let mergerer = new PrMerger();
-        return mergerer.execute();
-    } catch (e) {
-        _LastScan = null;
-        throw e;
-    }
+async function Step() {
+    const lastScan = _LastScan;
+    _LastScan = null;
+    const mergerer = new PrMerger();
+    _LastScan = await mergerer.execute(lastScan);
+    return _LastScan.minDelay;
 }
 
 module.exports = Step;
