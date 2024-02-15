@@ -7,21 +7,30 @@ const Util = require('./Util.js');
 const MergeContext = require('./MergeContext.js');
 
 class PrScanResult {
-    constructor() {
+    constructor(prs) {
         this.scanDate = new Date(); // the scan starting time
-        this.awakePrs = []; // PRs that were not delayed during the scan
+        this.awakePrs = [...prs]; // PRs that were not delayed during the scan
     }
 
-    isStillUnchanged(rawPr) {
-        const pr = this.awakePrs.find(el => el.number === rawPr.number && el.updated_at === rawPr.updated_at);
-        if (pr === undefined)
-            return false;
-        const unmodifiedDurationMs = new Date() - new Date(pr.updated_at);
+    isStillUnchanged(freshRawPr, freshScanDate) {
+        const savedRawPr = this.awakePrs.find(el => el.number === freshRawPr.number);
+        if (!savedRawPr)
+            return false; // this scan has not seen freshRawPR
+        if (savedRawPr.updated_at !== freshRawPr.updated_at)
+            return false; // PR has changed since this scan
+        // treat recently updated PRs as changed PRs thus factoring in a
+        // (slight) possibility of same-timestamp changes
+        const unmodifiedDurationMs = freshScanDate - new Date(savedRawPr.updated_at);
         return unmodifiedDurationMs > 1000*3600;
+    }
+
+    forgetPr(rawPr) {
+        assert(this.awakePrs.find(el => el.number === rawPr.number));
+        this.awakePrs = this.awakePrs.filter(el => el.number !== rawPr.number);
     }
 }
 
-// PrScanResult produced by the latest PrMerger.execute() call
+// PrScanResult produced by the last successfully finished PrMerger.execute() call
 let _LastScan = null;
 
 // A single Anubis processing step:
@@ -42,7 +51,6 @@ class PrMerger {
     // Returns suggested wait time until the next step (in milliseconds).
     async execute() {
         Logger.info("runStep running");
-        let scanResult = new PrScanResult();
 
         this._todo = await GH.getOpenPrs();
         this._total = this._todo.length;
@@ -53,11 +61,10 @@ class PrMerger {
         let minDelay = null;
 
         let somePrWasStaged = false;
+        let currentScan = new PrScanResult(this._todo);
         while (this._todo.length) {
             try {
                 const rawPr = this._todo.shift();
-
-                scanResult.awakePrs.push(rawPr);
 
                 if (rawPr.labels.some(el => el.name === Config.ignoredByMergeBotsLabel())) {
                     this._ignored++;
@@ -72,8 +79,9 @@ class PrMerger {
                 // this scan has been started. Other (non-cleared) PRs (that are not going to be merged now anyway)
                 // can be ignored until the next scan.
                 // TODO: also handle a situation when the PR becomes 'cleared' just after this scan began.
-                if (!clearedForMerge && _LastScan && _LastScan.isStillUnchanged(rawPr)) {
-                    Logger.info(`Ignoring PR${rawPr.number} because it has not changed since the previous scan of ${_LastScan.scanDate.toISOString()}`);
+                if (!clearedForMerge && _LastScan && _LastScan.isStillUnchanged(rawPr, currentScan.scanDate)) {
+                    const updatedAt = new Date(rawPr.updated_at);
+                    Logger.info(`Ignoring PR${rawPr.number} because it has not changed since ${updatedAt.toISOString()}`);
                     this._ignoredAsUnchanged++;
                     continue;
                 }
@@ -86,7 +94,7 @@ class PrMerger {
 
                 // delayed PRs will be processed (when the delay expires) even if not updated
                 if (result.delayed())
-                    scanResult.awakePrs = scanResult.awakePrs.filter(el => el.number !== rawPr.number);
+                    currentScan.forgetPr(rawPr);
 
             } catch (e) {
                 Log.LogError(e, "PrMerger.runStep");
@@ -102,7 +110,7 @@ class PrMerger {
             this._ignored + "/" +
             this._ignoredAsUnchanged);
 
-        _LastScan = scanResult;
+        _LastScan = currentScan;
 
         return minDelay;
     }
@@ -181,3 +189,4 @@ function Step() {
 }
 
 module.exports = Step;
+
