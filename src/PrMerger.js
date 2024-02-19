@@ -6,6 +6,37 @@ const GH = require('./GitHubUtil.js');
 const Util = require('./Util.js');
 const MergeContext = require('./MergeContext.js');
 
+class PrScanResult {
+    constructor(prs) {
+        this.scanDate = new Date(); // the scan starting time
+        this.awakePrs = [...prs]; // PRs that were not delayed during the scan
+        this.minDelay = null; // if there are delayed PRs, pause them for at least this many milliseconds
+    }
+
+    isStillUnchanged(freshRawPr, freshScanDate) {
+        const savedRawPr = this.awakePrs.find(el => el.number === freshRawPr.number);
+        if (!savedRawPr)
+            return false; // this scan has not seen freshRawPR
+        if (savedRawPr.updated_at !== freshRawPr.updated_at)
+            return false; // PR has changed since this scan
+        // treat recently updated PRs as changed PRs to reduce the probability of ignoring
+        // (PRs with) subsequent same-timestamp changes
+        const unmodifiedDurationMs = freshScanDate - new Date(savedRawPr.updated_at);
+        return unmodifiedDurationMs > 1000*3600;
+    }
+
+    forgetDelayedPr(rawPr, delay) {
+        const oldPrs = this.awakePrs;
+        this.awakePrs = this.awakePrs.filter(el => el.number !== rawPr.number);
+        assert(oldPrs.length === this.awakePrs.length + 1); // one PR was removed
+        if (this.minDelay === null || this.minDelay > delay)
+            this.minDelay = delay;
+    }
+}
+
+// PrScanResult produced by the last successfully finished PrMerger.execute() call
+let _LastScan = null;
+
 // A single Anubis processing step:
 // Updates and, to the extent possible, advances each open PR. Once.
 class PrMerger {
@@ -13,13 +44,16 @@ class PrMerger {
     constructor() {
         this._total = 0; // the number of open PRs received from GitHub
         this._errors = 0; // the number of PRs with processing failures
-        this._ignored = 0; // the number of ignored PRs (due to human markings)
+
+        // here, "ignored" or "skipped" means "not given to MergeContext.Process()"
+        this._ignored = 0; // the number of PRs skipped due to human markings; TODO: Rename to _ignoredAsMarked
+        this._ignoredAsUnchanged = 0; // the number of PRs skipped due to lack of PR updates
         this._todo = null; // raw PRs to be processed
     }
 
     // Implements a single Anubis processing step.
     // Returns suggested wait time until the next step (in milliseconds).
-    async execute() {
+    async execute(lastScan) {
         Logger.info("runStep running");
 
         this._todo = await GH.getOpenPrs();
@@ -28,9 +62,8 @@ class PrMerger {
 
         await this._determineProcessingOrder(await this._current());
 
-        let minDelay = null;
-
         let somePrWasStaged = false;
+        let currentScan = new PrScanResult(this._todo);
         while (this._todo.length) {
             try {
                 const rawPr = this._todo.shift();
@@ -41,11 +74,21 @@ class PrMerger {
                     continue;
                 }
 
+                if (lastScan && lastScan.isStillUnchanged(rawPr, currentScan.scanDate)) {
+                    const updatedAt = new Date(rawPr.updated_at);
+                    Logger.info(`Ignoring PR${rawPr.number} because it has not changed since ${updatedAt.toISOString()}`);
+                    this._ignoredAsUnchanged++;
+                    continue;
+                }
+
                 const result = await MergeContext.Process(rawPr, somePrWasStaged);
                 assert(!somePrWasStaged || !result.prStaged());
                 somePrWasStaged = somePrWasStaged || result.prStaged();
-                if (result.delayed() && (minDelay === null || minDelay > result.delayMs()))
-                    minDelay = result.delayMs();
+
+                // delayed PRs will be processed (when the delay expires) even if not updated
+                if (result.delayed())
+                    currentScan.forgetDelayedPr(rawPr, result.delayMs());
+
             } catch (e) {
                 Log.LogError(e, "PrMerger.runStep");
                 this._errors++;
@@ -55,8 +98,12 @@ class PrMerger {
         if (this._errors)
             throw new Error(`Failed to process ${this._errors} out of ${this._total} PRs.`);
 
-        Logger.info("Successfully handled all " + this._total + " PRs, processed/ignored: " + (this._total - this._ignored) + "/" + this._ignored);
-        return minDelay;
+        Logger.info("Successfully handled all " + this._total + " PRs; processed/ignored/unchanged: " +
+            (this._total - this._ignored - this._ignoredAsUnchanged) + "/" +
+            this._ignored + "/" +
+            this._ignoredAsUnchanged);
+
+        return currentScan;
     }
 
     // a string enumerating PR numbers of _todo PRs
@@ -122,9 +169,12 @@ class PrMerger {
 } // PrMerger
 
 // promises to process all PRs once, hiding PrMerger from callers
-function Step() {
-    let mergerer = new PrMerger();
-    return mergerer.execute();
+async function Step() {
+    const lastScan = _LastScan;
+    _LastScan = null;
+    const mergerer = new PrMerger();
+    _LastScan = await mergerer.execute(lastScan);
+    return _LastScan.minDelay;
 }
 
 module.exports = Step;
