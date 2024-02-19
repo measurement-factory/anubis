@@ -10,7 +10,7 @@ class PrScanResult {
     constructor(prs) {
         this.scanDate = new Date(); // the scan starting time
         this.awakePrs = [...prs]; // PRs that were not delayed during the scan
-        this.minDelay = null; // if there are delayed PRs, pause them for this number of milliseconds
+        this.minDelay = null; // if there are delayed PRs, pause them for at least this many milliseconds
     }
 
     isStillUnchanged(freshRawPr, freshScanDate) {
@@ -19,8 +19,8 @@ class PrScanResult {
             return false; // this scan has not seen freshRawPR
         if (savedRawPr.updated_at !== freshRawPr.updated_at)
             return false; // PR has changed since this scan
-        // treat recently updated PRs as changed PRs thus factoring in a
-        // (slight) possibility of same-timestamp changes
+        // treat recently updated PRs as changed PRs to reduce the probability of ignoring
+        // (PRs with) subsequent same-timestamp changes
         const unmodifiedDurationMs = freshScanDate - new Date(savedRawPr.updated_at);
         return unmodifiedDurationMs > 1000*3600;
     }
