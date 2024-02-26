@@ -34,6 +34,71 @@ class PrScanResult {
     }
 }
 
+class Events {
+    constructor() {
+        this._pullRequests = [];
+        this._pullRequestReviews = [];
+        this._pushes = [];
+        this._statuses = [];
+    }
+
+    add(name, ev) {
+        if (name === "pull_request")
+            this._pullRequests.push(ev);
+        if (name === "pull_request_review")
+            this._pullRequestReviews.push(ev);
+        else if (name === "push")
+            this._pushes.push(ev);
+        else if (name === "status")
+            this._statuses.push(ev);
+    }
+
+    getUpdatedPrs(prList) {
+        let prs = [];
+        for (let e of this._pullRequests)
+            prs.push(e.number);
+        for (let e of this._pullRequestReviews)
+            prs.push(e.number);
+        for (let e of this._pushes) {
+            const prNum = this._prFromPush(prList);
+            if (prNum)
+                prs.push(prNum);
+        }
+        for (let e of this._statuses) {
+            const prNum = this._prFromStatus(prList);
+            if (prNum)
+                prs.push(prNum);
+        }
+        return prs.filter((v, idx) => prs.indexOf(v) !== idx);
+    }
+
+    _prFromPush(prList, e) {
+        if (e.ref.endsWith(Config.stagingBranchPath())) {
+            if (e.head_commit)
+                return Util.ParsePrNumber(e.head_commit.message);
+        } else {
+            for (let pr of prList) {
+                if (pr.head.sha === e.head_commit.id)
+                    return pr.number;
+            }
+        }
+        return null;
+    }
+
+    _prFromStatus(prList, e) {
+        if (e.branches.some(b => b.endsWith(Config.stagingBranchPath()))) {
+            return Util.ParsePrNumber(e.commit.commit.message);
+        } else {
+            for (let pr of prList) {
+                if (pr.head.sha === e.sha)
+                    return pr.number;
+            }
+        }
+        return null;
+    }
+}
+
+
 // PrScanResult produced by the last successfully finished PrMerger.execute() call
 let _LastScan = null;
 
@@ -53,12 +118,13 @@ class PrMerger {
 
     // Implements a single Anubis processing step.
     // Returns suggested wait time until the next step (in milliseconds).
-    async execute(lastScan) {
+    async execute(lastScan, events) {
         Logger.info("runStep running");
 
         this._todo = await GH.getOpenPrs();
         this._total = this._todo.length;
         Logger.info(`Received ${this._total} PRs from GitHub:`, this._prNumbers());
+        const updatedPrs = events.getUpdatedPrs(this._todo);
 
         await this._determineProcessingOrder(await this._current());
 
@@ -67,6 +133,11 @@ class PrMerger {
         while (this._todo.length) {
             try {
                 const rawPr = this._todo.shift();
+
+                if (updatedPrs.some(el => el === rawPr.number)) {
+                    Logger.info(`Ignoring PR${rawPr.number} because it was updated`);
+                    continue;
+                }
 
                 if (rawPr.labels.some(el => el.name === Config.ignoredByMergeBotsLabel())) {
                     this._ignored++;
@@ -169,13 +240,16 @@ class PrMerger {
 } // PrMerger
 
 // promises to process all PRs once, hiding PrMerger from callers
-async function Step() {
+async function Step(events) {
     const lastScan = _LastScan;
     _LastScan = null;
     const mergerer = new PrMerger();
-    _LastScan = await mergerer.execute(lastScan);
+    _LastScan = await mergerer.execute(lastScan, events);
     return _LastScan.minDelay;
 }
 
-module.exports = Step;
+module.exports = {
+    Step: Step,
+    Events: Events
+};
 

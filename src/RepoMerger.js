@@ -3,7 +3,7 @@ const http = require('http');
 const Config = require('./Config.js');
 const Log = require('./Logger.js');
 const Util = require('./Util.js');
-const Step = require('./PrMerger.js');
+const PrMerger = require('./PrMerger.js');
 
 const Logger = Log.Logger;
 
@@ -16,6 +16,7 @@ class RepoMerger {
         this._running = false;
         this._handler = null;
         this._server = null;
+        this._events = new PrMerger.Events();
     }
 
     _createServer() {
@@ -47,9 +48,11 @@ class RepoMerger {
     }
 
     // prNum (if provided) corresponds to a PR, scheduled this 'run'
-    async run(handler) {
+    async run(handler, evName, ev) {
         if (handler)
             this._handler = handler;
+
+        this._events.add(evName, ev);
 
         if (this._running) {
             Logger.info("Already running, planning rerun.");
@@ -64,7 +67,9 @@ class RepoMerger {
                 this._rerun = false;
                 if (!this._server)
                     await this._createServer();
-                rerunIn = await Step();
+                let events = this._events;
+                this._events = new PrMerger.Events();
+                rerunIn = await PrMerger.Step(events);
             } catch (e) {
                 Log.LogError(e, "RepoMerger.run");
                 this._rerun = true;
