@@ -47,7 +47,8 @@ class RepoMerger {
         });
     }
 
-    // prNum (if provided) corresponds to a PR, scheduled this 'run'
+    // evName (event name) and ev (event data), if provided, correspond to an event
+    // that scheduled this 'run'
     async run(handler, evName, ev) {
         if (handler)
             this._handler = handler;
