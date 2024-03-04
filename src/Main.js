@@ -46,6 +46,20 @@ WebhookHandler.on('push', (ev) => {
     Merger.run();
 });
 
+// https://docs.github.com/ru/webhooks/webhook-events-and-payloads#workflow_run
+WebhookHandler.on('workflow_run', (ev) => {
+    const e = ev.payload.workflow_run;
+    Logger.info("workflow_run event:", e.head_sha);
+    Merger.run();
+});
+
+// https://docs.github.com/en/webhooks/webhook-events-and-payloads#check_run
+WebhookHandler.on('check_run', (ev) => {
+    const e = ev.payload.check_run;
+    Logger.info("check_run event:", e.head_sha);
+    Merger.run();
+});
+
 WebhookHandler.on('ping', (ev) => {
     const e = ev.payload;
     Logger.info("ping event, hook_id:", e.hook_id);
