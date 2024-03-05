@@ -34,99 +34,6 @@ class PrScanResult {
     }
 }
 
-// accumulates GitHub events received during a PR scan
-// and extracts PR numbers from them
-class Events {
-    constructor() {
-        this._pullRequests = [];
-        this._pullRequestReviews = [];
-        this._pushes = [];
-        this._statuses = [];
-        this._checkRuns = [];
-        this._workflowRuns = [];
-    }
-
-    add(name, ev) {
-        Logger.info("Events.add: " + name);
-        if (name === "pull_request")
-            this._pullRequests.push(ev);
-        else if (name === "pull_request_review")
-            this._pullRequestReviews.push(ev);
-        else if (name === "push")
-            this._pushes.push(ev);
-        else if (name === "status")
-            this._statuses.push(ev);
-        else if (name === "check_run")
-            this._checkRuns.push(ev);
-        else if (name === "workflow_run")
-            this._workflowRuns.push(ev);
-    }
-
-    // returns an array of PR numbers extracted from the events
-    updatedPrs(allPrs) {
-        let prs = [];
-        for (let e of this._pullRequests)
-            prs.push(e.number.toString());
-        for (let e of this._pullRequestReviews)
-            prs.push(e.number.toString());
-        for (let e of this._pushes) {
-            const prNum = this._prFromPush(allPrs, e);
-            if (prNum)
-                prs.push(prNum.toString());
-        }
-        for (let e of this._statuses) {
-            const prNum = this._prFromStatus(allPrs, e);
-            if (prNum)
-                prs.push(prNum.toString());
-        }
-        for (let e of this._checkRuns) {
-            for (let pr of e.check_suite.pull_requests)
-                prs.push(pr.number);
-        }
-        for (let e of this._workflowRuns) {
-            for (let pr of e.pull_requests)
-                prs.push(pr.number);
-        }
-
-        // remove duplicates
-        prs = prs.filter((v, idx) => prs.indexOf(v) === idx);
-        Logger.info('updated PRs: [' + prs.join() + ']');
-        return prs;
-    }
-
-    _prFromPush(prList, e) {
-        let prNum = null;
-        if (e.ref.endsWith(Config.stagingBranchPath())) {
-            if (e.head_commit)
-                prNum = Util.ParsePrNumber(e.head_commit.message);
-        } else {
-            for (let pr of prList) {
-                // may get SHA from e.after instead
-                if (pr.head.sha === e.head_commit.id)
-                    prNum = pr.number;
-            }
-        }
-        if (prNum === null)
-            Logger.info(`Could not extract PR number from push event SHA=${e.after}`);
-        return prNum;
-    }
-
-    _prFromStatus(prList, e) {
-        let prNum = null;
-        if (e.branches.some(b => b.name.endsWith(Config.stagingBranch()))) {
-            prNum = Util.ParsePrNumber(e.commit.commit.message);
-        } else {
-            for (let pr of prList) {
-                if (pr.head.sha === e.sha)
-                    prNum = pr.number;
-            }
-        }
-        if (prNum === null)
-            Logger.info(`Could not extract PR number from status event SHA=${e.sha}`);
-        return prNum;
-    }
-}
-
 // PrScanResult produced by the last successfully finished PrMerger.execute() call
 let _LastScan = null;
 
@@ -146,13 +53,27 @@ class PrMerger {
 
     // Implements a single Anubis processing step.
     // Returns suggested wait time until the next step (in milliseconds).
-    async execute(lastScan, events) {
+    async execute(lastScan, prIds) {
         Logger.info("runStep running");
 
         this._todo = await GH.getOpenPrs();
         this._total = this._todo.length;
         Logger.info(`Received ${this._total} PRs from GitHub:`, this._prNumbers());
-        const updatedPrs = events.updatedPrs(this._todo);
+        let updatedPrs = Array.from(prIds, (id) => {
+            // id is not SHA-1
+            if (id.length !== 40)
+                return id;
+            const pr = this._todo.find(pr => pr.head.sha === id);
+            if (pr)
+                return pr;
+            Logger.warn(`could not find a PR by ${id} head sha`);
+            return null;
+        });
+
+        if (updatedPrs.some(el => el === null)) {
+            Logger.warn('discarding PR scan optimization');
+            updatedPrs = null;
+        }
 
         await this._determineProcessingOrder(await this._current());
 
@@ -169,7 +90,7 @@ class PrMerger {
                 }
 
                 const clearedForMerge = rawPr.labels.some(el => el.name === Config.clearedForMergeLabel());
-                const updated = updatedPrs.some(el => el === rawPr.number);
+                const updated = !updatedPrs || updatedPrs.some(el => el === rawPr.number);
 
                 // If a PR A was cleared for merge, it may be ready for merge (no updates are expected)
                 // but waiting for another PR B which is currently being merged. If we switched back to PR A
@@ -269,16 +190,13 @@ class PrMerger {
 } // PrMerger
 
 // promises to process all PRs once, hiding PrMerger from callers
-async function Step(events) {
+async function Step(prIds) {
     const lastScan = _LastScan;
     _LastScan = null;
     const mergerer = new PrMerger();
-    _LastScan = await mergerer.execute(lastScan, events);
+    _LastScan = await mergerer.execute(lastScan, prIds);
     return _LastScan.minDelay;
 }
 
-module.exports = {
-    Step: Step,
-    Events: Events
-};
+module.exports = Step;
 
