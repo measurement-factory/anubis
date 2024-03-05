@@ -55,6 +55,7 @@ class PrMerger {
     // Returns suggested wait time until the next step (in milliseconds).
     async execute(lastScan, prIds) {
         Logger.info("runStep running");
+        Logger.info('prIds: [' + prIds.join() + ']');
 
         this._todo = await GH.getOpenPrs();
         this._total = this._todo.length;
@@ -63,16 +64,21 @@ class PrMerger {
             // id is not SHA-1
             if (id.length !== 40)
                 return id;
-            const pr = this._todo.find(pr => pr.head.sha === id);
+            const pr = this._todo.find(p => p.head.sha === id);
             if (pr)
-                return pr;
+                return pr.number.toString();
             Logger.warn(`could not find a PR by ${id} head sha`);
             return null;
         });
 
+        // remove duplicates
+        updatedPrs = updatedPrs.filter((v, idx) => updatedPrs.indexOf(v) === idx);
+
         if (updatedPrs.some(el => el === null)) {
             Logger.warn('discarding PR scan optimization');
             updatedPrs = null;
+        } else {
+            Logger.info('recently updated PRs: [' + updatedPrs.join() + ']');
         }
 
         await this._determineProcessingOrder(await this._current());

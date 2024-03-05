@@ -2,6 +2,7 @@ const createHandler = require('github-webhook-handler');
 const Config = require('./Config.js');
 const Log = require('./Logger.js');
 const Merger = require('./RepoMerger.js');
+const Util = require('./Util.js');
 
 const Logger = Log.Logger;
 
@@ -37,8 +38,10 @@ WebhookHandler.on('status', (ev) => {
     const e = ev.payload;
     Logger.info("status event:", e.id, e.sha, e.context, e.state);
     let id = e.sha;
-    if (e.branches.some(b => b.name.endsWith(Config.stagingBranch())))
+    if (e.branches.some(b => b.name.endsWith(Config.stagingBranch()))) {
         id = Util.ParsePrNumber(e.commit.commit.message);
+        Logger.info("status event parsed PR:", id);
+    }
     Merger.run([id]);
 });
 
@@ -51,8 +54,10 @@ WebhookHandler.on('push', (ev) => {
     if (!e.head_commit) {
         Logger.error("head_commit is missing for ", e.after);
     } else {
-        if (e.ref.endsWith(Config.stagingBranchPath()))
+        if (e.ref.endsWith(Config.stagingBranchPath())) {
             id = Util.ParsePrNumber(e.head_commit.message);
+            Logger.info("push event parsed PR:", id);
+        }
     }
 
     Merger.run([id]);
@@ -64,7 +69,7 @@ WebhookHandler.on('workflow_run', (ev) => {
     Logger.info("workflow_run event:", e.head_sha);
     let prs = [];
     for (let pr of e.pull_requests)
-        prs.push(pr.number);
+        prs.push(pr.number.toString());
     Merger.run(prs);
 });
 
@@ -74,7 +79,7 @@ WebhookHandler.on('check_run', (ev) => {
     Logger.info("check_run event:", e.head_sha);
     let prs = [];
     for (let pr of e.check_suite.pull_requests)
-        prs.push(pr.number);
+        prs.push(pr.number.toString());
     Merger.run(prs);
 });
 
