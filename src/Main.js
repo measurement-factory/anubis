@@ -23,26 +23,28 @@ WebhookHandler.on('error', (err) => {
 WebhookHandler.on('pull_request_review', (ev) => {
     const pr = ev.payload.pull_request;
     Logger.info("pull_request_review event:", ev.payload.id, pr.number, pr.head.sha, pr.state);
-    Merger.run([pr.number.toString()]);
+    Merger.run([pr.number]);
 });
 
 // https://developer.github.com/v3/activity/events/types/#pullrequestevent
 WebhookHandler.on('pull_request', (ev) => {
     const pr = ev.payload.pull_request;
     Logger.info("pull_request event:", ev.payload.id, pr.number, pr.head.sha, pr.state);
-    Merger.run([pr.number.toString()]);
+    Merger.run([pr.number]);
 });
 
 // https://developer.github.com/v3/activity/events/types/#statusevent
 WebhookHandler.on('status', (ev) => {
     const e = ev.payload;
     Logger.info("status event:", e.id, e.sha, e.context, e.state);
-    let id = e.sha;
-    if (e.branches.some(b => b.name.endsWith(Config.stagingBranch()))) {
-        id = Util.ParsePrNumber(e.commit.commit.message);
-        Logger.info("status event parsed PR:", id);
+    const branches = Array.from(e.branches, b => b.name);
+    if (branches.includes(Config.stagingBranch())) {
+        const prNum = Util.ParsePrNumber(e.commit.commit.message);
+        Logger.info("status event parsed PR:", prNum);
+        Merger.run([parseInt(prNum)]);
+    } else {
+        Merger.run(branches);
     }
-    Merger.run([id]);
 });
 
 // https://developer.github.com/v3/activity/events/types/#pushevent
@@ -50,37 +52,51 @@ WebhookHandler.on('push', (ev) => {
     const e = ev.payload;
     Logger.info("push event:", e.ref);
 
-    let id = e.after; // SHA
-    if (!e.head_commit) {
-        Logger.error("head_commit is missing for ", e.after);
-    } else {
-        if (e.ref.endsWith(Config.stagingBranchPath())) {
-            id = Util.ParsePrNumber(e.head_commit.message);
-            Logger.info("push event parsed PR:", id);
-        }
+    // e.ref as refs/heads/branch_name
+    const branch = e.ref.split('/')
+
+    if (branch !== Config.stagingBranch()) {
+        Merger.run([branch]);
+        return;
     }
 
-    Merger.run([id]);
+    let prNum = null;
+    if (e.head_commit) {
+        const num = Util.ParsePrNumber(e.head_commit.message);
+        if (num) {
+            Logger.info("push event parsed PR:", prNum);
+            prNum = parseInt(num);
+        } else {
+            Logger.warn(`push event: could not parse PR number from ${e.head_commit.message}`);
+        }
+    } else {
+        Logger.warn("push event: e.head_commit is null");
+    }
+    Merger.run([prNum]);
 });
 
 // https://docs.github.com/ru/webhooks/webhook-events-and-payloads#workflow_run
 WebhookHandler.on('workflow_run', (ev) => {
     const e = ev.payload.workflow_run;
     Logger.info("workflow_run event:", e.head_sha);
-    let prs = [];
-    for (let pr of e.pull_requests)
-        prs.push(pr.number.toString());
-    Merger.run(prs);
+    if (!e.pull_requests.length) {
+        Logger.warn("workflow_run event: pull_requests array is empty");
+        Merger.run([null]);
+        return;
+    }
+    Merger.run(Array.from(e.pull_requests, v => v.number));
 });
 
 // https://docs.github.com/en/webhooks/webhook-events-and-payloads#check_run
 WebhookHandler.on('check_run', (ev) => {
     const e = ev.payload.check_run;
     Logger.info("check_run event:", e.head_sha);
-    let prs = [];
-    for (let pr of e.check_suite.pull_requests)
-        prs.push(pr.number.toString());
-    Merger.run(prs);
+    if (!e.check_suite.pull_requests.length) {
+        Logger.warn("check_run event: pull_requests array is empty");
+        Merger.run([null]);
+        return;
+    }
+    Merger.run(Array.from(e.check_suite.pull_requests, v => v.number));
 });
 
 WebhookHandler.on('ping', (ev) => {

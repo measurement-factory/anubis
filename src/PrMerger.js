@@ -61,13 +61,16 @@ class PrMerger {
         this._total = this._todo.length;
         Logger.info(`Received ${this._total} PRs from GitHub:`, this._prNumbers());
         let updatedPrs = Array.from(prIds, (id) => {
-            // id is not SHA-1
-            if (id.length !== 40)
+            if (id === null) // an event handler could not extract id earlier
                 return id;
-            const pr = this._todo.find(p => p.head.sha === id);
+
+            if (typeof(id) === "number")
+                return id.toString();
+
+            const pr = this._todo.find(p => p.head.ref === id);
             if (pr)
                 return pr.number.toString();
-            Logger.warn(`could not find a PR by ${id} head sha`);
+            Logger.warn(`could not find a PR by ${id} branch`);
             return null;
         });
 
