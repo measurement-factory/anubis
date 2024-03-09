@@ -53,7 +53,8 @@ WebhookHandler.on('push', (ev) => {
     Logger.info("push event:", e.ref);
 
     // e.ref as refs/heads/branch_name
-    const branch = e.ref.split('/')
+    const parts = e.ref.split('/')
+    const branch = parts[parts.length-1];
 
     if (branch !== Config.stagingBranch()) {
         Merger.run([branch]);
