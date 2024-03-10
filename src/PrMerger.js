@@ -71,10 +71,10 @@ class PrMerger {
             if (id === null) // an event handler could not extract id earlier
                 return id;
 
-            if (typeof(id) === "number")
+            if (typeof(id) === "number") // PR number
                 return id.toString();
 
-            const pr = this._todo.find(p => p.head.ref === id);
+            const pr = this._todo.find(p => p.head.ref === id); // PR branch
             if (pr)
                 return pr.number.toString();
             Logger.warn(`could not find a PR by ${id} branch`);
@@ -184,11 +184,12 @@ class PrMerger {
         let prIdsOut = [];
 
         for (let id of prIdsIn) {
+            // GitHub restricts 40-length strings for SHAs:
+            // https://docs.github.com/en/get-started/using-git/dealing-with-special-characters-in-branch-and-tag-names
             if (id.length !== 40) {
                 prIdsOut.push(id);
                 continue;
             }
-            // staged sha
             if (currentPr && (id === this._stagedBranchSha)) {
                 prIdsOut.push(currentPr.number);
                 continue;
