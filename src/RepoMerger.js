@@ -47,7 +47,10 @@ class RepoMerger {
         });
     }
 
-    // prIds (if provided) an array of strings, each represents either PR number or PR head SHA.
+    // prIds (if provided) an array of elements, each represents:
+    // a PR number as an integer, or
+    // a PR branch name as a string (without 'refs' or 'heads' prefixes), or
+    // a staging branch commit SHA as a string (including stale commits).
     async run(prIds, handler) {
         if (handler)
             this._handler = handler;

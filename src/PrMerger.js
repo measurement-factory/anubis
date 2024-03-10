@@ -65,7 +65,7 @@ class PrMerger {
         const currentPr = await this._current();
         await this._determineProcessingOrder(currentPr);
 
-        let updatedPrs = await this._extractPrNumbers(prIds, currentPr);
+        let updatedPrs = await this._prNumbersFromShas(prIds, currentPr);
 
         updatedPrs = Array.from(updatedPrs, (id) => {
             if (id === null) // an event handler could not extract id earlier
@@ -180,7 +180,7 @@ class PrMerger {
         Logger.info("PR processing order:", this._prNumbers());
     }
 
-    async _extractPrNumbers(prIdsIn, currentPr) {
+    async _prNumbersFromShas(prIdsIn, currentPr) {
         let prIdsOut = [];
 
         for (let id of prIdsIn) {
