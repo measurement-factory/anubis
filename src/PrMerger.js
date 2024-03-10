@@ -49,6 +49,7 @@ class PrMerger {
         this._ignored = 0; // the number of PRs skipped due to human markings; TODO: Rename to _ignoredAsMarked
         this._ignoredAsUnchanged = 0; // the number of PRs skipped due to lack of PR updates
         this._todo = null; // raw PRs to be processed
+        this._stagedBranchSha; // the SHA of the branch head
     }
 
     // Implements a single Anubis processing step.
@@ -188,12 +189,12 @@ class PrMerger {
                 continue;
             }
             // staged sha
-            if (id === currentPr.head.sha) {
+            if (currentPr && (id === this._stagedBranchSha)) {
                 prIdsOut.push(currentPr.number);
                 continue;
             }
             const commit = await GH.getCommit(id);
-            const prNum = Util.ParsePrNumber(stagedBranchCommit.message);
+            const prNum = Util.ParsePrNumber(commit.message);
             if (prNum === null)
                 Logger.warn(`Could not find a PR by ${id}`);
             else
@@ -207,8 +208,8 @@ class PrMerger {
     // If that PR exists, it is in either a "staged" or "merged" state.
     async _current() {
         Logger.info("Looking for the current PR...");
-        const stagedBranchSha = await GH.getReference(Config.stagingBranchPath());
-        const stagedBranchCommit = await GH.getCommit(stagedBranchSha);
+        this._stagedBranchSha = await GH.getReference(Config.stagingBranchPath());
+        const stagedBranchCommit = await GH.getCommit(this._stagedBranchSha);
         Logger.info("Staged branch head sha: " + stagedBranchCommit.sha);
         const prNum = Util.ParsePrNumber(stagedBranchCommit.message);
         if (prNum === null) {
