@@ -60,7 +60,13 @@ class PrMerger {
         this._todo = await GH.getOpenPrs();
         this._total = this._todo.length;
         Logger.info(`Received ${this._total} PRs from GitHub:`, this._prNumbers());
-        let updatedPrs = Array.from(prIds, (id) => {
+
+        const currentPr = await this._current();
+        await this._determineProcessingOrder(currentPr);
+
+        let updatedPrs = await this._extractPrNumbers(prIds, currentPr);
+
+        updatedPrs = Array.from(updatedPrs, (id) => {
             if (id === null) // an event handler could not extract id earlier
                 return id;
 
@@ -83,8 +89,6 @@ class PrMerger {
         } else {
             Logger.info('recently updated PRs: [' + updatedPrs.join() + ']');
         }
-
-        await this._determineProcessingOrder(await this._current());
 
         let somePrWasStaged = false;
         let currentScan = new PrScanResult(this._todo);
@@ -173,6 +177,30 @@ class PrMerger {
             delete pr.clearedForMerge;
 
         Logger.info("PR processing order:", this._prNumbers());
+    }
+
+    async _extractPrNumbers(prIdsIn, currentPr) {
+        let prIdsOut = [];
+
+        for (let id of prIdsIn) {
+            if (id.length !== 40) {
+                prIdsOut.push(id);
+                continue;
+            }
+            // staged sha
+            if (id === currentPr.head.sha) {
+                prIdsOut.push(currentPr.number);
+                continue;
+            }
+            const commit = await GH.getCommit(id);
+            const prNum = Util.ParsePrNumber(stagedBranchCommit.message);
+            if (prNum === null)
+                Logger.warn(`Could not find a PR by ${id}`);
+            else
+                Logger.info(`Found PR${prNum} for ${id}`);
+            prIdsOut.push(prNum);
+        }
+        return prIdsOut;
     }
 
     // Returns a raw PR with a staged commit (or null).
