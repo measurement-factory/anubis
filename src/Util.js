@@ -26,15 +26,6 @@ function ParsePrNumber(prMessage) {
     return prNumber;
 }
 
-function DateForDaysAgo(days) {
-    let d = new Date();
-    d.setDate(d.getDate() - days);
-    const dd = String(d.getDate()).padStart(2, '0');
-    const mm = String(d.getMonth() + 1).padStart(2, '0'); //January is 0!
-    const yyyy = d.getFullYear();
-    return yyyy + '-' + mm + '-' + dd;
-}
-
 // An error context for promisificated wrappers.
 class ErrorContext extends Error {
     // The underlying rejection may be a bot-specific Promise.reject() or
@@ -77,7 +68,6 @@ module.exports = {
     sleep: sleep,
     commonParams: commonParams,
     ParsePrNumber: ParsePrNumber,
-    ErrorContext: ErrorContext,
-    DateForDaysAgo: DateForDaysAgo
+    ErrorContext: ErrorContext
 };
 

@@ -80,11 +80,6 @@ WebhookHandler.on('push', (ev) => {
 WebhookHandler.on('workflow_run', (ev) => {
     const e = ev.payload.workflow_run;
     Logger.info("workflow_run event:", e.head_sha);
-    // e.pull_requests is empty for the staged commit
-    if (e.head_branch === Config.stagingBranch()) {
-        Merger.run([e.head_sha]);
-        return;
-    }
     if (!e.pull_requests.length) {
         Logger.warn("workflow_run event: pull_requests array is empty");
         Merger.run([null]);
@@ -97,11 +92,6 @@ WebhookHandler.on('workflow_run', (ev) => {
 WebhookHandler.on('check_run', (ev) => {
     const e = ev.payload.check_run;
     Logger.info("check_run event:", e.head_sha);
-    // e.check_suite.pull_requests is empty for the staged commit
-    if (e.check_suite.head_branch === Config.stagingBranch()) {
-        Merger.run([e.head_sha]);
-        return;
-    }
     if (!e.check_suite.pull_requests.length) {
         Logger.warn("check_run event: pull_requests array is empty");
         Merger.run([null]);

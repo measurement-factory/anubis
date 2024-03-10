@@ -49,8 +49,6 @@ class PrMerger {
         this._ignored = 0; // the number of PRs skipped due to human markings; TODO: Rename to _ignoredAsMarked
         this._ignoredAsUnchanged = 0; // the number of PRs skipped due to lack of PR updates
         this._todo = null; // raw PRs to be processed
-        // an array of {sha, prNum} pairs extracted from the staging branch history (for the last 30 days)
-        this._stagingBranchCommits = [];
     }
 
     // Implements a single Anubis processing step.
@@ -62,33 +60,22 @@ class PrMerger {
         this._todo = await GH.getOpenPrs();
         this._total = this._todo.length;
         Logger.info(`Received ${this._total} PRs from GitHub:`, this._prNumbers());
-
-        await this._getStagingBranchCommits();
-
         let updatedPrs = Array.from(prIds, (id) => {
-            if (id === null) // an event handler could not extract id
+            if (id === null) // an event handler could not extract id earlier
                 return id;
 
-            if (typeof(id) === "number") // PR number
+            if (typeof(id) === "number")
                 return id.toString();
 
-            if (id.length === 40) { // staged sha
-                const commit = this._stagingBranchCommits.find(e => e.sha === id);
-                if (commit)
-                    return commit.prNum;
-            } else { // PR branch
-                const pr = this._todo.find(p => p.head.ref === id);
-                if (pr)
-                    return pr.number.toString();
-            }
-            Logger.warn(`could not find a PR by ${id}`);
+            const pr = this._todo.find(p => p.head.ref === id);
+            if (pr)
+                return pr.number.toString();
+            Logger.warn(`could not find a PR by ${id} branch`);
             return null;
         });
 
         // remove duplicates
         updatedPrs = updatedPrs.filter((v, idx) => updatedPrs.indexOf(v) === idx);
-
-        await this._determineProcessingOrder(await this._current());
 
         if (updatedPrs.some(el => el === null)) {
             Logger.warn('discarding PR scan optimization');
@@ -96,6 +83,8 @@ class PrMerger {
         } else {
             Logger.info('recently updated PRs: [' + updatedPrs.join() + ']');
         }
+
+        await this._determineProcessingOrder(await this._current());
 
         let somePrWasStaged = false;
         let currentScan = new PrScanResult(this._todo);
@@ -186,37 +175,17 @@ class PrMerger {
         Logger.info("PR processing order:", this._prNumbers());
     }
 
-    async _getStagingBranchCommits() {
-        this._stagingBranchCommits = [];
-        const stagedCommits = await GH.getCommits(Config.stagingBranchPath(), Util.DateForDaysAgo(30));
-        if (stagedCommits.length) {
-            for (let commit of stagedCommits) {
-                const prNum = Util.ParsePrNumber(commit.commit.message);
-                if (prNum === null)
-                    Logger.warn(`Could not parse PR number for a staging ${commit.sha}`);
-                else
-                    this._stagingBranchCommits.push({sha: commit.sha, prNum: prNum});
-            }
-        } else {
-            const stagedBranchSha = await GH.getReference(Config.stagingBranchPath());
-            const stagedHeadCommit = await GH.getCommit(stagedBranchSha);
-            const prNum = Util.ParsePrNumber(stagedHeadCommit.message);
-            if (prNum === null)
-                Logger.warn(`Could not parse PR number for a head staging ${stagedHeadCommit.sha}`);
-            else
-                this._stagingBranchCommits.push({sha: stagedHeadCommit.sha, prNum: prNum});
-        }
-    }
-
     // Returns a raw PR with a staged commit (or null).
     // If that PR exists, it is in either a "staged" or "merged" state.
     async _current() {
         Logger.info("Looking for the current PR...");
-        if (!this._stagingBranchCommits.length) {
+        const stagedBranchSha = await GH.getReference(Config.stagingBranchPath());
+        const stagedBranchCommit = await GH.getCommit(stagedBranchSha);
+        Logger.info("Staged branch head sha: " + stagedBranchCommit.sha);
+        const prNum = Util.ParsePrNumber(stagedBranchCommit.message);
+        if (prNum === null) {
             Logger.info("Could not track a PR by the staged branch.");
         } else {
-            Logger.info("Staged branch head sha: " + this._stagingBranchCommits[0].sha);
-            const prNum = this._stagingBranchCommits[0].prNum;
             const pr = await GH.getPR(prNum, false);
             if (pr.state === 'open') {
                 Logger.info("PR" + prNum + " is the current");

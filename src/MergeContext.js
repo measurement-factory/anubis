@@ -1267,9 +1267,18 @@ class PullRequest {
         return str + ")";
     }
 
+    _dateForDaysAgo(days) {
+        let d = new Date();
+        d.setDate(d.getDate() - days);
+        const dd = String(d.getDate()).padStart(2, '0');
+        const mm = String(d.getMonth() + 1).padStart(2, '0'); //January is 0!
+        const yyyy = d.getFullYear();
+        return yyyy + '-' + mm + '-' + dd;
+    }
+
     /// Checks whether the PR base branch has this PR's staged commit merged.
     async _mergedSomeTimeAgo() {
-        const dateSince = Util.DateForDaysAgo(100);
+        const dateSince = this._dateForDaysAgo(100);
         let mergedSha = null;
         let commits = await GH.getCommits(this._prBaseBranch(), dateSince);
         for (let commit of commits) {
