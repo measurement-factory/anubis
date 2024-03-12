@@ -65,29 +65,13 @@ class PrMerger {
         const currentPr = await this._current();
         await this._determineProcessingOrder(currentPr);
 
-        let updatedPrs = await this._prNumbersFromShas(prIds, currentPr);
-
-        updatedPrs = Array.from(updatedPrs, (id) => {
-            if (id === null) // an event handler could not extract id earlier
-                return id;
-
-            if (typeof(id) === "number") // PR number
-                return id.toString();
-
-            const pr = this._todo.find(p => p.head.ref === id); // PR branch
-            if (pr)
-                return pr.number.toString();
-            Logger.warn(`could not find a PR by ${id} branch`);
-            return null;
-        });
-
-        // remove duplicates
-        updatedPrs = updatedPrs.filter((v, idx) => updatedPrs.indexOf(v) === idx);
-
-        if (updatedPrs.some(el => el === null)) {
+        let updatedPrs = await this._prNumbersFromIds(prIds, currentPr, this._todo);
+        if (updatedPrs === null) {
             Logger.warn('discarding PR scan optimization');
             updatedPrs = null;
         } else {
+            // remove duplicates
+            updatedPrs = updatedPrs.filter((v, idx) => updatedPrs.indexOf(v) === idx);
             Logger.info('recently updated PRs: [' + updatedPrs.join() + ']');
         }
 
@@ -180,29 +164,40 @@ class PrMerger {
         Logger.info("PR processing order:", this._prNumbers());
     }
 
-    async _prNumbersFromShas(prIdsIn, currentPr) {
-        let prIdsOut = [];
+    async _prNumbersFromIds(prIdsIn, currentPr, prList) {
+        let prNumList = [];
 
         for (let id of prIdsIn) {
-            // GitHub restricts 40-length strings for SHAs:
-            // https://docs.github.com/en/get-started/using-git/dealing-with-special-characters-in-branch-and-tag-names
-            if (id.length !== 40) {
-                prIdsOut.push(id);
-                continue;
+            if (id.type === "prNum") {
+                prNumList.push(id);
+            } else if (id.type === "sha") {
+                if (currentPr && (id.value === this._stagedBranchSha)) {
+                    prNumList.push(currentPr.number);
+                } else {
+                    const commit = await GH.getCommit(id.value);
+                    const prNum = Util.ParsePrNumber(commit.message);
+                    if (prNum === null) {
+                        Logger.warn(`Could not find a PR by ${id}`);
+                        return null;
+                    } else {
+                        Logger.info(`Found PR${prNum} for ${id}`);
+                        prNumList.push(prNum);
+                    }
+                }
+            } else if (id.type === "branch") {
+                const pr = prList.find(p => p.head.ref === id);
+                if (pr) {
+                    prNumList.push(pr.number.toString());
+                } else {
+                    Logger.warn(`could not find a PR by ${id} branch`);
+                    return null;
+                }
+            } else {
+                assert(id.isEmpty());
+                return null;
             }
-            if (currentPr && (id === this._stagedBranchSha)) {
-                prIdsOut.push(currentPr.number);
-                continue;
-            }
-            const commit = await GH.getCommit(id);
-            const prNum = Util.ParsePrNumber(commit.message);
-            if (prNum === null)
-                Logger.warn(`Could not find a PR by ${id}`);
-            else
-                Logger.info(`Found PR${prNum} for ${id}`);
-            prIdsOut.push(prNum);
         }
-        return prIdsOut;
+        return prNumList;
     }
 
     // Returns a raw PR with a staged commit (or null).
