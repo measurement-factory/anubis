@@ -90,6 +90,8 @@ class PrId
     static PrNumList(list) { return Array.from(list, prNum => new PrId("prNum", prNum.toString())); }
 
     isEmpty() { return this.type === null; }
+
+    toString() { return `${this.type}:${this.value}`; }
 }
 
 module.exports = {
