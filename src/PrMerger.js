@@ -66,9 +66,10 @@ class PrMerger {
         await this._determineProcessingOrder(currentPr);
 
         let updatedPrs = await this._prNumbersFromIds(prIds, currentPr, this._todo);
+        // Treat the 'null' updatedPrs below as if all PRs have been 'updated'.
+        // An empty updatedPrs means that none of the PRs has been updated.
         if (updatedPrs === null) {
             Logger.warn('discarding PR scan optimization');
-            updatedPrs = null;
         } else {
             // remove duplicates
             updatedPrs = updatedPrs.filter((v, idx) => updatedPrs.indexOf(v) === idx);
@@ -93,6 +94,7 @@ class PrMerger {
                 // If a PR A was cleared for merge, it may be ready for merge (no updates are expected)
                 // but waiting for another PR B which is currently being merged. If we switched back to PR A
                 // it may remain still ready for merge so we need to process it anyway.
+                // The 'lastScan' check turns off optimization for the initial scan.
                 if (!clearedForMerge && !updated && lastScan && lastScan.isStillUnchanged(rawPr, currentScan.scanDate)) {
                     const updatedAt = new Date(rawPr.updated_at);
                     Logger.info(`Ignoring PR${rawPr.number} because it has not changed since ${updatedAt.toISOString()}`);
@@ -169,27 +171,27 @@ class PrMerger {
 
         for (let id of prIdsIn) {
             if (id.type === "prNum") {
-                prNumList.push(id);
+                prNumList.push(id.value);
             } else if (id.type === "sha") {
                 if (currentPr && (id.value === this._stagedBranchSha)) {
-                    prNumList.push(currentPr.number);
+                    prNumList.push(currentPr.number.toString());
                 } else {
                     const commit = await GH.getCommit(id.value);
                     const prNum = Util.ParsePrNumber(commit.message);
                     if (prNum === null) {
-                        Logger.warn(`Could not find a PR by ${id}`);
+                        Logger.warn(`Could not get a PR number by parsing ${id.value} message`);
                         return null;
                     } else {
-                        Logger.info(`Found PR${prNum} for ${id}`);
+                        Logger.info(`Got PR${prNum} from ${id.value} message`);
                         prNumList.push(prNum);
                     }
                 }
             } else if (id.type === "branch") {
-                const pr = prList.find(p => p.head.ref === id);
+                const pr = prList.find(p => p.head.ref === id.value);
                 if (pr) {
                     prNumList.push(pr.number.toString());
                 } else {
-                    Logger.warn(`could not find a PR by ${id} branch`);
+                    Logger.warn(`Could not find a PR by ${id} branch`);
                     return null;
                 }
             } else {

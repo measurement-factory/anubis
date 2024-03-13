@@ -71,7 +71,7 @@ class ErrorContext extends Error {
 class PrId
 {
     constructor(type, val) {
-        assert(type !== undefined && id !== undefined);
+        assert(type !== undefined && val !== undefined);
         this.type = type; // a PR identificator type ("branch", "sha", "prNum") or null
         this.value = val; // a PR identificator or null
     }

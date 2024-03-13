@@ -47,7 +47,7 @@ class RepoMerger {
         });
     }
 
-    // prIds (if provided) an array of Util.PrId elements
+    // prIds (if provided) an array of Util.PrId elements filled by an event
     async run(prIds, handler) {
         if (handler)
             this._handler = handler;
