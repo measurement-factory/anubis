@@ -166,10 +166,12 @@ class PrMerger {
         Logger.info("PR processing order:", this._prNumbers());
     }
 
-    async _prNumbersFromIds(prIdsIn, currentPr, prList) {
+    // Translates each element of prIds into a PR number.
+    // Returns an array of PR numbers if it could translate all Ids or null otherwise.
+    async _prNumbersFromIds(prIds, currentPr, prList) {
         let prNumList = [];
 
-        for (let id of prIdsIn) {
+        for (let id of prIds) {
             if (id.type === "prNum") {
                 prNumList.push(id.value);
             } else if (id.type === "sha") {

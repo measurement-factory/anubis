@@ -64,10 +64,10 @@ class ErrorContext extends Error {
     }
 }
 
-// Represents a PR 'identificator' as a string, which may be one of
-// a PR number, or
-// a PR branch name (without 'refs' or 'heads' prefixes), or
-// a staging branch commit SHA (including stale commits).
+// Represents a PR 'identificator' as a string, either of
+// PR number, or
+// PR branch name (without 'refs' or 'heads' prefixes), or
+// staging branch commit SHA (including stale commits).
 class PrId
 {
     constructor(type, val) {
