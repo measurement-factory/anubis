@@ -16,6 +16,7 @@ class RepoMerger {
         this._running = false;
         this._handler = null;
         this._server = null;
+        this._prIds = [];
     }
 
     _createServer() {
@@ -46,10 +47,13 @@ class RepoMerger {
         });
     }
 
-    // prNum (if provided) corresponds to a PR, scheduled this 'run'
-    async run(handler) {
+    // prIds (if provided) an array of Util.PrId elements filled by an event
+    async run(prIds, handler) {
         if (handler)
             this._handler = handler;
+
+        if (prIds)
+            this._prIds.push(...prIds);
 
         if (this._running) {
             Logger.info("Already running, planning rerun.");
@@ -64,7 +68,9 @@ class RepoMerger {
                 this._rerun = false;
                 if (!this._server)
                     await this._createServer();
-                rerunIn = await Step();
+                const ids = this._prIds;
+                this._prIds = [];
+                rerunIn = await Step(ids);
             } catch (e) {
                 Log.LogError(e, "RepoMerger.run");
                 this._rerun = true;
