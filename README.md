@@ -71,11 +71,7 @@ algorithm:
    The previous state of the staging branch is ignored.
 3. Wait for GitHub to report that all the _required_ staging checks have
    succeeded on the staging branch. The project CI infrastructure is
-   expected to auto-test the staging branch on every change. A check
-   failure is a PR-specific step failure -- in GitHub terminology, all
-   staging checks are currently deemed "required". If discovered, any
-   extra check is considered a configuration problem (not related to any
-   specific PR). Error handling is detailed in the next section.
+   expected to auto-test the staging branch on every change.
 4. Fast forward the PR target branch (usually "master") to the
    now-tested staging commit.
 5. Label the PR as merged (see below for PR labels) and close the PR.
