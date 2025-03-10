@@ -49,18 +49,32 @@ class PrMerger {
         this._ignored = 0; // the number of PRs skipped due to human markings; TODO: Rename to _ignoredAsMarked
         this._ignoredAsUnchanged = 0; // the number of PRs skipped due to lack of PR updates
         this._todo = null; // raw PRs to be processed
+        this._stagedBranchSha; // the SHA of the branch head
     }
 
     // Implements a single Anubis processing step.
     // Returns suggested wait time until the next step (in milliseconds).
-    async execute(lastScan) {
+    async execute(lastScan, prIds) {
         Logger.info("runStep running");
+        Logger.info('prIds: [' + prIds.join() + ']');
 
         this._todo = await GH.getOpenPrs();
         this._total = this._todo.length;
         Logger.info(`Received ${this._total} PRs from GitHub:`, this._prNumbers());
 
-        await this._determineProcessingOrder(await this._current());
+        const currentPr = await this._current();
+        await this._determineProcessingOrder(currentPr);
+
+        let updatedPrs = await this._prNumbersFromIds(prIds, currentPr, this._todo);
+        // Treat the 'null' updatedPrs below as if all PRs have been 'updated'.
+        // An empty updatedPrs means that none of the PRs has been updated.
+        if (updatedPrs === null) {
+            Logger.warn('discarding PR scan optimization');
+        } else {
+            // remove duplicates
+            updatedPrs = updatedPrs.filter((v, idx) => updatedPrs.indexOf(v) === idx);
+            Logger.info('recently updated PRs: [' + updatedPrs.join() + ']');
+        }
 
         let somePrWasStaged = false;
         let currentScan = new PrScanResult(this._todo);
@@ -74,7 +88,14 @@ class PrMerger {
                     continue;
                 }
 
-                if (lastScan && lastScan.isStillUnchanged(rawPr, currentScan.scanDate)) {
+                const clearedForMerge = rawPr.labels.some(el => el.name === Config.clearedForMergeLabel());
+                const updated = !updatedPrs || updatedPrs.some(el => el === rawPr.number);
+
+                // If a PR A was cleared for merge, it may be ready for merge (no updates are expected)
+                // but waiting for another PR B which is currently being merged. If we switched back to PR A
+                // it may remain still ready for merge so we need to process it anyway.
+                // The 'lastScan' check turns off optimization for the initial scan.
+                if (!clearedForMerge && !updated && lastScan && lastScan.isStillUnchanged(rawPr, currentScan.scanDate)) {
                     const updatedAt = new Date(rawPr.updated_at);
                     Logger.info(`Ignoring PR${rawPr.number} because it has not changed since ${updatedAt.toISOString()}`);
                     this._ignoredAsUnchanged++;
@@ -145,12 +166,50 @@ class PrMerger {
         Logger.info("PR processing order:", this._prNumbers());
     }
 
+    // Translates each element of prIds into a PR number.
+    // Returns an array of PR numbers if it could translate all Ids or null otherwise.
+    async _prNumbersFromIds(prIds, currentPr, prList) {
+        let prNumList = [];
+
+        for (let id of prIds) {
+            if (id.type === "prNum") {
+                prNumList.push(id.value);
+            } else if (id.type === "sha") {
+                if (currentPr && (id.value === this._stagedBranchSha)) {
+                    prNumList.push(currentPr.number.toString());
+                } else {
+                    const commit = await GH.getCommit(id.value);
+                    const prNum = Util.ParsePrNumber(commit.message);
+                    if (prNum === null) {
+                        Logger.warn(`Could not get a PR number by parsing ${id.value} message`);
+                        return null;
+                    } else {
+                        Logger.info(`Got PR${prNum} from ${id.value} message`);
+                        prNumList.push(prNum);
+                    }
+                }
+            } else if (id.type === "branch") {
+                const pr = prList.find(p => p.head.ref === id.value);
+                if (pr) {
+                    prNumList.push(pr.number.toString());
+                } else {
+                    Logger.warn(`Could not find a PR by ${id} branch`);
+                    return null;
+                }
+            } else {
+                assert(id.isEmpty());
+                return null;
+            }
+        }
+        return prNumList;
+    }
+
     // Returns a raw PR with a staged commit (or null).
     // If that PR exists, it is in either a "staged" or "merged" state.
     async _current() {
         Logger.info("Looking for the current PR...");
-        const stagedBranchSha = await GH.getReference(Config.stagingBranchPath());
-        const stagedBranchCommit = await GH.getCommit(stagedBranchSha);
+        this._stagedBranchSha = await GH.getReference(Config.stagingBranchPath());
+        const stagedBranchCommit = await GH.getCommit(this._stagedBranchSha);
         Logger.info("Staged branch head sha: " + stagedBranchCommit.sha);
         const prNum = Util.ParsePrNumber(stagedBranchCommit.message);
         if (prNum === null) {
@@ -169,11 +228,11 @@ class PrMerger {
 } // PrMerger
 
 // promises to process all PRs once, hiding PrMerger from callers
-async function Step() {
+async function Step(prIds) {
     const lastScan = _LastScan;
     _LastScan = null;
     const mergerer = new PrMerger();
-    _LastScan = await mergerer.execute(lastScan);
+    _LastScan = await mergerer.execute(lastScan, prIds);
     return _LastScan.minDelay;
 }
 
