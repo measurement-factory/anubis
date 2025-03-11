@@ -14,6 +14,10 @@ class PrScanResult {
     }
 
     isStillUnchanged(freshRawPr, freshScanDate) {
+        const clearedForMerge = freshRawPr.labels.some(el => el.name === Config.clearedForMergeLabel());
+        // If a PR A was cleared for merge, it may be ready for merge (no updates are expected).
+        if (clearedForMerge)
+            return false;
         const savedRawPr = this.awakePrs.find(el => el.number === freshRawPr.number);
         if (!savedRawPr)
             return false; // this scan has not seen freshRawPR
