@@ -71,25 +71,19 @@ class ErrorContext extends Error {
 class PrId
 {
     constructor(type, val) {
-        assert(type !== undefined && val !== undefined);
+        assert(type !== undefined);
+        assert(type !== null);
+        assert(val !== undefined);
+        assert(val !== null);
         this.type = type; // a PR identificator type ("branch", "sha", "prNum") or null
         this.value = val; // a PR identificator or null
     }
 
-    static Empty() { return [new PrId(null, null)]; }
     static Branch(branch) { return [new PrId("branch", branch)]; }
     static BranchList(branches) { return Array.from(branches, b => new PrId("branch", b)); }
     static Sha(sha) { return [new PrId("sha", sha)]; }
     static PrNum(prNum) { return [new PrId("prNum", prNum.toString())]; }
-    static PrMessage(message) {
-        const prNum = ParsePrNumber(message);
-        if (prNum !== null)
-            return [new PrId("prNum", prNum)];
-        return PrId.Empty();
-    }
     static PrNumList(list) { return Array.from(list, prNum => new PrId("prNum", prNum.toString())); }
-
-    isEmpty() { return this.type === null; }
 
     toString() { return `${this.type}:${this.value}`; }
 }

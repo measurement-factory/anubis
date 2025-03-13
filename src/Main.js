@@ -38,10 +38,18 @@ WebhookHandler.on('status', (ev) => {
     const e = ev.payload;
     Logger.info("status event:", e.id, e.sha, e.context, e.state);
     const branches = Array.from(e.branches, b => b.name);
-    if (branches.includes(Config.stagingBranch()))
-        Merger.run(Util.PrId.PrMessage(e.commit.commit.message));
-    else
+    if (branches.includes(Config.stagingBranch())) {
+        const message = e.commit.commit.message;
+        const prNum = Util.ParsePrNumber(message);
+        if (prNum === null) {
+            Logger.info("status event: Could not extract PR number from the message: ", message);
+            Merger.run(null);
+        } else {
+            Merger.run(Util.PrId.PrNum(prNum));
+        }
+    } else {
         Merger.run(Util.PrId.BranchList(branches));
+    }
 });
 
 // https://developer.github.com/v3/activity/events/types/#pushevent
@@ -50,7 +58,7 @@ WebhookHandler.on('push', (ev) => {
     Logger.info("push event:", e.ref);
 
     // e.ref as refs/heads/branch_name
-    const parts = e.ref.split('/')
+    const parts = e.ref.split('/');
     const branch = parts[parts.length-1];
 
     if (branch !== Config.stagingBranch()) {
@@ -59,11 +67,17 @@ WebhookHandler.on('push', (ev) => {
     }
 
     if (e.head_commit) {
-        Merger.run(Util.PrId.PrMessage(e.head_commit.message));
+        const prNum = Util.ParsePrNumber(e.head_commit.message);
+        if (prNum === null) {
+            Logger.info("push event: Could not extract PR number from the message: ", e.head_commit.message);
+            Merger.run(null);
+        } else {
+            Merger.run(Util.PrId.PrNum(prNum));
+        }
         return;
     }
     Logger.warn("push event: e.head_commit is null");
-    Merger.run(Util.PrId.Empty());
+    Merger.run(null);
 });
 
 // https://docs.github.com/ru/webhooks/webhook-events-and-payloads#workflow_run
@@ -77,7 +91,7 @@ WebhookHandler.on('workflow_run', (ev) => {
     }
     if (!e.pull_requests.length) {
         Logger.warn("workflow_run event: pull_requests array is empty");
-        Merger.run(Util.PrId.Empty());
+        Merger.run(null);
         return;
     }
     const list = Array.from(e.pull_requests, v => v.number);
@@ -95,7 +109,7 @@ WebhookHandler.on('check_run', (ev) => {
     }
     if (!e.check_suite.pull_requests.length) {
         Logger.warn("check_run event: pull_requests array is empty");
-        Merger.run(Util.PrId.Empty());
+        Merger.run(null);
         return;
     }
     const list = Array.from(e.check_suite.pull_requests, v => v.number);

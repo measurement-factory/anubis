@@ -49,14 +49,13 @@ class PrMerger {
         this._ignored = 0; // the number of PRs skipped due to human markings; TODO: Rename to _ignoredAsMarked
         this._ignoredAsUnchanged = 0; // the number of PRs skipped due to lack of PR updates
         this._todo = null; // raw PRs to be processed
-        this._stagedBranchSha; // the SHA of the branch head
+        this._stagedBranchSha = null; // the SHA of the branch head
     }
 
     // Implements a single Anubis processing step.
     // Returns suggested wait time until the next step (in milliseconds).
     async execute(lastScan, prIds) {
         Logger.info("runStep running");
-        Logger.info('prIds: [' + prIds.join() + ']');
 
         this._todo = await GH.getOpenPrs();
         this._total = this._todo.length;
@@ -169,6 +168,9 @@ class PrMerger {
     // Translates each element of prIds into a PR number.
     // Returns an array of PR numbers if it could translate all Ids or null otherwise.
     async _prNumbersFromIds(prIds, currentPr, prList) {
+        if (prIds === null)
+            return null;
+
         let prNumList = [];
 
         for (let id of prIds) {
@@ -188,7 +190,8 @@ class PrMerger {
                         prNumList.push(prNum);
                     }
                 }
-            } else if (id.type === "branch") {
+            } else {
+                assert(id.type === "branch");
                 const pr = prList.find(p => p.head.ref === id.value);
                 if (pr) {
                     prNumList.push(pr.number.toString());
@@ -196,9 +199,6 @@ class PrMerger {
                     Logger.warn(`Could not find a PR by ${id} branch`);
                     return null;
                 }
-            } else {
-                assert(id.isEmpty());
-                return null;
             }
         }
         return prNumList;
