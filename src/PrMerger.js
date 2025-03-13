@@ -87,14 +87,10 @@ class PrMerger {
                     continue;
                 }
 
-                const clearedForMerge = rawPr.labels.some(el => el.name === Config.clearedForMergeLabel());
                 const updated = !updatedPrs || updatedPrs.some(el => el === rawPr.number);
 
-                // If a PR A was cleared for merge, it may be ready for merge (no updates are expected)
-                // but waiting for another PR B which is currently being merged. If we switched back to PR A
-                // it may remain still ready for merge so we need to process it anyway.
                 // The 'lastScan' check turns off optimization for the initial scan.
-                if (!clearedForMerge && !updated && lastScan && lastScan.isStillUnchanged(rawPr, currentScan.scanDate)) {
+                if (!updated && lastScan && lastScan.isStillUnchanged(rawPr, currentScan.scanDate)) {
                     const updatedAt = new Date(rawPr.updated_at);
                     Logger.info(`Ignoring PR${rawPr.number} because it has not changed since ${updatedAt.toISOString()}`);
                     this._ignoredAsUnchanged++;
