@@ -14,17 +14,21 @@ class PrScanResult {
     }
 
     isStillUnchanged(freshRawPr, freshScanDate) {
-        const clearedForMerge = freshRawPr.labels.some(el => el.name === Config.clearedForMergeLabel());
-        // If a PR A was cleared for merge, it may be ready for merge (no updates are expected)
-        // but waiting for another PR B which is currently being merged. If we switched back to PR A
-        // it may remain still ready for merge so we need to process it anyway.
-        if (clearedForMerge)
+        // A cleared for merging PR B may be waiting for PR A being merged. When
+        // PR A is merged or its merging fails, we may need to advance PR B, even
+        // though PR B remains unchanged from GitHub metadata/events point of view.
+        // This could be optimized further by touching cleared PRs in reaction to
+        // staged commit events instead, but perhaps there are never enough cleared
+        // PRs to warrant further optimizations.
+        if (freshRawPr.labels.some(el => el.name === Config.clearedForMergeLabel()))
             return false;
+
         const savedRawPr = this.awakePrs.find(el => el.number === freshRawPr.number);
         if (!savedRawPr)
             return false; // this scan has not seen freshRawPR
         if (savedRawPr.updated_at !== freshRawPr.updated_at)
             return false; // PR has changed since this scan
+
         // treat recently updated PRs as changed PRs to reduce the probability of ignoring
         // (PRs with) subsequent same-timestamp changes
         const unmodifiedDurationMs = freshScanDate - new Date(savedRawPr.updated_at);
