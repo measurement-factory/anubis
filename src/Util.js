@@ -64,10 +64,35 @@ class ErrorContext extends Error {
     }
 }
 
+// Represents a PR 'identificator' as a string, either of
+// PR number, or
+// PR branch name (without 'refs' or 'heads' prefixes), or
+// staging branch commit SHA (including stale commits).
+class PrId
+{
+    constructor(type, val) {
+        assert(type !== undefined);
+        assert(type !== null);
+        assert(val !== undefined);
+        assert(val !== null);
+        this.type = type; // a PR identificator type ("branch", "sha", "prNum") or null
+        this.value = val; // a PR identificator or null
+    }
+
+    static Branch(branch) { return [new PrId("branch", branch)]; }
+    static BranchList(branches) { return Array.from(branches, b => new PrId("branch", b)); }
+    static Sha(sha) { return [new PrId("sha", sha)]; }
+    static PrNum(prNum) { return [new PrId("prNum", prNum.toString())]; }
+    static PrNumList(list) { return Array.from(list, prNum => new PrId("prNum", prNum.toString())); }
+
+    toString() { return `${this.type}:${this.value}`; }
+}
+
 module.exports = {
     sleep: sleep,
     commonParams: commonParams,
     ParsePrNumber: ParsePrNumber,
-    ErrorContext: ErrorContext
+    ErrorContext: ErrorContext,
+    PrId: PrId,
 };
 
