@@ -75,8 +75,8 @@ class PrId
         assert(type !== null);
         assert(val !== undefined);
         assert(val !== null);
-        this.type = type; // a PR identificator type ("branch", "sha", "prNum") or null
-        this.value = val; // a PR identificator or null
+        this.type = type; // a PR identificator type ("branch", "sha" or "prNum")
+        this.value = val; // a PR identificator
     }
 
     static Branch(branch) { return [new PrId("branch", branch)]; }

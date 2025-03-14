@@ -56,8 +56,9 @@ class RepoMerger {
 
         if (prIds === null)
             this._prIds = null;
-        else
+        else if (this._prIds !== null)
             this._prIds.push(...prIds);
+        // else keep discarding prIds until next rerun (prIds !== null && this._prIds === null)
 
         if (this._running) {
             Logger.info("Already running, planning rerun.");
@@ -70,12 +71,10 @@ class RepoMerger {
         do {
             try {
                 this._rerun = false;
-                if (!this._server)
-                    await this._createServer();
                 const ids = this._prIds;
                 this._prIds = [];
-                if (ids !== null)
-                    Logger.info('prIds: [' + ids.join() + ']');
+                if (!this._server)
+                    await this._createServer();
                 rerunIn = await Step(ids);
             } catch (e) {
                 Log.LogError(e, "RepoMerger.run");

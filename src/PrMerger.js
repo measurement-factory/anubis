@@ -87,10 +87,8 @@ class PrMerger {
                     continue;
                 }
 
-                const updated = !updatedPrs || updatedPrs.some(el => el === rawPr.number);
-
                 // The 'lastScan' check turns off optimization for the initial scan.
-                if (!updated && lastScan && lastScan.isStillUnchanged(rawPr, currentScan.scanDate)) {
+                if (updatedPrs && !updatedPrs.some(el => el === rawPr.number) && lastScan && lastScan.isStillUnchanged(rawPr, currentScan.scanDate)) {
                     const updatedAt = new Date(rawPr.updated_at);
                     Logger.info(`Ignoring PR${rawPr.number} because it has not changed since ${updatedAt.toISOString()}`);
                     this._ignoredAsUnchanged++;
@@ -164,6 +162,7 @@ class PrMerger {
     // Translates each element of prIds into a PR number.
     // Returns an array of PR numbers if it could translate all Ids or null otherwise.
     async _prNumbersFromIds(prIds, currentPr, prList) {
+        assert(prIds !== undefined);
         if (prIds === null)
             return null;
 
@@ -225,6 +224,9 @@ class PrMerger {
 
 // promises to process all PRs once, hiding PrMerger from callers
 async function Step(prIds) {
+    assert(prIds !== undefined);
+    if (prIds !== null)
+        Logger.info('prIds: [' + prIds.join() + ']');
     const lastScan = _LastScan;
     _LastScan = null;
     const mergerer = new PrMerger();
