@@ -77,6 +77,8 @@ class PrMerger {
         if (updatedPrs === null) {
             Logger.info('will not use PR scan optimization');
         } else {
+            if (currentPr)
+                updatedPrs.push(currentPr.number.toString());
             // remove duplicates
             updatedPrs = updatedPrs.filter((v, idx) => updatedPrs.indexOf(v) === idx);
             Logger.info('recently updated PRs: [' + updatedPrs.join() + ']');
