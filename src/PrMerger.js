@@ -91,7 +91,7 @@ class PrMerger {
                 }
 
                 // The 'lastScan' check turns off optimization for the initial scan.
-                if (updatedPrs && !updatedPrs.some(el => el === rawPr.number) && lastScan && lastScan.isStillUnchanged(rawPr, currentScan.scanDate)) {
+                if (updatedPrs && !updatedPrs.some(el => el === rawPr.number.toString()) && lastScan && lastScan.isStillUnchanged(rawPr, currentScan.scanDate)) {
                     const updatedAt = new Date(rawPr.updated_at);
                     Logger.info(`Ignoring PR${rawPr.number} because it has not changed since ${updatedAt.toISOString()}`);
                     this._ignoredAsUnchanged++;
@@ -173,7 +173,7 @@ class PrMerger {
 
         for (let id of prIds) {
             if (id.type === "prNum") {
-                prNumList.push(id.value);
+                prNumList.push(id.value.toString());
             } else if (id.type === "sha") {
                 if (currentPr && (id.value === this._stagedBranchSha)) {
                     prNumList.push(currentPr.number.toString());
@@ -194,8 +194,8 @@ class PrMerger {
                 if (pr) {
                     prNumList.push(pr.number.toString());
                 } else {
-                    Logger.warn(`Could not find a PR by ${id} branch`);
-                    return null;
+                    Logger.info(`Could not find a PR by ${id} branch`);
+                    continue;
                 }
             }
         }
