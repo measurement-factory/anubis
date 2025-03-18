@@ -68,7 +68,7 @@ class PrMerger {
         // Treat the 'null' updatedPrs below as if all PRs have been 'updated'.
         // An empty updatedPrs means that none of the PRs has been updated.
         if (updatedPrs === null) {
-            Logger.warn('discarding PR scan optimization');
+            Logger.info('will not use PR scan optimization');
         } else {
             // remove duplicates
             updatedPrs = updatedPrs.filter((v, idx) => updatedPrs.indexOf(v) === idx);
