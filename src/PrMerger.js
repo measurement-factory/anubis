@@ -11,6 +11,7 @@ class PrScanResult {
         this.scanDate = new Date(); // the scan starting time
         this.awakePrs = [...prs]; // PRs that were not delayed during the scan
         this.minDelay = null; // if there are delayed PRs, pause them for at least this many milliseconds
+        this.delayedPrNum = null; // the PR that is delayed for minDelay or nill
     }
 
     isStillUnchanged(freshRawPr, freshScanDate) {
@@ -29,8 +30,10 @@ class PrScanResult {
         const oldPrs = this.awakePrs;
         this.awakePrs = this.awakePrs.filter(el => el.number !== rawPr.number);
         assert(oldPrs.length === this.awakePrs.length + 1); // one PR was removed
-        if (this.minDelay === null || this.minDelay > delay)
+        if (this.minDelay === null || this.minDelay > delay) {
             this.minDelay = delay;
+            this.delayedPrNum = rawPr.number;
+        }
     }
 }
 
@@ -234,7 +237,7 @@ async function Step(prIds) {
     _LastScan = null;
     const mergerer = new PrMerger();
     _LastScan = await mergerer.execute(lastScan, prIds);
-    return _LastScan.minDelay;
+    return {delay: _LastScan.minDelay, delayedPrNum: _LastScan.delayedPrNum};
 }
 
 module.exports = Step;

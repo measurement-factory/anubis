@@ -67,7 +67,7 @@ class RepoMerger {
         }
         this._unplan();
         this._running = true;
-        let rerunIn = null;
+        let rerunInfo = null;
         do {
             try {
                 this._rerun = false;
@@ -75,7 +75,7 @@ class RepoMerger {
                 this._prIds = [];
                 if (!this._server)
                     await this._createServer();
-                rerunIn = await Step(ids);
+                rerunInfo = await Step(ids);
             } catch (e) {
                 Log.LogError(e, "RepoMerger.run");
                 this._rerun = true;
@@ -87,8 +87,8 @@ class RepoMerger {
                 await Util.sleep(period * 60 * 1000); // 10 min
             }
         } while (this._rerun);
-        if (rerunIn)
-            this._plan(rerunIn);
+        if (rerunInfo.delay)
+            this._plan(rerunInfo.delay, rerunInfo.delayedPrNum);
         this._running = false;
     }
 
@@ -97,7 +97,7 @@ class RepoMerger {
         this._server = null;
     }
 
-    _plan(requestedMs) {
+    _plan(requestedMs, prNum) {
         assert(requestedMs > 0);
         // obey node.js setTimeout() limits
         const maxMs = Math.pow(2, 31) - 1;
@@ -106,7 +106,7 @@ class RepoMerger {
         assert(this._timer === null);
         let date = new Date();
         date.setSeconds(date.getSeconds() + ms/1000);
-        this._timer = setTimeout(this.run.bind(this), ms);
+        this._timer = setTimeout(this.run.bind(this, Util.PrId.PrNum(prNum)), ms);
         Logger.info("planning rerun in " + this._msToTime(ms));
     }
 
