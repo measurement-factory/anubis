@@ -23,7 +23,7 @@ function HandlerWrap(ev, handler) {
     try {
         handler(ev);
     } catch (err) {
-        Logger.error("Error in ", err.message);
+        Logger.error("Error in", err.message);
         Merger.run(null);
     }
 }
@@ -105,7 +105,9 @@ WebhookHandler.on('workflow_run', (anEv) => {
         return;
     }
     if (!e.pull_requests.length) {
-        throw new Error("workflow_run event: pull_requests array is empty");
+        // e.pull_requests is empty, e.g., for master commits
+        Logger.info("workflow_run event: no PR for ", e.head_sha);
+        return;
     }
     const list = Array.from(e.pull_requests, v => v.number);
     Merger.run(Util.PrId.PrNumList(list));
@@ -123,7 +125,9 @@ WebhookHandler.on('check_run', (anEv) => {
         return;
     }
     if (!e.check_suite.pull_requests.length) {
-        throw new Error("check_run event: pull_requests array is empty");
+        // e.check_suite.pull_requests is empty, e.g., for master commits
+        Logger.info("check_run event: no PR for ", e.head_sha);
+        return;
     }
     const list = Array.from(e.check_suite.pull_requests, v => v.number);
     Merger.run(Util.PrId.PrNumList(list));
