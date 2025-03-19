@@ -961,6 +961,19 @@ class PullRequest {
         this._log("required contexts found: " + this._contextsRequiredByGitHubConfig.length);
     }
 
+    async _getUniqueCheckRuns(sha) {
+        // Returns whole check runs history for the commit.
+        const checkRuns = await GH.getCheckRuns(sha);
+        // Filter out stale/older checks, assuming that check.id is greater in newer checks.
+        const sortedCheckRuns = checkRuns.sort((e1, e2) => parseInt(e2.id) - parseInt(e1.id));
+        let uniqueCheckRuns = [];
+        sortedCheckRuns.forEach(check => {
+            if (!uniqueCheckRuns.some(e => e.name === check.name))
+                uniqueCheckRuns.push(check);
+        });
+        return uniqueCheckRuns;
+    }
+
     // returns filled StatusChecks object
     async _getPrStatuses() {
         const combinedPrStatus = await GH.getStatuses(this._prHeadSha());
@@ -973,15 +986,7 @@ class PullRequest {
                 statusChecks.addOptionalStatus(new StatusCheck(st));
         }
 
-        // Returns whole check runs history for the commit.
-        const checkRuns = await GH.getCheckRuns(this._prHeadSha());
-        // Filter out stale/older checks, assuming that check.id is greater in newer checks.
-        const sortedCheckRuns = checkRuns.sort((e1, e2) => parseInt(e2.id) - parseInt(e1.id));
-        let uniqueCheckRuns = [];
-        sortedCheckRuns.forEach(check => {
-            if (!uniqueCheckRuns.some(e => e.name === check.name))
-                uniqueCheckRuns.push(check);
-        });
+        const uniqueCheckRuns = await this._getUniqueCheckRuns(this._prHeadSha());
         for (let st of uniqueCheckRuns) {
             if (this._contextsRequiredByGitHubConfig.some(el => el.trim() === st.name.trim()))
                 statusChecks.addRequiredStatus(StatusCheck.FromCheckRun(st));
@@ -1017,8 +1022,8 @@ class PullRequest {
         }
 
         // all check runs are 'required'
-        const checkRuns = await GH.getCheckRuns(this._stagedSha());
-        for (let st of checkRuns)
+        const uniqueCheckRuns = await this._getUniqueCheckRuns(this._stagedSha());
+        for (let st of uniqueCheckRuns)
             statusChecks.addRequiredStatus(StatusCheck.FromCheckRun(st));
 
         this._log("staging status details: " + statusChecks);
