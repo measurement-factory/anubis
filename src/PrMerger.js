@@ -14,7 +14,13 @@ class PrScanResult {
         this.delayedPrNum = null; // the PR that is delayed for minDelay or nill
     }
 
-    isStillUnchanged(freshRawPr, freshScanDate) {
+    isStillUnchanged(updatedPrs, freshRawPr, freshScanDate) {
+        if (!updatedPrs)
+            return false;
+
+        if (updatedPrs.some(el => el === freshRawPr.number.toString()))
+            return false;
+
         // A cleared for merging PR B may be waiting for PR A being merged. When
         // PR A is merged or its merging fails, we may need to advance PR B, even
         // though PR B remains unchanged from GitHub metadata/events point of view.
@@ -103,7 +109,7 @@ class PrMerger {
                 }
 
                 // The 'lastScan' check turns off optimization for the initial scan.
-                if (updatedPrs && !updatedPrs.some(el => el === rawPr.number.toString()) && lastScan && lastScan.isStillUnchanged(rawPr, currentScan.scanDate)) {
+                if (lastScan && lastScan.isStillUnchanged(updatedPrs, rawPr, currentScan.scanDate)) {
                     const updatedAt = new Date(rawPr.updated_at);
                     Logger.info(`Ignoring PR${rawPr.number} because it has not changed since ${updatedAt.toISOString()}`);
                     this._ignoredAsUnchanged++;
