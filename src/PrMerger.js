@@ -10,8 +10,8 @@ class PrScanResult {
     constructor(prs) {
         this.scanDate = new Date(); // the scan starting time
         this.awakePrs = [...prs]; // PRs that were not delayed during the scan
+        this.delayedPrs = []; // PRs that have been delayed
         this.minDelay = null; // if there are delayed PRs, pause them for at least this many milliseconds
-        this.delayedPrNum = null; // the PR that is delayed for minDelay or nill
     }
 
     isStillUnchanged(updatedPrs, freshRawPr, freshScanDate) {
@@ -31,10 +31,18 @@ class PrScanResult {
             return false;
 
         const savedRawPr = this.awakePrs.find(el => el.number === freshRawPr.number);
-        if (!savedRawPr)
-            return false; // this scan has not seen freshRawPR
-        if (savedRawPr.updated_at !== freshRawPr.updated_at)
-            return false; // PR has changed since this scan
+        if (savedRawPr) {
+            if (savedRawPr.updated_at !== freshRawPr.updated_at)
+                return false; // PR has changed since this scan
+        } else {
+            const delayedPr = this.delayedPrs.find(el => el.number === freshRawPr.number);
+            if (!delayedPr)
+                return false; // this scan has not seen freshRawPR (neither awakePrs no delayedPrs have it)
+
+            let now = new Date();
+            if (delayedPr.expireDate <= now)
+                return false;
+        }
 
         // treat recently updated PRs as changed PRs to reduce the probability of ignoring
         // (PRs with) subsequent same-timestamp changes
@@ -46,10 +54,12 @@ class PrScanResult {
         const oldPrs = this.awakePrs;
         this.awakePrs = this.awakePrs.filter(el => el.number !== rawPr.number);
         assert(oldPrs.length === this.awakePrs.length + 1); // one PR was removed
-        if (this.minDelay === null || this.minDelay > delay) {
+        assert(!this.delayedPrs.some(el => el.number === rawPr.number));
+        let date = new Date();
+        date.setSeconds(date.getSeconds() + delay/1000);
+        this.delayedPrs.push({number: rawPr.number, expireDate: date});
+        if (this.minDelay === null || this.minDelay > delay)
             this.minDelay = delay;
-            this.delayedPrNum = rawPr.number;
-        }
     }
 }
 
@@ -252,7 +262,7 @@ async function Step(prIds) {
     _LastScan = null;
     const mergerer = new PrMerger();
     _LastScan = await mergerer.execute(lastScan, prIds);
-    return {delay: _LastScan.minDelay, delayedPrNum: _LastScan.delayedPrNum};
+    return _LastScan.minDelay;
 }
 
 module.exports = Step;
