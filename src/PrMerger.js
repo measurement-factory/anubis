@@ -74,10 +74,6 @@ class PrMerger {
         this._total = this._todo.length;
         Logger.info(`Received ${this._total} PRs from GitHub:`, this._prNumbers());
 
-        let currentScan = new PrScanResult(this._todo);
-        if (this._todo.length === 0)
-            return currentScan;
-
         const currentPr = await this._current();
         await this._determineProcessingOrder(currentPr);
 
@@ -95,6 +91,7 @@ class PrMerger {
         }
 
         let somePrWasStaged = false;
+        let currentScan = new PrScanResult(this._todo);
         while (this._todo.length) {
             try {
                 const rawPr = this._todo.shift();
