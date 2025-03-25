@@ -104,7 +104,7 @@ class PrMerger {
             // remove duplicates
             updatedPrs = updatedPrs.filter((v, idx) => updatedPrs.indexOf(v) === idx);
             const prNumbers = updatedPrs.join();
-            Logger.info(`Got events since ${lastScan.scanDate.toISOString()}for these PRs: [${prNumbers}]`);
+            Logger.info(`Got events since ${lastScan.scanDate.toISOString()} for these PRs: [${prNumbers}]`);
         }
 
         let somePrWasStaged = false;
