@@ -10,7 +10,7 @@ class PrScanResult {
     constructor(prs) {
         this.scanDate = new Date(); // the scan starting time
         this.awakePrs = [...prs]; // PRs that were not delayed during the scan
-        this.delayedPrs = []; // PRs that have been delayed
+        this.delayedPrs = []; // PRs that were delayed during the scan (an array of {prNumber, expirationDate} pairs)
         this.minDelay = null; // if there are delayed PRs, pause them for at least this many milliseconds
     }
 
@@ -103,7 +103,8 @@ class PrMerger {
                 updatedPrs.push(currentPr.number.toString());
             // remove duplicates
             updatedPrs = updatedPrs.filter((v, idx) => updatedPrs.indexOf(v) === idx);
-            Logger.info('recently updated PRs: [' + updatedPrs.join() + ']');
+            const prNumbers = updatedPrs.join();
+            Logger.info(`Got events since ${lastScan.scanDate.toISOString()}for these PRs: [${prNumbers}]`);
         }
 
         let somePrWasStaged = false;
