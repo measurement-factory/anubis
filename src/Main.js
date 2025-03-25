@@ -52,7 +52,7 @@ WebhookHandler.on('status', (anEv) => {
     const e = ev.payload;
     Logger.info("status event:", e.id, e.sha, e.context, e.state);
     const branches = Array.from(e.branches, b => b.name);
-    if (branches.includes(Config.stagingBranch())) {
+    if (branches.length === 1 && branches[0] === Config.stagingBranch()) {
         const message = e.commit.commit.message;
         const prNum = Util.ParsePrNumber(message);
         if (prNum === null) {
