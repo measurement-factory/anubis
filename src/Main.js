@@ -49,48 +49,23 @@ WebhookHandler.on('pull_request', (anEv) => {
 // https://developer.github.com/v3/activity/events/types/#statusevent
 WebhookHandler.on('status', (anEv) => {
     HandlerWrap(anEv, (ev) => {
-    const e = ev.payload;
-    Logger.info("status event:", e.id, e.sha, e.context, e.state);
-    const branches = Array.from(e.branches, b => b.name);
-    if (branches.length === 1 && branches[0] === Config.stagingBranch()) {
-        const message = e.commit.commit.message;
-        const prNum = Util.ParsePrNumber(message);
-        if (prNum === null) {
-            throw new Error(`status event: Could not extract PR number from the message: ${message}`);
-        } else {
-            Merger.run(Util.PrId.PrNum(prNum));
-        }
-    } else {
-        Merger.run(Util.PrId.BranchList(branches));
-    }
+        const e = ev.payload;
+        Logger.info("status event:", e.id, e.sha, e.context, e.state);
+        const branches = Array.from(e.branches, b => b.name);
+        Merger.run(Util.PrId.BranchList(branches, e.commit.commit.message));
     });
 });
 
 // https://developer.github.com/v3/activity/events/types/#pushevent
 WebhookHandler.on('push', (anEv) => {
     HandlerWrap(anEv, (ev) => {
-    const e = ev.payload;
-    Logger.info("push event:", e.ref);
+        const e = ev.payload;
+        Logger.info("push event:", e.ref);
 
-    // e.ref as refs/heads/branch_name
-    const parts = e.ref.split('/');
-    const branch = parts[parts.length-1];
-
-    if (branch !== Config.stagingBranch()) {
-        Merger.run(Util.PrId.Branch(branch));
-        return;
-    }
-
-    if (e.head_commit) {
-        const prNum = Util.ParsePrNumber(e.head_commit.message);
-        if (prNum === null) {
-            throw new Error(`push event: Could not extract PR number from the message: ${e.head_commit.message}`);
-        } else {
-            Merger.run(Util.PrId.PrNum(prNum));
-        }
-        return;
-    }
-    throw new Error("push event: e.head_commit is null");
+        // e.ref as refs/heads/branch_name
+        const parts = e.ref.split('/');
+        const branch = parts[parts.length-1];
+        Merger.run(Util.PrId.BranchList([branch], e.head_commit ? e.head_commit.message : null));
     });
 });
 

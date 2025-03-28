@@ -70,17 +70,17 @@ class ErrorContext extends Error {
 // staging branch commit SHA (including stale commits).
 class PrId
 {
-    constructor(type, val) {
+    constructor(type, val, msg) {
         assert(type !== undefined);
         assert(type !== null);
         assert(val !== undefined);
         assert(val !== null);
         this.type = type; // a PR identificator type ("branch", "sha" or "prNum")
         this.value = val; // a PR identificator
+        this.message = (msg === undefined) ? null : msg; // the commit message or null
     }
 
-    static Branch(branch) { return [new PrId("branch", branch)]; }
-    static BranchList(branches) { return Array.from(branches, b => new PrId("branch", b)); }
+    static BranchList(branches, msg) { return Array.from(branches, b => new PrId("branch", b, msg)); }
     static Sha(sha) { return [new PrId("sha", sha)]; }
     static PrNum(prNum) { return [new PrId("prNum", prNum.toString())]; }
     static PrNumList(list) { return Array.from(list, prNum => new PrId("prNum", prNum.toString())); }

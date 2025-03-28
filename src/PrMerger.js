@@ -191,6 +191,17 @@ class PrMerger {
         Logger.info("PR processing order:", this._prNumbers());
     }
 
+    _extractPrNumber(message, source) {
+        const prNum = Util.ParsePrNumber(message);
+        if (prNum === null) {
+            Logger.warn(`Could not get PR number by parsing ${source} message`);
+            return null;
+        } else {
+            Logger.info(`Got PR${prNum} from ${source} message`);
+            return prNum;
+        }
+    }
+
     // Translates each element of prIds into a PR number.
     // Returns an array of PR numbers if it could translate all Ids or null otherwise.
     async _prNumbersFromIds(prIds, currentPr, prList) {
@@ -208,23 +219,26 @@ class PrMerger {
                     prNumList.push(currentPr.number.toString());
                 } else {
                     const commit = await GH.getCommit(id.value);
-                    const prNum = Util.ParsePrNumber(commit.message);
-                    if (prNum === null) {
-                        Logger.warn(`Could not get a PR number by parsing ${id.value} message`);
-                        return null;
-                    } else {
-                        Logger.info(`Got PR${prNum} from ${id.value} message`);
-                        prNumList.push(prNum);
-                    }
+                    const prNum = this._extractPrNumber(commit.message, id.value);
+                    if (prNum === null)
+                        continue;
+                    prNumList.push(prNum);
                 }
             } else {
                 assert(id.type === "branch");
-                const pr = prList.find(p => p.head.ref === id.value);
-                if (pr) {
-                    prNumList.push(pr.number.toString());
+                if (id.value === Config.stagingBranch()) {
+                    assert(id.message !== null);
+                    const prNum = this._extractPrNumber(id.message, id.value);
+                    if (prNum === null)
+                        continue;
+                    prNumList.push(prNum);
                 } else {
-                    Logger.info(`Could not find a PR by ${id} branch`);
-                    continue;
+                    const pr = prList.find(p => p.head.ref === id.value);
+                    if (!pr) {
+                        Logger.info(`Could not find a PR by ${id} branch`);
+                        continue;
+                    }
+                    prNumList.push(pr.number.toString());
                 }
             }
         }
