@@ -20,12 +20,16 @@ WebhookHandler.on('error', (err) => {
 });
 
 function HandlerWrap(ev, handler) {
+    let prIds = null;
     try {
-        handler(ev);
+        prIds = handler(ev);
+        assert(prIds);
+        if (prIds.length === 0)
+            return;
     } catch (err) {
         Logger.error("Error in", err.message);
-        Merger.run(null);
     }
+    Merger.run(prIds);
 }
 
 // https://developer.github.com/v3/activity/events/types/#pullrequestreviewevent
@@ -33,7 +37,7 @@ WebhookHandler.on('pull_request_review', (anEv) => {
     HandlerWrap(anEv, (ev) => {
         const pr = ev.payload.pull_request;
         Logger.info("pull_request_review event:", ev.payload.id, pr.number, pr.head.sha, pr.state);
-        Merger.run(Util.PrId.PrNum(pr.number));
+        return Util.PrId.PrNum(pr.number);
     });
 });
 
@@ -42,7 +46,7 @@ WebhookHandler.on('pull_request', (anEv) => {
     HandlerWrap(anEv, (ev) => {
         const pr = ev.payload.pull_request;
         Logger.info("pull_request event:", ev.payload.id, pr.number, pr.head.sha, pr.state);
-        Merger.run(Util.PrId.PrNum(pr.number));
+        return Util.PrId.PrNum(pr.number);
     });
 });
 
@@ -52,7 +56,7 @@ WebhookHandler.on('status', (anEv) => {
         const e = ev.payload;
         Logger.info("status event:", e.id, e.sha, e.context, e.state);
         const branches = Array.from(e.branches, b => b.name);
-        Merger.run(Util.PrId.BranchList(branches, e.commit.commit.message));
+        return Util.PrId.BranchList(branches, e.commit.commit.message);
     });
 });
 
@@ -65,47 +69,45 @@ WebhookHandler.on('push', (anEv) => {
         // e.ref as refs/heads/branch_name
         const parts = e.ref.split('/');
         const branch = parts[parts.length-1];
-        Merger.run(Util.PrId.BranchList([branch], e.head_commit ? e.head_commit.message : null));
+        return Util.PrId.BranchList([branch], e.head_commit ? e.head_commit.message : null);
     });
 });
 
 // https://docs.github.com/ru/webhooks/webhook-events-and-payloads#workflow_run
 WebhookHandler.on('workflow_run', (anEv) => {
     HandlerWrap(anEv, (ev) => {
-    const e = ev.payload.workflow_run;
-    Logger.info("workflow_run event:", e.head_sha);
-    // e.pull_requests is empty for the staged commit
-    if (e.head_branch === Config.stagingBranch()) {
-        Merger.run(Util.PrId.Sha(e.head_sha));
-        return;
-    }
-    if (!e.pull_requests.length) {
-        // e.pull_requests is empty, e.g., for master commits
-        Logger.info("workflow_run event: no PR for ", e.head_sha);
-        return;
-    }
-    const list = Array.from(e.pull_requests, v => v.number);
-    Merger.run(Util.PrId.PrNumList(list));
+        const e = ev.payload.workflow_run;
+        Logger.info("workflow_run event:", e.head_sha);
+        // e.pull_requests is empty for the staged commit
+        if (e.head_branch === Config.stagingBranch()) {
+            return Util.PrId.Sha(e.head_sha);
+        }
+        if (!e.pull_requests.length) {
+            // e.pull_requests is empty, e.g., for master commits
+            Logger.info("workflow_run event: no PR for ", e.head_sha);
+            return [];
+        }
+        const list = Array.from(e.pull_requests, v => v.number);
+        return Util.PrId.PrNumList(list);
     });
 });
 
 // https://docs.github.com/en/webhooks/webhook-events-and-payloads#check_run
 WebhookHandler.on('check_run', (anEv) => {
     HandlerWrap(anEv, (ev) => {
-    const e = ev.payload.check_run;
-    Logger.info("check_run event:", e.head_sha);
-    // e.check_suite.pull_requests is empty for the staged commit
-    if (e.check_suite.head_branch === Config.stagingBranch()) {
-        Merger.run(Util.PrId.Sha(e.head_sha));
-        return;
-    }
-    if (!e.check_suite.pull_requests.length) {
-        // e.check_suite.pull_requests is empty, e.g., for master commits
-        Logger.info("check_run event: no PR for ", e.head_sha);
-        return;
-    }
-    const list = Array.from(e.check_suite.pull_requests, v => v.number);
-    Merger.run(Util.PrId.PrNumList(list));
+        const e = ev.payload.check_run;
+        Logger.info("check_run event:", e.head_sha);
+        // e.check_suite.pull_requests is empty for the staged commit
+        if (e.check_suite.head_branch === Config.stagingBranch()) {
+            return Util.PrId.Sha(e.head_sha);
+        }
+        if (!e.check_suite.pull_requests.length) {
+            // e.check_suite.pull_requests is empty, e.g., for master commits
+            Logger.info("check_run event: no PR for ", e.head_sha);
+            return [];
+        }
+        const list = Array.from(e.check_suite.pull_requests, v => v.number);
+        return Util.PrId.PrNumList(list);
     });
 });
 
