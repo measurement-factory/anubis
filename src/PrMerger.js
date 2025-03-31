@@ -10,7 +10,11 @@ class PrScanResult {
     constructor(prs) {
         this.scanDate = new Date(); // the scan starting time
         this.awakePrs = [...prs]; // PRs that were not delayed during the scan
-        this.delayedPrs = []; // PRs that were delayed during the scan (an array of {prNumber, expirationDate} pairs)
+        // PRs that wait for some timeout to expire.
+        // Each array element is an {number, expirationDate} structure,
+        // where the number field represents PR number of Number type and
+        // expirationDate member has a Date type
+        this.delayedPrs = [];
         this.minDelay = null; // if there are delayed PRs, pause them for at least this many milliseconds
     }
 
@@ -40,7 +44,7 @@ class PrScanResult {
                 return false; // this scan has not seen freshRawPR (neither awakePrs no delayedPrs have it)
 
             let now = new Date();
-            if (delayedPr.expireDate <= now)
+            if (delayedPr.expirationDate <= now)
                 return false;
         }
 
@@ -57,7 +61,7 @@ class PrScanResult {
         assert(!this.delayedPrs.some(el => el.number === rawPr.number));
         let date = new Date();
         date.setSeconds(date.getSeconds() + delay/1000);
-        this.delayedPrs.push({number: rawPr.number, expireDate: date});
+        this.delayedPrs.push({number: rawPr.number, expirationDate: date});
         if (this.minDelay === null || this.minDelay > delay)
             this.minDelay = delay;
     }

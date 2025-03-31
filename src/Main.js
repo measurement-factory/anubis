@@ -78,6 +78,7 @@ WebhookHandler.on('workflow_run', HandlerWrap((ev) => {
         Logger.info("workflow_run event:", e.head_sha);
         // e.pull_requests is empty for the staged commit
         if (e.head_branch === Config.stagingBranch()) {
+            assert(!e.pull_requests.length);
             return Util.PrId.Sha(e.head_sha);
         }
         if (!e.pull_requests.length) {
@@ -96,6 +97,7 @@ WebhookHandler.on('check_run', HandlerWrap((ev) => {
         Logger.info("check_run event:", e.head_sha);
         // e.check_suite.pull_requests is empty for the staged commit
         if (e.check_suite.head_branch === Config.stagingBranch()) {
+            assert(!e.check_suite.pull_requests.length);
             return Util.PrId.Sha(e.head_sha);
         }
         if (!e.check_suite.pull_requests.length) {
