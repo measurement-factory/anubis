@@ -48,7 +48,6 @@ class PrScanResult {
             const delayedPr = this.delayedPrs.find(el => el.number === freshRawPr.number);
             if (!delayedPr)
                 return false; // this scan has not seen freshRawPr (neither awakePrs nor delayedPrs have it)
-
             if (delayedPr.expirationDate <= freshScanDate)
                 return false;
         }
