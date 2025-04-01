@@ -35,6 +35,11 @@ class PrScanResult {
         if (freshRawPr.labels.some(el => el.name === Config.clearedForMergeLabel()))
             return false;
 
+        // XXX: The above concern also applies to PRs that are not "cleared for
+        // merging" but can be proactively staged in anticipation of that
+        // clearance. TODO: Mark the first such PR that is waiting for the
+        // staging branch "lock" and treat it as "changed", returning false.
+
         const savedRawPr = this.awakePrs.find(el => el.number === freshRawPr.number);
         if (savedRawPr) {
             if (savedRawPr.updated_at !== freshRawPr.updated_at)
