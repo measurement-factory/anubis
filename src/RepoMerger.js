@@ -47,7 +47,7 @@ class RepoMerger {
         });
     }
 
-    // prIds (if provided) an array of Util.PrId elements filled by an event
+    // prIds is an array of Util.PrId objects collected by event handlers (or null)
     async run(prIds, handler) {
         assert(prIds !== undefined);
 
@@ -58,7 +58,7 @@ class RepoMerger {
             this._prIds = null;
         else if (this._prIds !== null)
             this._prIds.push(...prIds);
-        // else keep discarding prIds until next rerun (prIds !== null && this._prIds === null)
+        // else keep discarding prIds until this._prIds is reset below
 
         if (this._running) {
             Logger.info("Already running, planning rerun.");
@@ -71,7 +71,7 @@ class RepoMerger {
         do {
             try {
                 this._rerun = false;
-                const ids = this._prIds;
+                const ids = this._prIds; // may be null
                 this._prIds = [];
                 if (!this._server)
                     await this._createServer();

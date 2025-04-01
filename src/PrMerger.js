@@ -19,7 +19,8 @@ class PrScanResult {
     }
 
     isStillUnchanged(updatedPrs, freshRawPr, freshScanDate) {
-        if (!updatedPrs)
+        assert.strictEqual(arguments.length, 3);
+        if (updatedPrs === null)
             return false;
 
         if (updatedPrs.some(el => el === freshRawPr.number.toString()))
@@ -41,10 +42,9 @@ class PrScanResult {
         } else {
             const delayedPr = this.delayedPrs.find(el => el.number === freshRawPr.number);
             if (!delayedPr)
-                return false; // this scan has not seen freshRawPR (neither awakePrs no delayedPrs have it)
+                return false; // this scan has not seen freshRawPr (neither awakePrs nor delayedPrs have it)
 
-            let now = new Date();
-            if (delayedPr.expirationDate <= now)
+            if (delayedPr.expirationDate <= freshScanDate)
                 return false;
         }
 
@@ -219,6 +219,7 @@ class PrMerger {
             if (id.type === "prNum") {
                 prNumList.push(id.value.toString());
             } else if (id.type === "sha") {
+                assert(!currentPr || this._stagedBranchSha !== null);
                 if (currentPr && (id.value === this._stagedBranchSha)) {
                     prNumList.push(currentPr.number.toString());
                 } else {
