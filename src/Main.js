@@ -90,7 +90,7 @@ WebhookHandler.on('workflow_run', HandlerWrap((ev) => {
 // https://docs.github.com/en/webhooks/webhook-events-and-payloads#check_run
 WebhookHandler.on('check_run', HandlerWrap((ev) => {
     const e = ev.payload.check_run;
-    Logger.info("check_run event:", e.head_sha);
+    Logger.info("check_run event:", e.check_suite.head_sha);
 
     if (e.check_suite.pull_requests.length) {
         const list = Array.from(e.check_suite.pull_requests, v => v.number);
@@ -98,10 +98,10 @@ WebhookHandler.on('check_run', HandlerWrap((ev) => {
     }
 
     if (e.check_suite.head_branch === Config.stagingBranch()) {
-        return Util.PrId.Sha(e.head_sha);
+        return Util.PrId.Sha(e.check_suite.head_sha);
     }
     // check runs for other non-PR branches (e.g., master) are not associated with PRs
-    Logger.info("check_run event: no PR for", e.head_sha);
+    Logger.info("check_run event: no PR for", e.check_suite.head_sha);
     return [];
 }));
 
