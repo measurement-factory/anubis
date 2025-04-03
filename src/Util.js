@@ -64,7 +64,7 @@ class ErrorContext extends Error {
     }
 }
 
-// Represents a PR 'identificator' as a string, either of
+// Identifies or refers to a PR using either
 // PR number, or
 // PR branch name (without 'refs' or 'heads' prefixes), or
 // staging branch commit SHA (including stale commits).

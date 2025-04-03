@@ -50,15 +50,14 @@ class RepoMerger {
     // prIds is an array of Util.PrId objects collected by event handlers (or null)
     async run(prIds, handler) {
         assert(prIds !== undefined);
-
-        if (handler)
-            this._handler = handler;
-
         if (prIds === null)
             this._prIds = null;
         else if (this._prIds !== null)
             this._prIds.push(...prIds);
         // else keep discarding prIds until this._prIds is reset below
+
+        if (handler)
+            this._handler = handler;
 
         if (this._running) {
             Logger.info("Already running, planning rerun.");

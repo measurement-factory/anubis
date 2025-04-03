@@ -63,16 +63,19 @@ WebhookHandler.on('push', HandlerWrap((ev) => {
     const e = ev.payload;
     Logger.info("push event:", e.ref);
 
-    // e.ref as refs/heads/branch_name
-    const parts = e.ref.split('/');
-    const branch = parts[parts.length-1];
-    return Util.PrId.BranchList([branch], e.head_commit ? e.head_commit.message : null);
+    // e.ref uses refs/heads/<branch_name> format for branches
+    // (and refs/tags/<tag_name> format for tags)
+    if (e.ref.startsWith('refs/heads/')) {
+        const branch = e.ref.replace('refs/heads/', '');
+        return Util.PrId.BranchList([branch], e.head_commit ? e.head_commit.message : null);
+    } else {
+        Logger.info("push event: ignore a non-branch", e.ref);
+        return [];
+    }
 }));
 
-// https://docs.github.com/ru/webhooks/webhook-events-and-payloads#workflow_run
-WebhookHandler.on('workflow_run', HandlerWrap((ev) => {
-    const e = ev.payload.workflow_run;
-    Logger.info("workflow_run event:", e.head_sha);
+function handleCheckEvent(name, e) {
+    Logger.info(`${name} event:`, e.head_sha);
 
     if (e.pull_requests.length) {
         const list = Array.from(e.pull_requests, v => v.number);
@@ -83,26 +86,18 @@ WebhookHandler.on('workflow_run', HandlerWrap((ev) => {
         return Util.PrId.Sha(e.head_sha);
     }
     // workflow runs for other non-PR branches (e.g., master) are not associated with PRs
-    Logger.info("workflow_run event: no PR for", e.head_sha);
+    Logger.info(`${name} event: no PR for`, e.head_sha);
     return [];
+}
+
+// https://docs.github.com/ru/webhooks/webhook-events-and-payloads#workflow_run
+WebhookHandler.on('workflow_run', HandlerWrap((ev) => {
+    return handleCheckEvent("workflow_run", ev.payload.workflow_run);
 }));
 
 // https://docs.github.com/en/webhooks/webhook-events-and-payloads#check_run
 WebhookHandler.on('check_run', HandlerWrap((ev) => {
-    const e = ev.payload.check_run;
-    Logger.info("check_run event:", e.check_suite.head_sha);
-
-    if (e.check_suite.pull_requests.length) {
-        const list = Array.from(e.check_suite.pull_requests, v => v.number);
-        return Util.PrId.PrNumList(list);
-    }
-
-    if (e.check_suite.head_branch === Config.stagingBranch()) {
-        return Util.PrId.Sha(e.check_suite.head_sha);
-    }
-    // check runs for other non-PR branches (e.g., master) are not associated with PRs
-    Logger.info("check_run event: no PR for", e.check_suite.head_sha);
-    return [];
+    return handleCheckEvent("check_run", ev.payload.check_run.check_suite);
 }));
 
 WebhookHandler.on('ping', (ev) => {

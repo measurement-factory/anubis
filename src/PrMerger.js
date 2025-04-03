@@ -62,6 +62,7 @@ class PrScanResult {
         const oldPrs = this.awakePrs;
         this.awakePrs = this.awakePrs.filter(el => el.number !== rawPr.number);
         assert(oldPrs.length === this.awakePrs.length + 1); // one PR was removed
+
         assert(!this.delayedPrs.some(el => el.number === rawPr.number));
         let date = new Date();
         date.setSeconds(date.getSeconds() + delay/1000);
