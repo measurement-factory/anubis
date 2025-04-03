@@ -21,7 +21,8 @@ function ParsePrNumber(prMessage) {
     const matched = lines[0].match(PrNumberRegex);
     if (!matched)
         return null;
-    const prNumber = matched[1];
+    const prNumber = parseInt(matched[1], 10);
+    assert(!isNaN(prNumber));
     assert(prNumber > 0);
     return prNumber;
 }
@@ -82,8 +83,8 @@ class PrId
 
     static BranchList(branches, msg) { return Array.from(branches, b => new PrId("branch", b, msg)); }
     static Sha(sha) { return [new PrId("sha", sha)]; }
-    static PrNum(prNum) { return [new PrId("prNum", prNum.toString())]; }
-    static PrNumList(list) { return Array.from(list, prNum => new PrId("prNum", prNum.toString())); }
+    static PrNum(prNum) { return [new PrId("prNum", prNum)]; }
+    static PrNumList(list) { return Array.from(list, prNum => new PrId("prNum", prNum)); }
 
     toString() { return `${this.type}:${this.value}`; }
 }

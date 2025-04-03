@@ -23,7 +23,7 @@ class PrScanResult {
         if (updatedPrs === null)
             return false;
 
-        if (updatedPrs.some(el => el === freshRawPr.number.toString()))
+        if (updatedPrs.some(el => el === freshRawPr.number))
             return false;
 
         // A cleared for merging PR B may be waiting for PR A being merged. When
@@ -109,7 +109,7 @@ class PrMerger {
             Logger.info('will not use PR scan optimization');
         } else {
             if (currentPr)
-                updatedPrs.push(currentPr.number.toString());
+                updatedPrs.push(currentPr.number);
             // remove duplicates
             updatedPrs = updatedPrs.filter((v, idx) => updatedPrs.indexOf(v) === idx);
             const prNumbers = updatedPrs.join();
@@ -222,11 +222,11 @@ class PrMerger {
 
         for (let id of prIds) {
             if (id.type === "prNum") {
-                prNumList.push(id.value.toString());
+                prNumList.push(id.value);
             } else if (id.type === "sha") {
                 assert(!currentPr || this._stagedBranchSha !== null);
                 if (currentPr && (id.value === this._stagedBranchSha)) {
-                    prNumList.push(currentPr.number.toString());
+                    prNumList.push(currentPr.number);
                 } else {
                     const commit = await GH.getCommit(id.value);
                     const prNum = this._extractPrNumber(commit.message, id.value);
@@ -248,7 +248,7 @@ class PrMerger {
                         Logger.info(`Could not find a PR by ${id} branch`);
                         continue;
                     }
-                    prNumList.push(pr.number.toString());
+                    prNumList.push(pr.number);
                 }
             }
         }

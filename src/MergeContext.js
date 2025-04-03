@@ -1054,7 +1054,7 @@ class PullRequest {
         const stagedSha = await GH.getReference(Config.stagingBranchPath());
         const stagedCommit = await GH.getCommit(stagedSha);
         const prNum = Util.ParsePrNumber(stagedCommit.message);
-        if (prNum !== null && this._prNumber().toString() === prNum) {
+        if (prNum !== null && this._prNumber() === prNum) {
             this._log("found staged commit " + stagedSha);
             this._stagedCommit = stagedCommit;
             return;
@@ -1288,7 +1288,7 @@ class PullRequest {
         let commits = await GH.getCommits(this._prBaseBranch(), dateSince);
         for (let commit of commits) {
             const num = Util.ParsePrNumber(commit.commit.message);
-            if (num && num === this._prNumber().toString()) {
+            if (num && num === this._prNumber()) {
                 assert(!mergedSha); // the PR can be merged only once
                 mergedSha = commit.sha;
             }
