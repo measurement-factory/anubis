@@ -44,18 +44,17 @@ class PrScanResult {
         if (savedRawPr) {
             if (savedRawPr.updated_at !== freshRawPr.updated_at)
                 return false; // PR has changed since this scan
-        } else {
-            const delayedPr = this.delayedPrs.find(el => el.number === freshRawPr.number);
-            if (!delayedPr)
-                return false; // this scan has not seen freshRawPr (neither awakePrs nor delayedPrs have it)
-            if (delayedPr.expirationDate <= freshScanDate)
-                return false;
+
+            // treat recently updated PRs as changed PRs to reduce the probability of ignoring
+            // (PRs with) subsequent same-timestamp changes
+            const unmodifiedDurationMs = freshScanDate - new Date(savedRawPr.updated_at);
+            return unmodifiedDurationMs > 1000*3600;
         }
 
-        // treat recently updated PRs as changed PRs to reduce the probability of ignoring
-        // (PRs with) subsequent same-timestamp changes
-        const unmodifiedDurationMs = freshScanDate - new Date(savedRawPr.updated_at);
-        return unmodifiedDurationMs > 1000*3600;
+        const delayedPr = this.delayedPrs.find(el => el.number === freshRawPr.number);
+        if (!delayedPr)
+            return false; // this scan has not seen freshRawPr (neither awakePrs nor delayedPrs have it)
+        return delayedPr.expirationDate > freshScanDate;
     }
 
     forgetDelayedPr(rawPr, delay) {
