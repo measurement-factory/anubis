@@ -10,10 +10,22 @@ class PrScanResult {
     constructor(prs) {
         this.scanDate = new Date(); // the scan starting time
         this.awakePrs = [...prs]; // PRs that were not delayed during the scan
+        // PRs that wait for some timeout to expire.
+        // Each array element is an {number, expirationDate} structure,
+        // where the number field represents PR number of Number type and
+        // expirationDate member has a Date type
+        this.delayedPrs = [];
         this.minDelay = null; // if there are delayed PRs, pause them for at least this many milliseconds
     }
 
-    isStillUnchanged(freshRawPr, freshScanDate) {
+    isStillUnchanged(updatedPrs, freshRawPr, freshScanDate) {
+        assert.strictEqual(arguments.length, 3);
+        if (updatedPrs === null)
+            return false;
+
+        if (updatedPrs.some(el => el === freshRawPr.number))
+            return false;
+
         // A cleared for merging PR B may be waiting for PR A being merged. When
         // PR A is merged or its merging fails, we may need to advance PR B, even
         // though PR B remains unchanged from GitHub metadata/events point of view.
@@ -23,22 +35,37 @@ class PrScanResult {
         if (freshRawPr.labels.some(el => el.name === Config.clearedForMergeLabel()))
             return false;
 
-        const savedRawPr = this.awakePrs.find(el => el.number === freshRawPr.number);
-        if (!savedRawPr)
-            return false; // this scan has not seen freshRawPR
-        if (savedRawPr.updated_at !== freshRawPr.updated_at)
-            return false; // PR has changed since this scan
+        // XXX: The above concern also applies to PRs that are not "cleared for
+        // merging" but can be proactively staged in anticipation of that
+        // clearance. TODO: Mark the first such PR that is waiting for the
+        // staging branch "lock" and treat it as "changed", returning false.
 
-        // treat recently updated PRs as changed PRs to reduce the probability of ignoring
-        // (PRs with) subsequent same-timestamp changes
-        const unmodifiedDurationMs = freshScanDate - new Date(savedRawPr.updated_at);
-        return unmodifiedDurationMs > 1000*3600;
+        const savedRawPr = this.awakePrs.find(el => el.number === freshRawPr.number);
+        if (savedRawPr) {
+            if (savedRawPr.updated_at !== freshRawPr.updated_at)
+                return false; // PR has changed since this scan
+
+            // treat recently updated PRs as changed PRs to reduce the probability of ignoring
+            // (PRs with) subsequent same-timestamp changes
+            const unmodifiedDurationMs = freshScanDate - new Date(savedRawPr.updated_at);
+            return unmodifiedDurationMs > 1000*3600;
+        }
+
+        const delayedPr = this.delayedPrs.find(el => el.number === freshRawPr.number);
+        if (!delayedPr)
+            return false; // this scan has not seen freshRawPr (neither awakePrs nor delayedPrs have it)
+        return delayedPr.expirationDate > freshScanDate;
     }
 
     forgetDelayedPr(rawPr, delay) {
         const oldPrs = this.awakePrs;
         this.awakePrs = this.awakePrs.filter(el => el.number !== rawPr.number);
         assert(oldPrs.length === this.awakePrs.length + 1); // one PR was removed
+
+        assert(!this.delayedPrs.some(el => el.number === rawPr.number));
+        let date = new Date();
+        date.setSeconds(date.getSeconds() + delay/1000);
+        this.delayedPrs.push({number: rawPr.number, expirationDate: date});
         if (this.minDelay === null || this.minDelay > delay)
             this.minDelay = delay;
     }
@@ -59,18 +86,34 @@ class PrMerger {
         this._ignored = 0; // the number of PRs skipped due to human markings; TODO: Rename to _ignoredAsMarked
         this._ignoredAsUnchanged = 0; // the number of PRs skipped due to lack of PR updates
         this._todo = null; // raw PRs to be processed
+        this._stagedBranchSha = null; // the SHA of the branch head
     }
 
     // Implements a single Anubis processing step.
     // Returns suggested wait time until the next step (in milliseconds).
-    async execute(lastScan) {
+    async execute(lastScan, prIds) {
         Logger.info("runStep running");
 
         this._todo = await GH.getOpenPrs();
         this._total = this._todo.length;
         Logger.info(`Received ${this._total} PRs from GitHub:`, this._prNumbers());
 
-        await this._determineProcessingOrder(await this._current());
+        const currentPr = await this._current();
+        await this._determineProcessingOrder(currentPr);
+
+        let updatedPrs = await this._prNumbersFromIds(prIds, currentPr, this._todo);
+        // Treat the 'null' updatedPrs below as if all PRs have been 'updated'.
+        // An empty updatedPrs means that none of the PRs has been updated.
+        if (updatedPrs === null) {
+            Logger.info('will not use PR scan optimization');
+        } else {
+            if (currentPr)
+                updatedPrs.push(currentPr.number);
+            // remove duplicates
+            updatedPrs = updatedPrs.filter((v, idx) => updatedPrs.indexOf(v) === idx);
+            const prNumbers = updatedPrs.join();
+            Logger.info(`Got events since ${lastScan.scanDate.toISOString()} for these PRs: [${prNumbers}]`);
+        }
 
         let somePrWasStaged = false;
         let currentScan = new PrScanResult(this._todo);
@@ -84,7 +127,8 @@ class PrMerger {
                     continue;
                 }
 
-                if (lastScan && lastScan.isStillUnchanged(rawPr, currentScan.scanDate)) {
+                // The 'lastScan' check turns off optimization for the initial scan.
+                if (lastScan && lastScan.isStillUnchanged(updatedPrs, rawPr, currentScan.scanDate)) {
                     const updatedAt = new Date(rawPr.updated_at);
                     Logger.info(`Ignoring PR${rawPr.number} because it has not changed since ${updatedAt.toISOString()}`);
                     this._ignoredAsUnchanged++;
@@ -155,12 +199,67 @@ class PrMerger {
         Logger.info("PR processing order:", this._prNumbers());
     }
 
+    _extractPrNumber(message, source) {
+        const prNum = Util.ParsePrNumber(message);
+        if (prNum === null) {
+            Logger.warn(`Could not get PR number by parsing ${source} message`);
+            return null;
+        } else {
+            Logger.info(`Got PR${prNum} from ${source} message`);
+            return prNum;
+        }
+    }
+
+    // Translates each element of prIds into a PR number.
+    // Returns an array of PR numbers if it could translate all Ids or null otherwise.
+    async _prNumbersFromIds(prIds, currentPr, prList) {
+        assert(prIds !== undefined);
+        if (prIds === null)
+            return null;
+
+        let prNumList = [];
+
+        for (let id of prIds) {
+            if (id.type === "prNum") {
+                prNumList.push(id.value);
+            } else if (id.type === "sha") {
+                assert(!currentPr || this._stagedBranchSha !== null);
+                if (currentPr && (id.value === this._stagedBranchSha)) {
+                    prNumList.push(currentPr.number);
+                } else {
+                    const commit = await GH.getCommit(id.value);
+                    const prNum = this._extractPrNumber(commit.message, id.value);
+                    if (prNum === null)
+                        continue;
+                    prNumList.push(prNum);
+                }
+            } else {
+                assert(id.type === "branch");
+                if (id.value === Config.stagingBranch()) {
+                    assert(id.message !== null);
+                    const prNum = this._extractPrNumber(id.message, id.value);
+                    if (prNum === null)
+                        continue;
+                    prNumList.push(prNum);
+                } else {
+                    const pr = prList.find(p => p.head.ref === id.value);
+                    if (!pr) {
+                        Logger.info(`Could not find a PR by ${id} branch`);
+                        continue;
+                    }
+                    prNumList.push(pr.number);
+                }
+            }
+        }
+        return prNumList;
+    }
+
     // Returns a raw PR with a staged commit (or null).
     // If that PR exists, it is in either a "staged" or "merged" state.
     async _current() {
         Logger.info("Looking for the current PR...");
-        const stagedBranchSha = await GH.getReference(Config.stagingBranchPath());
-        const stagedBranchCommit = await GH.getCommit(stagedBranchSha);
+        this._stagedBranchSha = await GH.getReference(Config.stagingBranchPath());
+        const stagedBranchCommit = await GH.getCommit(this._stagedBranchSha);
         Logger.info("Staged branch head sha: " + stagedBranchCommit.sha);
         const prNum = Util.ParsePrNumber(stagedBranchCommit.message);
         if (prNum === null) {
@@ -179,11 +278,14 @@ class PrMerger {
 } // PrMerger
 
 // promises to process all PRs once, hiding PrMerger from callers
-async function Step() {
+async function Step(prIds) {
+    assert(prIds !== undefined);
+    if (prIds !== null)
+        Logger.info('prIds: [' + prIds.join() + ']');
     const lastScan = _LastScan;
     _LastScan = null;
     const mergerer = new PrMerger();
-    _LastScan = await mergerer.execute(lastScan);
+    _LastScan = await mergerer.execute(lastScan, prIds);
     return _LastScan.minDelay;
 }
 

@@ -16,6 +16,7 @@ class RepoMerger {
         this._running = false;
         this._handler = null;
         this._server = null;
+        this._prIds = null;
     }
 
     _createServer() {
@@ -46,8 +47,15 @@ class RepoMerger {
         });
     }
 
-    // prNum (if provided) corresponds to a PR, scheduled this 'run'
-    async run(handler) {
+    // prIds is an array of Util.PrId objects collected by event handlers (or null)
+    async run(prIds, handler) {
+        assert(prIds !== undefined);
+        if (prIds === null)
+            this._prIds = null;
+        else if (this._prIds !== null)
+            this._prIds.push(...prIds);
+        // else keep discarding prIds until this._prIds is reset below
+
         if (handler)
             this._handler = handler;
 
@@ -62,9 +70,11 @@ class RepoMerger {
         do {
             try {
                 this._rerun = false;
+                const ids = this._prIds; // may be null
+                this._prIds = [];
                 if (!this._server)
                     await this._createServer();
-                rerunIn = await Step();
+                rerunIn = await Step(ids);
             } catch (e) {
                 Log.LogError(e, "RepoMerger.run");
                 this._rerun = true;
@@ -95,7 +105,7 @@ class RepoMerger {
         assert(this._timer === null);
         let date = new Date();
         date.setSeconds(date.getSeconds() + ms/1000);
-        this._timer = setTimeout(this.run.bind(this), ms);
+        this._timer = setTimeout(this.run.bind(this, []), ms);
         Logger.info("planning rerun in " + this._msToTime(ms));
     }
 
