@@ -74,12 +74,31 @@ WebhookHandler.on('push', HandlerWrap((ev) => {
     }
 }));
 
+// prUrl format, e.g., https://api.github.com/repos/github/hello-world/pulls/1
+// whether the PR belongs to Squid Project
+function isPrValid(prUrl) {
+    const basePath = Config.baseUrl() + '/repos/';
+    assert(prUrl.startsWith(basePath));
+    const arr = prUrl.substring(basePath.length).split('/');
+    assert(arr.length === 4);
+    return arr[0] === Config.owner();
+}
+
 function handleCheckEvent(name, e) {
     Logger.info(`${name} event:`, e.head_sha);
 
     if (e.pull_requests.length) {
-        const list = Array.from(e.pull_requests, v => v.number);
-        return Util.PrId.PrNumList(list);
+        let numbers = [];
+        for (let pr of e.pull_requests) {
+            if (isPrValid(pr.url)) {
+                numbers.push(pr.number);
+            } else {
+                Logger.info(`${name} event: ignore a non Squid Project PR with ${pr.url} for `, e.head_sha);
+            }
+        }
+        if (numbers.length) {
+            return Util.PrId.PrNumList(numbers);
+        }
     }
 
     if (e.head_branch === Config.stagingBranch()) {

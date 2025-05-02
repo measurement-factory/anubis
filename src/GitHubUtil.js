@@ -8,7 +8,7 @@ const GitHub = new Octokit({
         fetch: undefined,
         timeout: Config.requestTimeout(),
     },
-    baseUrl: 'https://api.github.com'
+    baseUrl: Config.baseUrl()
 });
 const Util = require('./Util.js');
 const Log = require('./Logger.js');

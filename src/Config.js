@@ -87,6 +87,7 @@ class ConfigOptions {
     host() { return this._host; }
     port() { return this._port; }
     owner() { return this._owner; }
+    baseUrl() { return 'https://api.github.com'; }
     stagingBranchPath() { return "heads/" + this._stagingBranch; }
     stagingBranch() { return this._stagingBranch; }
     dryRun() { return this._dryRun; }
