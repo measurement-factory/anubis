@@ -74,14 +74,14 @@ WebhookHandler.on('push', HandlerWrap((ev) => {
     }
 }));
 
-// prUrl format, e.g., https://api.github.com/repos/github/hello-world/pulls/1
-// whether the PR belongs to Squid Project
-function isPrValid(prUrl) {
+// whether the PR belongs to the monitored repository owner
+function isMonitoredPr(prUrl) {
+    // prUrl format, e.g., https://api.github.com/repos/github/hello-world/pulls/1
     const basePath = Config.baseUrl() + '/repos/';
     assert(prUrl.startsWith(basePath));
     const arr = prUrl.substring(basePath.length).split('/');
     assert(arr.length === 4);
-    return arr[0] === Config.owner();
+    return arr[0] === Config.owner() && arr[1] === Config.repo();
 }
 
 function handleCheckEvent(name, e) {
@@ -90,11 +90,11 @@ function handleCheckEvent(name, e) {
     if (e.pull_requests.length) {
         let numbers = [];
         for (let pr of e.pull_requests) {
-            if (isPrValid(pr.url)) {
+            if (isMonitoredPr(pr.url)) {
                 numbers.push(pr.number);
-            } else {
-                Logger.info(`${name} event: ignore a non Squid Project PR with ${pr.url} for `, e.head_sha);
+                continue;
             }
+            Logger.info(`${name} event: ignore a foreign repository PR with ${pr.url} for`, e.head_sha);
         }
         if (numbers.length) {
             return Util.PrId.PrNumList(numbers);
