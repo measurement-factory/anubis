@@ -99,15 +99,14 @@ function handleCheckEvent(name, e) {
         if (numbers.length) {
             return Util.PrId.PrNumList(numbers);
         }
-        Logger.info(`${name} event: no PRs found for the monitored repository for`, e.head_sha);
+        Logger.info(`${name} event: no monitored PRs found for`, e.head_sha);
         return [];
     }
 
     if (e.head_branch === Config.stagingBranch()) {
         return Util.PrId.Sha(e.head_sha);
     }
-    // check/workflow runs for other non-PR branches (e.g., master) are
-    // not associated with PRs of the monitored repository
+    // check/workflow events for other non-PR branches (e.g., master) are not associated with PRs
     Logger.info(`${name} event: no PR for`, e.head_sha);
     return [];
 }
