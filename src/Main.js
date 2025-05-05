@@ -74,7 +74,7 @@ WebhookHandler.on('push', HandlerWrap((ev) => {
     }
 }));
 
-// whether the PR belongs to the monitored repository owner
+// whether a given PR (identified by its URL) belongs to the monitored repository
 function isMonitoredPr(prUrl) {
     // Example of prUrl format: https://api.github.com/repos/github/hello-world/pulls/1
     const basePath = Config.baseUrl() + '/repos/';
