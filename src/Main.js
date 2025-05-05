@@ -74,18 +74,39 @@ WebhookHandler.on('push', HandlerWrap((ev) => {
     }
 }));
 
+// whether a given PR (identified by its URL) belongs to the monitored repository
+function isMonitoredPr(prUrl) {
+    // Example of prUrl format: https://api.github.com/repos/github/hello-world/pulls/1
+    const basePath = Config.baseUrl() + '/repos/';
+    assert(prUrl.startsWith(basePath));
+    const arr = prUrl.substring(basePath.length).split('/');
+    assert(arr.length === 4);
+    return arr[0] === Config.owner() && arr[1] === Config.repo();
+}
+
 function handleCheckEvent(name, e) {
     Logger.info(`${name} event:`, e.head_sha);
 
     if (e.pull_requests.length) {
-        const list = Array.from(e.pull_requests, v => v.number);
-        return Util.PrId.PrNumList(list);
+        let numbers = [];
+        for (let pr of e.pull_requests) {
+            if (isMonitoredPr(pr.url)) {
+                numbers.push(pr.number);
+                continue;
+            }
+            Logger.info(`${name} event: ignore a foreign repository PR with ${pr.url} for`, e.head_sha);
+        }
+        if (numbers.length) {
+            return Util.PrId.PrNumList(numbers);
+        }
+        Logger.info(`${name} event: no monitored PRs found for`, e.head_sha);
+        return [];
     }
 
     if (e.head_branch === Config.stagingBranch()) {
         return Util.PrId.Sha(e.head_sha);
     }
-    // workflow runs for other non-PR branches (e.g., master) are not associated with PRs
+    // check/workflow events for other non-PR branches (e.g., master) are not associated with PRs
     Logger.info(`${name} event: no PR for`, e.head_sha);
     return [];
 }
