@@ -1765,7 +1765,7 @@ class PullRequest {
         return problem;
     }
 
-    // After it started processing a PR, Anubis was prohibited from 
+    // After it started processing a PR, Anubis was prohibited from
     // manipulating that PR or discovered a concurrent Anubis-only PR
     // manipulation (evidently performed by somebody else).
     // minimize changes to avoid conflicts (but do not block other PRs)
