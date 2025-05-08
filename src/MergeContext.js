@@ -1,9 +1,8 @@
-const assert = require('assert');
-const Config = require('./Config.js');
-const Log = require('./Logger.js');
-const GH = require('./GitHubUtil.js');
-const Util = require('./Util.js');
-
+import assert from 'assert';
+import Config from './Config.js';
+import * as Log from './Logger.js';
+import * as GH from './GitHubUtil.js';
+import * as Util from './Util.js';
 
 // Process() outcome
 class ProcessResult
@@ -1795,13 +1794,8 @@ class PullRequest {
 }
 
 // promises to update/advance the given PR, hiding PullRequest from callers
-function Process(rawPr, banStaging) {
+export default function Process(rawPr, banStaging) {
     let pr = new PullRequest(rawPr, banStaging);
     return pr.process();
 }
-
-
-module.exports = {
-    Process: Process
-};
 

@@ -1,9 +1,9 @@
-const assert = require('assert');
-const http = require('http');
-const Config = require('./Config.js');
-const Log = require('./Logger.js');
-const Util = require('./Util.js');
-const Step = require('./PrMerger.js');
+import assert from 'assert';
+import http from 'http';
+import Config from './Config.js';
+import * as Log from './Logger.js';
+import * as Util from './Util.js';
+import Step from './PrMerger.js';
 
 const Logger = Log.Logger;
 
@@ -41,7 +41,7 @@ class RepoMerger {
                 params.host = Config.host();
             this._server.listen(params, () => {
                 let hostStr = Config.host() ? Config.host() : "unspecified";
-                Log.Logger.info("HTTP server started and listening on " + hostStr + ":" + Config.port());
+                Logger.info("HTTP server started and listening on " + hostStr + ":" + Config.port());
                 resolve(true);
             });
         });
@@ -134,5 +134,5 @@ class RepoMerger {
 
 const Merger = new RepoMerger();
 
-module.exports = Merger;
+export default Merger;
 

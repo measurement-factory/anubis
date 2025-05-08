@@ -1,10 +1,10 @@
-const assert = require('assert');
-const Config = require('./Config.js');
-const Log = require('./Logger.js');
+import assert from 'assert';
+import Config from './Config.js';
+import * as Log from './Logger.js';
 const Logger = Log.Logger;
-const GH = require('./GitHubUtil.js');
-const Util = require('./Util.js');
-const MergeContext = require('./MergeContext.js');
+import * as GH from './GitHubUtil.js';
+import * as Util from './Util.js';
+import Process from './MergeContext.js';
 
 class PrScanResult {
     constructor(prs) {
@@ -135,7 +135,7 @@ class PrMerger {
                     continue;
                 }
 
-                const result = await MergeContext.Process(rawPr, somePrWasStaged);
+                const result = await Process(rawPr, somePrWasStaged);
                 assert(!somePrWasStaged || !result.prStaged());
                 somePrWasStaged = somePrWasStaged || result.prStaged();
 
@@ -278,7 +278,7 @@ class PrMerger {
 } // PrMerger
 
 // promises to process all PRs once, hiding PrMerger from callers
-async function Step(prIds) {
+export default async function Step(prIds) {
     assert(prIds !== undefined);
     if (prIds !== null)
         Logger.info('prIds: [' + prIds.join() + ']');
@@ -288,6 +288,4 @@ async function Step(prIds) {
     _LastScan = await mergerer.execute(lastScan, prIds);
     return _LastScan.minDelay;
 }
-
-module.exports = Step;
 
