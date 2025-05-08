@@ -1,9 +1,9 @@
-const assert = require('assert');
-const createHandler = require('github-webhook-handler');
-const Config = require('./Config.js');
-const Log = require('./Logger.js');
-const Merger = require('./RepoMerger.js');
-const Util = require('./Util.js');
+import assert from 'assert';
+import createHandler from 'github-webhook-handler';
+import Config from './Config.js';
+import * as Log from './Logger.js';
+import Merger from './RepoMerger.js';
+import * as Util from './Util.js';
 
 const Logger = Log.Logger;
 
