@@ -34,12 +34,12 @@ function calculateRateLimitDelay(headers) {
     const resetTime = parseInt(headers["x-ratelimit-reset"]) * 1000;
     const now = Date.now();
     if (resetTime <= now) {
-        Log.Logger.info("stale x-ratelimit-reset value: " + resetTime + '<=' + now);
+        Log.Logger.info("stale x-ratelimit-reset value: " +  resetTime + '<=' + now);
         return 0;
     }
     const remaining = parseInt(headers["x-ratelimit-remaining"]);
     const delay = Math.round((resetTime - now)/remaining);
-    Log.Logger.info("calculateRateLimitDelay: " + delay + "(ms), used: " + used + " out of " + limit);
+    Log.Logger.info("calculateRateLimitDelay: " +  delay + "(ms), used: " + used + " out of " + limit);
     return delay;
 }
 
@@ -77,7 +77,7 @@ export async function getLabels(prNum) {
 
     const result = await GitHub.rest.issues.listLabelsOnIssue(params);
     logApiResult(getLabels.name, params, {labels: result.data.length});
-    return await rateLimitedPromise(result);
+    return await rateLimitedPromise(result)
 }
 
 // Gets PR metadata from GitHub
