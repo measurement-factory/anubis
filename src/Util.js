@@ -1,12 +1,13 @@
-const assert = require('assert');
-const Config = require('./Config.js');
+import Config from './Config.js';
 
-function sleep(msec) {
+import assert from 'assert';
+
+export function sleep(msec) {
     return new Promise((resolve) => setTimeout(resolve, msec));
 }
 
 // common parameters for all API calls
-function commonParams() {
+export function commonParams() {
     return {
         owner: Config.owner(),
         repo: Config.repo()
@@ -15,7 +16,7 @@ function commonParams() {
 
 const PrNumberRegex = / \(#(\d+)\)$/;
 
-function ParsePrNumber(prMessage) {
+export function ParsePrNumber(prMessage) {
     assert(prMessage);
     const lines = prMessage.split(/\r*\n/);
     const matched = lines[0].match(PrNumberRegex);
@@ -28,7 +29,7 @@ function ParsePrNumber(prMessage) {
 }
 
 // An error context for promisificated wrappers.
-class ErrorContext extends Error {
+export class ErrorContext extends Error {
     // The underlying rejection may be a bot-specific Promise.reject() or
     // be caused by a GitHub API error, so 'err' contains either
     // an error string or the entire API error object.
@@ -69,7 +70,7 @@ class ErrorContext extends Error {
 // PR number, or
 // PR branch name (without 'refs' or 'heads' prefixes), or
 // staging branch commit SHA (including stale commits).
-class PrId
+export class PrId
 {
     constructor(type, val, msg) {
         assert(type !== undefined);
@@ -88,12 +89,4 @@ class PrId
 
     toString() { return `${this.type}:${this.value}`; }
 }
-
-module.exports = {
-    sleep: sleep,
-    commonParams: commonParams,
-    ParsePrNumber: ParsePrNumber,
-    ErrorContext: ErrorContext,
-    PrId: PrId,
-};
 

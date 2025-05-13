@@ -1,6 +1,6 @@
-const fs = require('fs');
-const timestring = require('timestring');
-const assert = require('assert');
+import assert from 'assert';
+import fs from 'fs';
+import timestring from 'timestring';
 
 class ConfigOptions {
     constructor(fname) {
@@ -142,4 +142,4 @@ class ConfigOptions {
 const configFile = process.argv.length > 2 ? process.argv[2] : './config.json';
 const Config = new ConfigOptions(configFile);
 
-module.exports = Config;
+export default Config;
