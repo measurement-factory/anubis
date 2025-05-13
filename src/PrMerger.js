@@ -1,10 +1,12 @@
-import assert from 'assert';
-import Config from './Config.js';
-import * as Log from './Logger.js';
-const Logger = Log.Logger;
 import * as GH from './GitHubUtil.js';
-import * as Util from './Util.js';
+import * as Log from './Logger.js';
 import * as MergeContext from './MergeContext.js';
+import * as Util from './Util.js';
+import Config from './Config.js';
+
+import assert from 'assert';
+
+const Logger = Log.Logger;
 
 class PrScanResult {
     constructor(prs) {

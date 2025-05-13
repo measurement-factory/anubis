@@ -1,6 +1,7 @@
+import Config from './Config.js';
+
 import assert from 'assert';
 import bunyan from 'bunyan';
-import Config from './Config.js';
 
 export const Logger = bunyan.createLogger(Config.loggerParams());
 

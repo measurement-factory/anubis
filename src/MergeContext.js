@@ -1,8 +1,9 @@
-import assert from 'assert';
-import Config from './Config.js';
-import * as Log from './Logger.js';
 import * as GH from './GitHubUtil.js';
+import * as Log from './Logger.js';
 import * as Util from './Util.js';
+import Config from './Config.js';
+
+import assert from 'assert';
 
 // Process() outcome
 class ProcessResult

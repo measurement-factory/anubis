@@ -1,13 +1,13 @@
-import assert from 'assert';
-import createHandler from 'github-webhook-handler';
-import Config from './Config.js';
 import * as Log from './Logger.js';
 import * as RepoMerger from './RepoMerger.js';
 import * as Util from './Util.js';
+import Config from './Config.js';
+
+import assert from 'assert';
+import createHandler from 'github-webhook-handler';
 
 const Logger = Log.Logger;
 const Merger = RepoMerger.Merger;
-
 const WebhookHandler = createHandler({ path: Config.githubWebhookPath(), secret: Config.githubWebhookSecret() });
 
 process.on('unhandledRejection', error => {

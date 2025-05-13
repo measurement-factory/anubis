@@ -1,9 +1,10 @@
+import * as Log from './Logger.js';
+import * as PrMerger from './PrMerger.js';
+import * as Util from './Util.js';
+import Config from './Config.js';
+
 import assert from 'assert';
 import http from 'http';
-import Config from './Config.js';
-import * as Log from './Logger.js';
-import * as Util from './Util.js';
-import * as PrMerger from './PrMerger.js';
 
 const Logger = Log.Logger;
 

@@ -1,6 +1,6 @@
+import assert from 'assert';
 import fs from 'fs';
 import timestring from 'timestring';
-import assert from 'assert';
 
 class ConfigOptions {
     constructor(fname) {

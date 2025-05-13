@@ -1,5 +1,6 @@
-import assert from 'assert';
 import Config from './Config.js';
+
+import assert from 'assert';
 
 export function sleep(msec) {
     return new Promise((resolve) => setTimeout(resolve, msec));

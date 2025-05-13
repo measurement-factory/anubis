@@ -1,6 +1,10 @@
-import assert from 'assert';
+import * as Log from './Logger.js';
+import * as Util from './Util.js';
 import Config from './Config.js';
+
+import assert from 'assert';
 import { Octokit } from "@octokit/rest";
+
 const GitHub = new Octokit({
     auth: Config.githubToken(),
     request: {
@@ -10,9 +14,6 @@ const GitHub = new Octokit({
     },
     baseUrl: 'https://api.github.com'
 });
-import * as Util from './Util.js';
-import * as Log from './Logger.js';
-
 const ErrorContext = Util.ErrorContext;
 const commonParams = Util.commonParams;
 const logApiResult = Log.logApiResult;
