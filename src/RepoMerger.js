@@ -3,7 +3,7 @@ import http from 'http';
 import Config from './Config.js';
 import * as Log from './Logger.js';
 import * as Util from './Util.js';
-import Step from './PrMerger.js';
+import * as PrMerger from './PrMerger.js';
 
 const Logger = Log.Logger;
 
@@ -74,7 +74,7 @@ class RepoMerger {
                 this._prIds = [];
                 if (!this._server)
                     await this._createServer();
-                rerunIn = await Step(ids);
+                rerunIn = await PrMerger.Step(ids);
             } catch (e) {
                 Log.LogError(e, "RepoMerger.run");
                 this._rerun = true;
@@ -132,7 +132,5 @@ class RepoMerger {
     }
 }
 
-const Merger = new RepoMerger();
-
-export default Merger;
+export const Merger = new RepoMerger();
 

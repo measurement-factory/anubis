@@ -4,7 +4,7 @@ import * as Log from './Logger.js';
 const Logger = Log.Logger;
 import * as GH from './GitHubUtil.js';
 import * as Util from './Util.js';
-import Process from './MergeContext.js';
+import * as MergeContext from './MergeContext.js';
 
 class PrScanResult {
     constructor(prs) {
@@ -135,7 +135,7 @@ class PrMerger {
                     continue;
                 }
 
-                const result = await Process(rawPr, somePrWasStaged);
+                const result = await MergeContext.Process(rawPr, somePrWasStaged);
                 assert(!somePrWasStaged || !result.prStaged());
                 somePrWasStaged = somePrWasStaged || result.prStaged();
 
@@ -278,7 +278,7 @@ class PrMerger {
 } // PrMerger
 
 // promises to process all PRs once, hiding PrMerger from callers
-export default async function Step(prIds) {
+export async function Step(prIds) {
     assert(prIds !== undefined);
     if (prIds !== null)
         Logger.info('prIds: [' + prIds.join() + ']');

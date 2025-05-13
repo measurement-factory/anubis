@@ -2,6 +2,7 @@
   "name": "change-anubis",
   "version": "1.0.0",
   "description": "A bot that merges GitHub pull requests",
+  "type": "module",
   "main": "Main.js",
   "dependencies": {
     "@octokit/rest": "^21.1.0",
@@ -22,6 +23,5 @@
     "url": "git+https://github.com/measurement-factory/anubis.git"
   },
   "author": "The Measurement Factory",
-  "license": "Apache-2.0",
-  "type": "module"
+  "license": "Apache-2.0"
 }

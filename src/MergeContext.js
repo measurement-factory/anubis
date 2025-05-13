@@ -1794,7 +1794,7 @@ class PullRequest {
 }
 
 // promises to update/advance the given PR, hiding PullRequest from callers
-export default function Process(rawPr, banStaging) {
+export function Process(rawPr, banStaging) {
     let pr = new PullRequest(rawPr, banStaging);
     return pr.process();
 }

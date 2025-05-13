@@ -12,7 +12,7 @@ export function LogException(err, context) {
     Log(err, context, "info");
 }
 
-export default function Log(err, context, kind) {
+export function Log(err, context, kind) {
     assert(context);
     let msg = context + ": ";
     // non-Error exceptions, like strings
