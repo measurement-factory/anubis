@@ -2,9 +2,10 @@
   "name": "change-anubis",
   "version": "1.0.0",
   "description": "A bot that merges GitHub pull requests",
+  "type": "module",
   "main": "Main.js",
   "dependencies": {
-    "@octokit/rest": "^18.12.0",
+    "@octokit/rest": "^21.1.0",
     "bunyan": "^1.8.12",
     "github-webhook-handler": "^0.6.0",
     "parse-github-url": "^0.3.2",
