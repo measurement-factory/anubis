@@ -229,7 +229,8 @@ class StatusChecks
 
     // no more required status changes or additions are expected
     final() {
-        return (this.requiredStatuses.length >= this._contextsRequiredByGitHubConfig.length) &&
+        assert(this.requiredStatuses.length <= this._contextsRequiredByGitHubConfig.length);
+        return (this.requiredStatuses.length === this._contextsRequiredByGitHubConfig.length) &&
             this.requiredStatuses.every(check => !check.pending());
     }
 
@@ -778,10 +779,10 @@ class PullRequest {
 
         this._approval = null; // future Approval object
 
-        // a list of proteced base branch contexts received from GitHub
+        // a list of protected base branch contexts received from GitHub
         this._contextsRequiredByGitHubConfigBase = null;
 
-        // a list of proteced staging branch contexts received from GitHub
+        // a list of protected staging branch contexts received from GitHub
         this._contextsRequiredByGitHubConfigStaging = null;
 
         this._stagedPosition = null;
@@ -1003,6 +1004,9 @@ class PullRequest {
         const combinedStagingStatuses = await GH.getStatuses(this._stagedSha());
         const genuineStatuses = combinedStagingStatuses.statuses.filter(st => !st.description.endsWith(Config.copiedDescriptionSuffix()));
         let statusChecks = new StatusChecks("Staging", this._contextsRequiredByGitHubConfigStaging);
+        // TODO: Move this loop inside StatusChecks constructor by adding
+        // a third constructor parameter to pass genuineStatuses (here) and
+        // combinedPrStatus.statuses (in similar _getPrStatuses() code).
         for (let st of genuineStatuses) {
             const check = new StatusCheck(st);
             if (this._contextsRequiredByGitHubConfigStaging.some(el => el.trim() === st.context.trim()))
