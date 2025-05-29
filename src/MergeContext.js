@@ -202,6 +202,10 @@ class StatusChecks
             this.optionalStatuses.some(el => el.context.trim() === context.trim());
     }
 
+    hasRequiredStatus(context) {
+        return this.requiredStatuses.some(el => el.context.trim() === context.trim());
+    }
+
     hasApprovalStatus(approval) {
         const statusesToSearch = this._approvalIsRequired ? this.requiredStatuses : this.optionalStatuses;
         return statusesToSearch.some(el =>
@@ -1464,7 +1468,7 @@ class PullRequest {
         assert(this._stagedStatuses.succeeded());
 
         for (let requiredContext of this._contextsRequiredByGitHubConfigBase) {
-            if (this._stagedStatuses.hasStatus(requiredContext)) {
+            if (this._stagedStatuses.hasRequiredStatus(requiredContext)) {
                 this._log("_supplyStagingWithPrRequired: skip existing " + requiredContext);
                 continue;
             }
