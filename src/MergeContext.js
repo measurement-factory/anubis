@@ -941,7 +941,7 @@ class PullRequest {
         await GH.createStatus(sha, this._approval.state, Config.approvalUrl(), this._approval.description, Config.approvalContext());
     }
 
-    async _loadRequiredContexts(branch) {
+    async _loadRequiredContextsFor(branch) {
         let contextsRequiredByGitHubConfig = undefined;
 
         try {
@@ -959,6 +959,11 @@ class PullRequest {
         assert(contextsRequiredByGitHubConfig);
         this._log("required contexts found: " + contextsRequiredByGitHubConfig.length);
         return contextsRequiredByGitHubConfig;
+    }
+
+    async _loadRequiredContexts(branch) {
+        this._contextsRequiredByGitHubConfigBase = await this._loadRequiredContextsFor(this._prBaseBranch());
+        this._contextsRequiredByGitHubConfigStaging = await this._loadRequiredContextsFor(Config.stagingBranch());
     }
 
     async uniqueCheckRuns(sha) {
@@ -1661,8 +1666,7 @@ class PullRequest {
 
         await this._loadStaged();
         await this._loadRawPr(); // requires this._loadStaged()
-        this._contextsRequiredByGitHubConfigBase = await this._loadRequiredContexts(this._prBaseBranch());
-        this._contextsRequiredByGitHubConfigStaging = await this._loadRequiredContexts(Config.stagingBranch());
+        await this._loadRequiredContexts());
         await this._loadPrState(); // requires this._loadRawPr(), this._loadRequiredContexts() and this._loadLabels()
         this._log("PR state: " + this._prState);
 
