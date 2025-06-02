@@ -21,8 +21,8 @@ export default defineConfig([{
             ...globals.node,
         },
 
-        ecmaVersion: 2017,
-        sourceType: "commonjs",
+        ecmaVersion: 2020,
+        sourceType: "module",
     },
 
     rules: {
