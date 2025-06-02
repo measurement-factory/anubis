@@ -84,7 +84,9 @@ export default defineConfig([{
         "no-unused-expressions": 2,
         "no-var": 2,
         "no-with": 2,
-        camelcase: 2,
+        camelcase: [2, {
+            properties: "never"
+        }],
         "comma-spacing": 2,
         "consistent-return": 2,
 
