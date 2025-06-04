@@ -197,9 +197,17 @@ class StatusChecks
         this.optionalStatuses.push(optionalStatus);
     }
 
+    setOptionalStatus(optionalStatus) {
+        this.optionalStatuses = this.optionalStatuses.filter(st => st.context !== optionalStatus.context);
+        this.addOptionalStatus(optionalStatus);
+    }
+
     hasStatus(context) {
-        return this.hasRequiredStatus(context) ||
-            this.optionalStatuses.some(el => el.context.trim() === context.trim());
+        return this.hasRequiredStatus(context) || this.hasOptionalStatus(context);
+    }
+
+    hasOptionalStatus(context) {
+        return this.optionalStatuses.some(el => el.context.trim() === context.trim());
     }
 
     hasRequiredStatus(context) {
@@ -1023,19 +1031,20 @@ class PullRequest {
                 statusChecks.addOptionalStatus(check);
         }
 
-        const optionalStatuses = combinedStagingStatuses.statuses.filter(st => st.description.endsWith(Config.copiedDescriptionSuffix()));
-        for (let st of optionalStatuses) {
-            // PR approval status must be 'genuine' (it is never copied)
-            assert(st.context.trim() !== Config.approvalContext());
-            statusChecks.addOptionalStatus(new StatusCheck(st));
-        }
-
         const checkRuns = await this._getUniqueCheckRuns(this._stagedSha());
         for (let st of checkRuns) {
             if (this._contextsRequiredByGitHubConfigStaging.some(el => el.trim() === st.name.trim()))
                 statusChecks.addRequiredStatus(StatusCheck.FromCheckRun(st));
             else
                 statusChecks.addOptionalStatus(StatusCheck.FromCheckRun(st));
+        }
+
+        const optionalStatuses = combinedStagingStatuses.statuses.filter(st => st.description.endsWith(Config.copiedDescriptionSuffix()));
+        for (let st of optionalStatuses) {
+            // PR approval status must be 'genuine' (it is never copied)
+            assert(st.context.trim() !== Config.approvalContext());
+            // may overwrite some existing staged statuses with the 'copied from PR' statuses
+            statusChecks.setOptionalStatus(new StatusCheck(st));
         }
 
         this._log("staging status details: " + statusChecks);
@@ -1475,6 +1484,18 @@ class PullRequest {
             assert(requiredPrStatus);
             assert(!requiredPrStatus.description.endsWith(Config.copiedDescriptionSuffix()));
 
+            let overwriteExistingOptionalStatus = false;
+            if (this._stagedStatuses.hasOptionalStatus(requiredContext)) {
+                const optionalStagedStatus = this._stagedStatuses.optionalStatuses.find(el => el.context.trim() === requiredContext.trim());
+                if (optionalStagedStatus.description.endsWith(Config.copiedDescriptionSuffix())) {
+                    this._log("_supplyStagingWithPrRequired: skipping existing optional " + requiredContext + " because it has been already copied");
+                    continue;
+                } else {
+                    this._log("_supplyStagingWithPrRequired: overwriting existing optional " + requiredContext);
+                    overwriteExistingOptionalStatus = true;
+                }
+            }
+
             if (this._dryRun("applying required PR statuses to staged"))
                 continue;
 
@@ -1488,7 +1509,10 @@ class PullRequest {
             await GH.createStatus(this._stagedSha(), check.state, check.targetUrl,
                     check.description, check.context);
 
-            this._stagedStatuses.addOptionalStatus(check);
+            if (overwriteExistingOptionalStatus)
+                this._stagedStatuses.setOptionalStatus(check);
+            else
+                this._stagedStatuses.addOptionalStatus(check);
         }
     }
 
