@@ -1,9 +1,9 @@
-const assert = require('assert');
-const Config = require('./Config.js');
-const Log = require('./Logger.js');
-const GH = require('./GitHubUtil.js');
-const Util = require('./Util.js');
+import * as GH from './GitHubUtil.js';
+import * as Log from './Logger.js';
+import * as Util from './Util.js';
+import Config from './Config.js';
 
+import assert from 'assert';
 
 // Process() outcome
 class ProcessResult
@@ -965,12 +965,7 @@ class PullRequest {
         return contextsRequiredByGitHubConfig;
     }
 
-    async _loadRequiredContexts(branch) {
-        this._contextsRequiredByGitHubConfigBase = await this._loadRequiredContextsFor(this._prBaseBranch());
-        this._contextsRequiredByGitHubConfigStaging = await this._loadRequiredContextsFor(Config.stagingBranch());
-    }
-
-    async uniqueCheckRuns(sha) {
+    async _getUniqueCheckRuns(sha) {
         // Returns whole check runs history for the commit.
         const checkRuns = await GH.getCheckRuns(sha);
         // Filter out stale/older checks, assuming that check.id is greater in newer checks.
@@ -981,6 +976,11 @@ class PullRequest {
                 uniqueCheckRuns.push(check);
         });
         return uniqueCheckRuns;
+    }
+
+    async _loadRequiredContexts(branch) {
+        this._contextsRequiredByGitHubConfigBase = await this._loadRequiredContextsFor(this._prBaseBranch());
+        this._contextsRequiredByGitHubConfigStaging = await this._loadRequiredContextsFor(Config.stagingBranch());
     }
 
     // returns filled StatusChecks object
@@ -995,7 +995,7 @@ class PullRequest {
                 statusChecks.addOptionalStatus(check);
         }
 
-        const checkRuns = await this.uniqueCheckRuns(this._prHeadSha());
+        const checkRuns = await this._getUniqueCheckRuns(this._prHeadSha());
         for (let st of checkRuns) {
             if (this._contextsRequiredByGitHubConfigBase.some(el => el.trim() === st.name.trim()))
                 statusChecks.addRequiredStatus(StatusCheck.FromCheckRun(st));
@@ -1030,7 +1030,7 @@ class PullRequest {
             statusChecks.addOptionalStatus(new StatusCheck(st));
         }
 
-        const checkRuns = await this.uniqueCheckRuns(this._stagedSha());
+        const checkRuns = await this._getUniqueCheckRuns(this._stagedSha());
         for (let st of checkRuns) {
             if (this._contextsRequiredByGitHubConfigStaging.some(el => el.trim() === st.name.trim()))
                 statusChecks.addRequiredStatus(StatusCheck.FromCheckRun(st));
@@ -1066,7 +1066,7 @@ class PullRequest {
         const stagedSha = await GH.getReference(Config.stagingBranchPath());
         const stagedCommit = await GH.getCommit(stagedSha);
         const prNum = Util.ParsePrNumber(stagedCommit.message);
-        if (prNum !== null && this._prNumber().toString() === prNum) {
+        if (prNum !== null && this._prNumber() === prNum) {
             this._log("found staged commit " + stagedSha);
             this._stagedCommit = stagedCommit;
             return;
@@ -1300,7 +1300,7 @@ class PullRequest {
         let commits = await GH.getCommits(this._prBaseBranch(), dateSince);
         for (let commit of commits) {
             const num = Util.ParsePrNumber(commit.commit.message);
-            if (num && num === this._prNumber().toString()) {
+            if (num && num === this._prNumber()) {
                 assert(!mergedSha); // the PR can be merged only once
                 mergedSha = commit.sha;
             }
@@ -1778,7 +1778,7 @@ class PullRequest {
         return problem;
     }
 
-    // After it started processing a PR, Anubis was prohibited from 
+    // After it started processing a PR, Anubis was prohibited from
     // manipulating that PR or discovered a concurrent Anubis-only PR
     // manipulation (evidently performed by somebody else).
     // minimize changes to avoid conflicts (but do not block other PRs)
@@ -1807,13 +1807,8 @@ class PullRequest {
 }
 
 // promises to update/advance the given PR, hiding PullRequest from callers
-function Process(rawPr, banStaging) {
+export function Process(rawPr, banStaging) {
     let pr = new PullRequest(rawPr, banStaging);
     return pr.process();
 }
-
-
-module.exports = {
-    Process: Process
-};
 

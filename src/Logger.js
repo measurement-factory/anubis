@@ -1,20 +1,21 @@
-const assert = require('assert');
-const bunyan = require('bunyan');
-const Config = require('./Config.js');
+import Config from './Config.js';
 
-const Logger = bunyan.createLogger(Config.loggerParams());
+import assert from 'assert';
+import bunyan from 'bunyan';
 
-function LogError(err, context) {
+export const Logger = bunyan.createLogger(Config.loggerParams());
+
+export function LogError(err, context) {
     Log(err, context, "error");
 }
 
-function LogException(err, context) {
+export function LogException(err, context) {
     Log(err, context, "info");
 }
 
-function Log(err, context, kind) {
+export function Log(err, context, kind) {
     assert(context);
-    msg = context + ": ";
+    let msg = context + ": ";
     // non-Error exceptions, like strings
     if (err.message === undefined) {
         msg += JSON.stringify(err);
@@ -31,14 +32,7 @@ function Log(err, context, kind) {
         Logger.info(msg);
 }
 
-function logApiResult(method, params, result) {
+export function logApiResult(method, params, result) {
     Logger.info(method, "OK, params:", JSON.stringify(params), "result:", JSON.stringify(result));
 }
-
-module.exports = {
-    Logger: Logger,
-    LogError: LogError,
-    LogException: LogException,
-    logApiResult: logApiResult
-};
 

@@ -1,6 +1,10 @@
-const assert = require('assert');
-const Config = require('./Config.js');
-const { Octokit }  = require("@octokit/rest");
+import * as Log from './Logger.js';
+import * as Util from './Util.js';
+import Config from './Config.js';
+
+import assert from 'assert';
+import { Octokit } from "@octokit/rest";
+
 const GitHub = new Octokit({
     auth: Config.githubToken(),
     request: {
@@ -8,11 +12,8 @@ const GitHub = new Octokit({
         fetch: undefined,
         timeout: Config.requestTimeout(),
     },
-    baseUrl: 'https://api.github.com'
+    baseUrl: Config.baseUrl()
 });
-const Util = require('./Util.js');
-const Log = require('./Logger.js');
-
 const ErrorContext = Util.ErrorContext;
 const commonParams = Util.commonParams;
 const logApiResult = Log.logApiResult;
@@ -34,12 +35,12 @@ function calculateRateLimitDelay(headers) {
     const resetTime = parseInt(headers["x-ratelimit-reset"]) * 1000;
     const now = Date.now();
     if (resetTime <= now) {
-        Log.Logger.info("stale x-ratelimit-reset value: " +  resetTime + '<=' + now);
+        Log.Logger.info("stale x-ratelimit-reset value: " + resetTime + '<=' + now);
         return 0;
     }
     const remaining = parseInt(headers["x-ratelimit-remaining"]);
     const delay = Math.round((resetTime - now)/remaining);
-    Log.Logger.info("calculateRateLimitDelay: " +  delay + "(ms), used: " + used + " out of " + limit);
+    Log.Logger.info("calculateRateLimitDelay: " + delay + "(ms), used: " + used + " out of " + limit);
     return delay;
 }
 
@@ -61,7 +62,7 @@ async function paginatedGet(githubMethod, params) {
     return result;
 }
 
-async function getOpenPrs() {
+export async function getOpenPrs() {
     let params = commonParams();
 
     let data = await paginatedGet(GitHub.rest.pulls.list, params);
@@ -71,19 +72,19 @@ async function getOpenPrs() {
     return data;
 }
 
-async function getLabels(prNum) {
+export async function getLabels(prNum) {
     let params = commonParams();
     params.issue_number = prNum;
 
     const result = await GitHub.rest.issues.listLabelsOnIssue(params);
     logApiResult(getLabels.name, params, {labels: result.data.length});
-    return await rateLimitedPromise(result)
+    return await rateLimitedPromise(result);
 }
 
 // Gets PR metadata from GitHub
 // If requested and needed, retries until GitHub calculates PR mergeable flag.
 // Those retries, if any, are limited to a few minutes.
-async function getPR(prNum, awaitMergeable) {
+export async function getPR(prNum, awaitMergeable) {
     const max = 64 * 1000 + 1; // ~2 min. overall
     for (let d = 1000; d < max; d *= 2) {
         const pr = await getRawPR(prNum);
@@ -107,7 +108,7 @@ async function getRawPR(prNum) {
     return await rateLimitedPromise(result);
 }
 
-async function getReviews(prNum) {
+export async function getReviews(prNum) {
     let params = commonParams();
     params.pull_number = prNum;
 
@@ -116,7 +117,7 @@ async function getReviews(prNum) {
     return reviews;
 }
 
-async function getCheckRuns(ref) {
+export async function getCheckRuns(ref) {
     let params = commonParams();
     params.ref = ref;
 
@@ -125,7 +126,7 @@ async function getCheckRuns(ref) {
     return checkRuns;
 }
 
-async function getStatuses(ref) {
+export async function getStatuses(ref) {
     let params = commonParams();
     params.ref = ref;
 
@@ -134,7 +135,7 @@ async function getStatuses(ref) {
     return await rateLimitedPromise(result);
 }
 
-async function getCommit(sha) {
+export async function getCommit(sha) {
     let params = commonParams();
     params.commit_sha = sha;
 
@@ -143,7 +144,7 @@ async function getCommit(sha) {
     return await rateLimitedPromise(result);
 }
 
-async function createCommit(treeSha, message, parents, author, committer) {
+export async function createCommit(treeSha, message, parents, author, committer) {
     assert(!Config.dryRun());
     let params = commonParams();
     params.tree = treeSha;
@@ -158,7 +159,7 @@ async function createCommit(treeSha, message, parents, author, committer) {
 }
 
 // returns one of: "ahead", "behind", "identical" or "diverged"
-async function compareCommits(baseRef, headRef) {
+export async function compareCommits(baseRef, headRef) {
     let params = commonParams();
     params.basehead = `${baseRef}...${headRef}`;
 
@@ -167,7 +168,7 @@ async function compareCommits(baseRef, headRef) {
     return (await rateLimitedPromise(result)).status;
 }
 
-async function getCommits(branch, since) {
+export async function getCommits(branch, since) {
     let params = commonParams();
     params.sha = branch; // sha or branch to start listing commits from
     params.since = since;
@@ -177,7 +178,7 @@ async function getCommits(branch, since) {
     return commits;
 }
 
-async function getReference(ref) {
+export async function getReference(ref) {
     let params = commonParams();
     params.ref = ref;
 
@@ -186,7 +187,7 @@ async function getReference(ref) {
     return (await rateLimitedPromise(result)).object.sha;
 }
 
-async function updateReference(ref, sha, force) {
+export async function updateReference(ref, sha, force) {
     assert(!Config.dryRun());
     assert((ref === Config.stagingBranchPath()) || !Config.stagedRun());
 
@@ -201,7 +202,7 @@ async function updateReference(ref, sha, force) {
 }
 
 
-async function updatePR(prNum, state) {
+export async function updatePR(prNum, state) {
     assert(!Config.dryRun());
 
     let params = commonParams();
@@ -213,7 +214,7 @@ async function updatePR(prNum, state) {
     return await rateLimitedPromise(result);
 }
 
-async function addLabels(params) {
+export async function addLabels(params) {
     assert(!Config.dryRun());
 
     const result = await GitHub.rest.issues.addLabels(params);
@@ -221,7 +222,7 @@ async function addLabels(params) {
     return await rateLimitedPromise(result);
 }
 
-async function removeLabel(label, prNum) {
+export async function removeLabel(label, prNum) {
     assert(!Config.dryRun());
 
     let params = commonParams();
@@ -253,7 +254,7 @@ async function removeLabel(label, prNum) {
 //    });
 //}
 
-async function createStatus(sha, state, targetUrl, description, context) {
+export async function createStatus(sha, state, targetUrl, description, context) {
     assert(!Config.dryRun());
 
     let params = commonParams();
@@ -268,7 +269,7 @@ async function createStatus(sha, state, targetUrl, description, context) {
     return (await rateLimitedPromise(result)).context;
 }
 
-async function getProtectedBranchRequiredStatusChecks(branch) {
+export async function getProtectedBranchRequiredStatusChecks(branch) {
     let params = commonParams();
     params.branch = branch;
 
@@ -277,7 +278,7 @@ async function getProtectedBranchRequiredStatusChecks(branch) {
     return (await rateLimitedPromise(result)).protection.required_status_checks.contexts;
 }
 
-async function getUser(username) {
+export async function getUser(username) {
     const params = commonParams();
     params.username = username;
 
@@ -286,33 +287,11 @@ async function getUser(username) {
     return await rateLimitedPromise(result);
 }
 
-async function getUserEmails() {
+export async function getUserEmails() {
     const params = commonParams();
 
     const result = await GitHub.rest.users.listEmailsForAuthenticatedUser(params);
     logApiResult(getUserEmails.name, params, {emails: result.data});
     return await rateLimitedPromise(result);
 }
-
-module.exports = {
-    getOpenPrs: getOpenPrs,
-    getLabels: getLabels,
-    getPR: getPR,
-    getReviews: getReviews,
-    getStatuses: getStatuses,
-    getCheckRuns: getCheckRuns,
-    getCommit: getCommit,
-    getCommits: getCommits,
-    createCommit: createCommit,
-    compareCommits: compareCommits,
-    getReference: getReference,
-    updateReference: updateReference,
-    updatePR: updatePR,
-    addLabels: addLabels,
-    removeLabel: removeLabel,
-    createStatus: createStatus,
-    getProtectedBranchRequiredStatusChecks: getProtectedBranchRequiredStatusChecks,
-    getUser: getUser,
-    getUserEmails: getUserEmails
-};
 

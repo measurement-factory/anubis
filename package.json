@@ -2,16 +2,20 @@
   "name": "change-anubis",
   "version": "1.0.0",
   "description": "A bot that merges GitHub pull requests",
+  "type": "module",
   "main": "Main.js",
   "dependencies": {
-    "@octokit/rest": "^18.12.0",
+    "@octokit/rest": "^21.1.0",
     "bunyan": "^1.8.12",
     "github-webhook-handler": "^0.6.0",
     "parse-github-url": "^0.3.2",
     "timestring": "^5.0.0"
   },
   "devDependencies": {
-    "eslint": "^4.14.0"
+    "@eslint/eslintrc": "^3.3.1",
+    "@eslint/js": "^9.28.0",
+    "eslint": "^9.27.0",
+    "globals": "^16.2.0"
   },
   "homepage": "https://github.com/measurement-factory/anubis#readme",
   "bugs": {

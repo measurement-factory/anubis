@@ -1,12 +1,13 @@
-const assert = require('assert');
-const Config = require('./Config.js');
+import Config from './Config.js';
 
-function sleep(msec) {
+import assert from 'assert';
+
+export function sleep(msec) {
     return new Promise((resolve) => setTimeout(resolve, msec));
 }
 
 // common parameters for all API calls
-function commonParams() {
+export function commonParams() {
     return {
         owner: Config.owner(),
         repo: Config.repo()
@@ -15,19 +16,20 @@ function commonParams() {
 
 const PrNumberRegex = / \(#(\d+)\)$/;
 
-function ParsePrNumber(prMessage) {
+export function ParsePrNumber(prMessage) {
     assert(prMessage);
     const lines = prMessage.split(/\r*\n/);
     const matched = lines[0].match(PrNumberRegex);
     if (!matched)
         return null;
-    const prNumber = matched[1];
+    const prNumber = parseInt(matched[1], 10);
+    assert(!isNaN(prNumber));
     assert(prNumber > 0);
     return prNumber;
 }
 
 // An error context for promisificated wrappers.
-class ErrorContext extends Error {
+export class ErrorContext extends Error {
     // The underlying rejection may be a bot-specific Promise.reject() or
     // be caused by a GitHub API error, so 'err' contains either
     // an error string or the entire API error object.
@@ -64,10 +66,27 @@ class ErrorContext extends Error {
     }
 }
 
-module.exports = {
-    sleep: sleep,
-    commonParams: commonParams,
-    ParsePrNumber: ParsePrNumber,
-    ErrorContext: ErrorContext
-};
+// Identifies or refers to a PR using either
+// PR number, or
+// PR branch name (without 'refs' or 'heads' prefixes), or
+// staging branch commit SHA (including stale commits).
+export class PrId
+{
+    constructor(type, val, msg) {
+        assert(type !== undefined);
+        assert(type !== null);
+        assert(val !== undefined);
+        assert(val !== null);
+        this.type = type; // a PR identificator type ("branch", "sha" or "prNum")
+        this.value = val; // a PR identificator
+        this.message = (msg === undefined) ? null : msg; // the commit message or null
+    }
+
+    static BranchList(branches, msg) { return Array.from(branches, b => new PrId("branch", b, msg)); }
+    static Sha(sha) { return [new PrId("sha", sha)]; }
+    static PrNum(prNum) { return [new PrId("prNum", prNum)]; }
+    static PrNumList(list) { return Array.from(list, prNum => new PrId("prNum", prNum)); }
+
+    toString() { return `${this.type}:${this.value}`; }
+}
 

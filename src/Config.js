@@ -1,6 +1,6 @@
-const fs = require('fs');
-const timestring = require('timestring');
-const assert = require('assert');
+import assert from 'assert';
+import fs from 'fs';
+import timestring from 'timestring';
 
 class ConfigOptions {
     constructor(fname) {
@@ -86,6 +86,7 @@ class ConfigOptions {
     host() { return this._host; }
     port() { return this._port; }
     owner() { return this._owner; }
+    baseUrl() { return 'https://api.github.com'; }
     stagingBranchPath() { return "heads/" + this._stagingBranch; }
     stagingBranch() { return this._stagingBranch; }
     dryRun() { return this._dryRun; }
@@ -139,4 +140,4 @@ class ConfigOptions {
 const configFile = process.argv.length > 2 ? process.argv[2] : './config.json';
 const Config = new ConfigOptions(configFile);
 
-module.exports = Config;
+export default Config;
