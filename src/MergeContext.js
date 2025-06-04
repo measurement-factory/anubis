@@ -198,7 +198,7 @@ class StatusChecks
     }
 
     hasStatus(context) {
-        return this.requiredStatuses.some(el => el.context.trim() === context.trim()) ||
+        return this.hasRequiredStatus(context) ||
             this.optionalStatuses.some(el => el.context.trim() === context.trim());
     }
 
@@ -996,7 +996,6 @@ class PullRequest {
         }
 
         const checkRuns = await this.uniqueCheckRuns(this._prHeadSha());
-
         for (let st of checkRuns) {
             if (this._contextsRequiredByGitHubConfigBase.some(el => el.trim() === st.name.trim()))
                 statusChecks.addRequiredStatus(StatusCheck.FromCheckRun(st));
@@ -1670,7 +1669,7 @@ class PullRequest {
 
         await this._loadStaged();
         await this._loadRawPr(); // requires this._loadStaged()
-        await this._loadRequiredContexts());
+        await this._loadRequiredContexts();
         await this._loadPrState(); // requires this._loadRawPr(), this._loadRequiredContexts() and this._loadLabels()
         this._log("PR state: " + this._prState);
 
