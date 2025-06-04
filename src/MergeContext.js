@@ -946,7 +946,7 @@ class PullRequest {
     }
 
     async _loadRequiredContextsFor(branch) {
-        let contextsRequiredByGitHubConfig = undefined;
+        let contextsRequiredByGitHubConfig;
 
         try {
             contextsRequiredByGitHubConfig = await GH.getProtectedBranchRequiredStatusChecks(branch);
@@ -978,7 +978,7 @@ class PullRequest {
         return uniqueCheckRuns;
     }
 
-    async _loadRequiredContexts(branch) {
+    async _loadRequiredContexts() {
         this._contextsRequiredByGitHubConfigBase = await this._loadRequiredContextsFor(this._prBaseBranch());
         this._contextsRequiredByGitHubConfigStaging = await this._loadRequiredContextsFor(Config.stagingBranch());
     }
