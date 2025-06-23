@@ -295,3 +295,20 @@ export async function getUserEmails() {
     return await rateLimitedPromise(result);
 }
 
+export async function getRulesetProtections(id) {
+    const params = commonParams();
+    params.ruleset_id = id;
+    const result = await GitHub.rest.repos.getRepoRuleset(params);
+    logApiResult(getRulesetProtections.name, params, {ruleset: result.data.name});
+    const data = await rateLimitedPromise(result);
+    let contexts = [];
+    for (let rule of data.rules) {
+        if (rule.type === "required_status_checks") {
+            for (let check of rule.parameters.required_status_checks) {
+                contexts.push(check.context);
+            }
+        }
+    }
+    return contexts;
+}
+

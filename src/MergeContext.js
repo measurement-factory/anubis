@@ -945,6 +945,12 @@ class PullRequest {
         await GH.createStatus(sha, this._approval.state, Config.approvalUrl(), this._approval.description, Config.approvalContext());
     }
 
+    async _loadRequiredContextsForStaged() {
+        const contexts = await GH.getRulesetProtections(6245888);
+        this._log("required staged contexts found: " + contexts);
+        return contexts;
+    }
+
     async _loadRequiredContextsFor(branch) {
         let contextsRequiredByGitHubConfig;
 
@@ -980,7 +986,7 @@ class PullRequest {
 
     async _loadRequiredContexts() {
         this._contextsRequiredByGitHubConfigBase = await this._loadRequiredContextsFor(this._prBaseBranch());
-        this._contextsRequiredByGitHubConfigStaging = await this._loadRequiredContextsFor(Config.stagingBranch());
+        this._contextsRequiredByGitHubConfigStaging = await this._loadRequiredContextsForStaged();
     }
 
     // returns filled StatusChecks object
