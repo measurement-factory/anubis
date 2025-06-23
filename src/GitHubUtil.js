@@ -295,6 +295,17 @@ export async function getUserEmails() {
     return await rateLimitedPromise(result);
 }
 
+export async function getRulesetId(name) {
+    const params = commonParams();
+    const result = await GitHub.rest.repos.getRepoRulesets(params);
+    logApiResult(getRulesetId.name, params, {length: result.data.length});
+    for (let rule of result.data) {
+        if (rule.name === name)
+            return rule.id;
+    }
+    return null;
+}
+
 export async function getRulesetProtections(id) {
     const params = commonParams();
     params.ruleset_id = id;

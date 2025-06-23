@@ -961,7 +961,9 @@ class PullRequest {
     }
 
     async _loadRequiredContextsForStaged() {
-        const contexts = await GH.getRulesetProtections(6245888);
+        const ruleId = await GH.getRulesetId("AutoRule"); // TODO: configure
+        assert(ruleId);
+        const contexts = await GH.getRulesetProtections(ruleId);
         this._log("required staged contexts found: " + contexts);
         return contexts;
     }
