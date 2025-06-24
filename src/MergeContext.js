@@ -961,18 +961,18 @@ class PullRequest {
     }
 
     async _loadRequiredContextsForStaged() {
-        const ruleId = await GH.getRulesetId("AutoRule"); // TODO: configure
+        const ruleId = await GH.getRulesetId(Config.stagingRuleSetName());
         assert(ruleId);
         const contexts = await GH.getRulesetProtections(ruleId);
         this._log("required staged contexts found: " + contexts);
         return contexts;
     }
 
-    async _loadRequiredContextsFor(branch) {
+    async _loadRequiredContextsForPr() {
         let contextsRequiredByGitHubConfig;
 
         try {
-            contextsRequiredByGitHubConfig = await GH.getProtectedBranchRequiredStatusChecks(branch);
+            contextsRequiredByGitHubConfig = await GH.getProtectedBranchRequiredStatusChecks(this._prBaseBranch());
         } catch (e) {
            if (e.name === 'ErrorContext' && e.notFound())
                this._logEx(e, "no status checks are required");
@@ -1002,7 +1002,7 @@ class PullRequest {
     }
 
     async _loadRequiredContexts() {
-        this._contextsRequiredByGitHubConfigBase = await this._loadRequiredContextsFor(this._prBaseBranch());
+        this._contextsRequiredByGitHubConfigBase = await this._loadRequiredContextsForPr();
         this._contextsRequiredByGitHubConfigStaging = await this._loadRequiredContextsForStaged();
     }
 
