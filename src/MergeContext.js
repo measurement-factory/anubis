@@ -298,6 +298,8 @@ class StagingStatusChecks
         return this.genuine.hasRequiredStatus(requiredContext) || this.copied.hasRequiredStatus(requiredContext);
     }
 
+    succeeded() { return this.genuine.succeeded() && this.copied.succeeded(); }
+
     toString() { return this.genuine.toString() + ' ;; ' + this.copied.toString(); }
 }
 
@@ -1504,7 +1506,9 @@ class PullRequest {
             this._log("all PR required checks already copied");
             return;
         }
+
         await this._supplyStagingWithPrRequired();
+        assert(this._stagedStatuses.succeeded());
     }
 
     // Creates PR-required status checks for staged commit (if possible).
