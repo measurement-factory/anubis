@@ -283,6 +283,24 @@ class StatusChecks
     }
 }
 
+// all statuses applied to the staged commit
+class StagingStatusChecks
+{
+    constructor(genuineChecks, copiedFromPrChecks) {
+        // the checks that are run for staged commit (plus approval)
+        this.genuine = genuineChecks;
+        // The artifical statuses created by the bot for the staged commit before merge.
+        // These statuses are marked with copiedDescriptionSuffix().
+        this.copied = copiedFromPrChecks;
+    }
+
+    hasRequiredStatus(requiredContext) {
+        return this.genuine.hasRequiredStatus(requiredContext) || this.copied.hasRequiredStatus(requiredContext);
+    }
+
+    toString() { return this.genuine.toString() + ' ;; ' + this.copied.toString(); }
+}
+
 // pull request label (e.g., M-cleared-for-merge)
 class Label
 {
@@ -807,9 +825,7 @@ class PullRequest {
         // while unexpected, PR merging and closing is not prohibited when staging is
         this._stagingBanned = banStaging;
 
-        // A pair {genuine, copied} of StatusChecks objects, where 'genuine'
-        // are statuses of the staged commit and 'copied' - the PR statuses that
-        // were created for the staged commit with copiedDescriptionSuffix()
+        // GitHub statuses of the staged commit
         this._stagedStatuses = null;
 
         // GitHub statuses of the PR branch head commit
@@ -1034,8 +1050,8 @@ class PullRequest {
     async _getStagingStatuses() {
         const combinedStagingStatuses = await GH.getStatuses(this._stagedSha());
         const genuineStatuses = combinedStagingStatuses.statuses.filter(st => !st.description.endsWith(Config.copiedDescriptionSuffix()));
-        let statusChecks = new StatusChecks("Staging", this._contextsRequiredByGitHubConfigStaging);
-        let copiedChecks = new StatusChecks("Copied", this._contextsRequiredToBeCopiedFromBaseToStaging());
+        let statusChecks = new StatusChecks("Staging(genuine)", this._contextsRequiredByGitHubConfigStaging);
+        let copiedChecks = new StatusChecks("Staging(copied)", this._contextsRequiredToBeCopiedFromBaseToStaging());
         // TODO: Move this loop inside StatusChecks constructor by adding
         // a third constructor parameter to pass genuineStatuses (here) and
         // combinedPrStatus.statuses (in similar _getPrStatuses() code).
@@ -1064,8 +1080,9 @@ class PullRequest {
                 statusChecks.addOptionalStatus(StatusCheck.FromCheckRun(st));
         }
 
-        this._log("staging status details: " + statusChecks);
-        return {genuine: statusChecks, copied: copiedChecks};
+        let stagingChecks = new StagingStatusChecks(statusChecks, copiedChecks);
+        this._log(`${stagingChecks}`);
+        return stagingChecks;
     }
 
     // Determines whether the existing staged commit is equivalent to a staged
@@ -1497,8 +1514,7 @@ class PullRequest {
         assert(this._stagedStatuses.genuine.succeeded());
 
         for (let requiredContext of this._contextsRequiredByGitHubConfigBase) {
-            if (this._stagedStatuses.genuine.hasRequiredStatus(requiredContext) ||
-                    this._stagedStatuses.copied.hasRequiredStatus(requiredContext)) {
+            if (this._stagedStatuses.hasRequiredStatus(requiredContext)) {
                 this._log("_supplyStagingWithPrRequired: skip existing " + requiredContext);
                 continue;
             }
