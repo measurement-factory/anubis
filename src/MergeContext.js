@@ -978,10 +978,38 @@ class PullRequest {
         await GH.createStatus(sha, this._approval.state, Config.approvalUrl(), this._approval.description, Config.approvalContext());
     }
 
+    async findStagingRulesetProtectionsIn(id) {
+        const ruleSet= await GH.getRuleset(id);
+        const refs = ruleSet.conditions.ref_name;
+
+        if (!refs || !refs.include)
+            return null;
+
+        if (!refs.include.includes(`refs/heads/${Config.stagingBranch()}`))
+            return null;
+
+        let contexts = [];
+        for (let rule of ruleSet.rules) {
+            if (rule.type === "required_status_checks") {
+                for (let check of rule.parameters.required_status_checks) {
+                    contexts.push(check.context);
+                }
+            }
+        }
+        return contexts;
+    }
+
     async _loadRequiredContextsForStaged() {
-        const ruleId = await GH.getRulesetId(Config.stagingRuleSetName());
-        assert(ruleId);
-        const contexts = await GH.getRulesetProtections(ruleId);
+        const ruleIds = await GH.getRulesetIds();
+        assert(ruleIds.length);
+        let contexts = null;
+        for (let id of ruleIds) {
+            contexts = await this.findStagingRulesetProtectionsIn(id);
+            if (contexts)
+                break;
+            this._log(`Could not find protection rules for ${Config.stagingBranch()} in RuleSet with id=${id}`);
+        }
+        assert(contexts);
         this._log("required staged contexts found: " + contexts);
         return contexts;
     }

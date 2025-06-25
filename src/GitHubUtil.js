@@ -295,31 +295,19 @@ export async function getUserEmails() {
     return await rateLimitedPromise(result);
 }
 
-export async function getRulesetId(name) {
+export async function getRulesetIds() {
     const params = commonParams();
     const result = await GitHub.rest.repos.getRepoRulesets(params);
-    logApiResult(getRulesetId.name, params, {length: result.data.length});
-    for (let rule of result.data) {
-        if (rule.name === name)
-            return rule.id;
-    }
-    return null;
+    logApiResult(getRulesetIds.name, params, {length: result.data.length});
+    const data = await rateLimitedPromise(result);
+    return data.map(ruleset => ruleset.id);
 }
 
-export async function getRulesetProtections(id) {
+export async function getRuleset(id) {
     const params = commonParams();
     params.ruleset_id = id;
     const result = await GitHub.rest.repos.getRepoRuleset(params);
-    logApiResult(getRulesetProtections.name, params, {ruleset: result.data.name});
-    const data = await rateLimitedPromise(result);
-    let contexts = [];
-    for (let rule of data.rules) {
-        if (rule.type === "required_status_checks") {
-            for (let check of rule.parameters.required_status_checks) {
-                contexts.push(check.context);
-            }
-        }
-    }
-    return contexts;
+    logApiResult(getRuleset.name, params, {ruleset: result.data.name});
+    return await rateLimitedPromise(result);
 }
 
