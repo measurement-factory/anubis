@@ -1049,6 +1049,7 @@ class PullRequest {
 
     async _loadRequiredContexts() {
         this._contextsRequiredByGitHubConfigBase = await this._loadRequiredContextsForPr();
+        // TODO: cache and reuse the result because required staging checks are the same for all PRs
         this._contextsRequiredByGitHubConfigStaging = await this._loadRequiredContextsForStaged();
     }
 
