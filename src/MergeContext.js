@@ -776,7 +776,7 @@ class CommitMessage
 // a single GitHub pull request
 class PullRequest {
 
-    constructor(pr, banStaging) {
+    constructor(pr, banStaging, prevStagedPrNumber) {
         this._rawPr = pr; // may be rather old and lack pr.mergeable; see _loadRawPr()
 
         this._shaLimit = 6; // how many SHA chars to show in debug messages
@@ -819,6 +819,9 @@ class PullRequest {
         this._labelPushBan = false;
 
         this._commitMessage = undefined;
+
+        // the staged PR number of the previous PR scan (if any)
+        this._prevStagedPrNumber = prevStagedPrNumber;
     }
 
     // this PR will need to be reprocessed in this many milliseconds
@@ -1306,6 +1309,8 @@ class PullRequest {
             if (await this._mergedSomeTimeAgo())
                 this._enterMerged();
             else
+                if (this._prNumber() === this._prevStagedPrNumber)
+                    this._signalAbandonmentOfStagingChecks = true;
                 await this._enterBrewing();
             return;
         }
@@ -1795,8 +1800,8 @@ class PullRequest {
 }
 
 // promises to update/advance the given PR, hiding PullRequest from callers
-export function Process(rawPr, banStaging) {
-    let pr = new PullRequest(rawPr, banStaging);
+export function Process(rawPr, banStaging, prevStagedPrNumber) {
+    let pr = new PullRequest(rawPr, banStaging, prevStagedPrNumber);
     return pr.process();
 }
 
