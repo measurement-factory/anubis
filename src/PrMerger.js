@@ -137,7 +137,7 @@ class PrMerger {
                     continue;
                 }
 
-                const result = await MergeContext.Process(rawPr, somePrWasStaged);
+                const result = await MergeContext.Process(rawPr, somePrWasStaged, currentPr ? currentPr.number : null);
                 assert(!somePrWasStaged || !result.prStaged());
                 somePrWasStaged = somePrWasStaged || result.prStaged();
 
