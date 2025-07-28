@@ -234,6 +234,26 @@ export async function removeLabel(label, prNum) {
     return await rateLimitedPromise(result);
 }
 
+export async function createComment(prNum, comment) {
+    assert(!Config.dryRun());
+    let params = commonParams();
+    params.issue_number = prNum;
+    params.body = comment;
+
+    const result = await GitHub.rest.issues.createComment(params);
+    logApiResult(createComment.name, params, {created: true});
+    return await rateLimitedPromise(result);
+}
+
+export async function getComments(prNum) {
+    let params = commonParams();
+    params.issue_number = prNum;
+
+    const comments = await paginatedGet(GitHub.rest.issues.listComments, params);
+    logApiResult(getComments.name, params, {comments: comments.length});
+    return comments;
+}
+
 // XXX: remove if not needed, since the "required_status_checks" api call sometimes
 // does not work(?) for organization repositories (returns 404 Not Found).
 //async function getProtectedBranchRequiredStatusChecks(branch) {
