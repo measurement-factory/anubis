@@ -553,81 +553,10 @@ class FieldsTokenizer
     remaining() { return this._lines.join('\n'); }
 }
 
-class CommitMessageProblem
-{
-    constructor(name, level) {
-        assert(name !== undefined && name !== null);
-        assert(level >= 0);
-        this.name = name;
-        this.level = level;
-        this.problems = [];
-        this.subProblems = [];
-    }
-
-    subProblem(name) {
-        let problem = this.subProblems.find(p => p.name === name);
-        assert(problem !== undefined);
-        return problem;
-    }
-
-    empty() {
-        return !this.problems.length && this.subProblems.every(p => p.empty());
-    }
-
-    add(message) {
-        this.problems.push(message);
-    }
-
-    _offset() {
-        let offset = "";
-        for (let i = 0; i < this.level; ++i)
-            offset += "    ";
-        return offset;
-    }
-
-    toString() {
-        if (this.empty())
-            return "";
-        let str = this._offset() + "* " + this.name + '\n';
-        for (let p of this.problems)
-            str += this._offset() + "    " + "* " + p + '\n';
-        for (let s of this.subProblems) {
-            if (!s.empty())
-                str += s.toString();
-        }
-        return str;
-    }
-}
-
-class CommitMessageErrors
-{
-    constructor() {
-        this.title = new CommitMessageProblem("title", 0);
-        this.message = new CommitMessageProblem("message", 0);
-        this.message.subProblems.push(new CommitMessageProblem("header", 1));
-        this.message.subProblems.push(new CommitMessageProblem("body", 1));
-        this.message.subProblems.push(new CommitMessageProblem("trailer", 1));
-    }
-    empty() { return this.title.empty() && this.message.empty(); }
-
-    toString() {
-        if (this.empty())
-            return "";
-
-        let str = "";
-        if (!this.title.empty())
-            str += this.title.toString();
-        if (!this.message.empty())
-            str += this.message.toString();
-        return str;
-    }
-}
-
 // computes future commit message from raw PR
 class CommitMessage
 {
     constructor(rawPr, defaultAuthor, stageable) {
-        this.errors = new CommitMessageErrors();
 
         this._parseTitle(rawPr.title, rawPr.number);
 
@@ -664,21 +593,10 @@ class CommitMessage
 
     _parseTitle(rawTitle, prNumber) {
         const title = rawTitle.trim();
-        try {
-            this._checkRawCharacters(title);
-        } catch (e) {
-            let coloredMsg = this.colorUnicode(e.message);
-      //      let escaptedMsg = this.escapeUnicode(coloredMsg);
-            this.errors.title.add(coloredMsg);
-        }
-
-        try {
-            // the (required) commit message title
-            this._title = title + ' (#' + prNumber + ')';
-            checkLineLength(this._title);
-        } catch (e) {
-            this.errors.title.add(e.message);
-        }
+        this._checkRawCharacters(title);
+        // the (required) commit message title
+        this._title = title + ' (#' + prNumber + ')';
+        checkLineLength(this._title);
     }
 
     // complete message for the future commit
@@ -698,23 +616,6 @@ class CommitMessage
         if (this._customAuthor === null)
             return this._defaultAuthor;
         return {name: this._customAuthor.name, email: this._customAuthor.email, date: this._defaultAuthor.date};
-    }
-
-    escapeUnicode(str) {
-        return str.replace(/[^\u{20}-\u{7e}]/gu, function(char,offset) {
-            let codePoint = char.charCodeAt(0).toString(16).toUpperCase();
-            // Pad with leading zeros to ensure 4 digits (e.g., \u00E9)
-            while (codePoint.length < 4) {
-              codePoint = '0' + codePoint;
-            }
-            return '\\u' + codePoint;
-        });
-    }
-
-    colorUnicode(str) {
-        return str.replace(/[^\u{20}-\u{7e}]+/gu, function(s,offset) {
-            return '$${\\color{red}'+s + '}$$';
-        });
     }
 
     // checks that the line represents only ASCII_printable characters
@@ -774,33 +675,10 @@ class CommitMessage
     }
 
     _parse(prDescriptionRaw) {
-        try {
-            const prDescription = this._parseRawLines(prDescriptionRaw);
-            let prDescriptionWithoutHeader = null;
-            try {
-                prDescriptionWithoutHeader = this._extractHeader(prDescription);
-            } catch (e) {
-                this.errors.message.subProblem("header").add(e.message);
-                return;
-            }
-
-            let prDescriptionWithoutHeaderAndTrailer = null;
-            try {
-                prDescriptionWithoutHeaderAndTrailer = this._extractTrailer(prDescriptionWithoutHeader);
-            } catch (e) {
-                this.errors.message.subProblem("trailer").add(e.message);
-                return;
-            }
-
-            try {
-                this._parseBody(prDescriptionWithoutHeaderAndTrailer);
-            } catch (e) {
-                this.errors.message.subProblem("body").add(e.message);
-                return;
-            }
-        } catch (e) {
-            this.errors.message.add(e.message);
-        }
+        const prDescription = this._parseRawLines(prDescriptionRaw);
+        const prDescriptionWithoutHeader = this._extractHeader(prDescription);
+        const prDescriptionWithoutHeaderAndTrailer = this._extractTrailer(prDescriptionWithoutHeader);
+        this._parseBody(prDescriptionWithoutHeaderAndTrailer);
     }
 
     // authorField is a {name, value, raw}
@@ -1514,11 +1392,10 @@ class PullRequest {
             defaultAuthor = headCommit.author;
         }
 
-        this._commitMessage = new CommitMessage(this._rawPr, defaultAuthor, stageable);
-        if (!this._commitMessage.errors.empty()) {
-             this._log(this._commitMessage.errors.toString());
-             await GH.createComment(this._prNumber(), this._commitMessage.errors.toString());
-            // XXX:  this._logEx(e, "cannot parse commit message");
+        try {
+            this._commitMessage = new CommitMessage(this._rawPr, defaultAuthor, stageable);
+        } catch (e) {
+            this._logEx(e, "cannot parse commit message");
         }
     }
 
