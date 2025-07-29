@@ -495,18 +495,20 @@ class BranchPosition
     }
 }
 
-function checkLineLength(line, limit = 72) {
+function checkLineLength(line, tag, limit = 72) {
+    assert(tag);
     if (line.length > limit)
-        throw new Error(`the line is too long ${line.length}>${limit}: ${line}'`);
+        throw new Error(`Invalid ${tag}: the line is too long ${line.length}>${limit}: '${line}'`);
 }
 
 // Forward iterator for fields in the 'name:value' format.
 class FieldsTokenizer
 {
-    constructor(str) {
+    constructor(str, tag) {
+        assert(tag);
         this._lines = str.split('\n');
         this._remainingFields = [];
-        this._tokenizeAll();
+        this._tokenizeAll(tag);
     }
 
     // returns the next parsed field in the {name, value, raw} format
@@ -516,7 +518,7 @@ class FieldsTokenizer
     }
 
     // parses all input in advance
-    _tokenizeAll() {
+    _tokenizeAll(tag) {
         while (this._lines.length) {
             const line = this._lines.shift();
 
@@ -525,23 +527,23 @@ class FieldsTokenizer
                 break;
 
             if (/^\s/.test(line))
-                throw new Error(`a field cannot start with whitespace: ${line}`);
+                throw new Error(`Invalid ${tag}: a field cannot start with whitespace: '${line}'`);
 
             const pos = line.search(': ');
             if (pos < 0)
-                throw new Error(`a field without a name: value delimiter: '${line}'`);
+                throw new Error(`Invalid ${tag}: a field without a name: value delimiter: '${line}'`);
 
             const name = line.substring(0, pos);
             if (/[^\w-]/.test(name))
-                throw new Error(`the field name cannot contain non-word characters: ${name}`);
+                throw new Error(`Invalid ${tag}: the field name cannot contain non-word characters: '${name}'`);
 
             const value = line.substring(pos+2).trim();
             if (this._remainingFields.some(el => el.name.toUpperCase() === name.toUpperCase() &&
                         el.value.toUpperCase() === value.toUpperCase())) {
-                throw new Error(`duplicates are not allowed: ${line}`);
+                throw new Error(`Invalid ${tag}: duplicates are not allowed: '${line}'`);
             }
 
-            checkLineLength(name + ': ' + value, 512);
+            checkLineLength(name + ': ' + value, tag, 512);
 
             this._remainingFields.push({name: name, value: value, raw: line});
         }
@@ -598,7 +600,7 @@ class CommitMessage
         this._checkRawCharacters(title);
         // the (required) commit message title
         this._title = title + ' (#' + prNumber + ')';
-        checkLineLength(this._title);
+        checkLineLength(this._title, 'title');
     }
 
     // complete message for the future commit
@@ -635,7 +637,7 @@ class CommitMessage
         if (match) {
             const coord = lineNumber !== undefined ? `message position ${lineNumber},${match.index}` : `title position ${match.index}`;
             const escaped = this.escapeUnicode(line);
-            throw new Error(`invalid character at ${coord} in '${escaped}'`);
+            throw new Error(`Invalid character at ${coord} in '${escaped}'`);
         }
     }
 
@@ -658,10 +660,12 @@ class CommitMessage
         return lines.join('\n');
     }
 
-    _checkMessageLength(message) {
+    _checkMessageLength(message, tag) {
+        assert(message);
+        assert(tag);
         const lines = message.split('\n');
         for (let line of lines)
-            checkLineLength(line);
+            checkLineLength(line, tag);
     }
 
     // removes leading empty lines and trims the end
@@ -696,13 +700,14 @@ class CommitMessage
     }
 
     // authorField is a {name, value, raw}
-    _parseAuthor(authorField) {
+    _parseAuthor(authorField, tag) {
+        assert(tag);
         const cred = authorField.value.match(/^([\w][^@<>,]*)\s<(\S+@\S+\.\S+)>$/);
         if (!cred)
-            throw new Error(`unsupported ${authorField.name} value format: ${authorField.value}`);
+            throw new Error(`Invalid ${tag}: unsupported ${authorField.name} value format: '${authorField.value}'`);
 
         if (cred[0].includes(','))
-            throw new Error(`${authorField.name} author name with a comma: ${authorField.value}`);
+            throw new Error(`Invalid ${tag}: ${authorField.name} author name with a comma: '${authorField.value}'`);
 
         return {name: cred[1].trim(), email: cred[2].trim()};
     }
@@ -712,13 +717,14 @@ class CommitMessage
         const prDescription = this._trim(prDescriptionRaw);
         const headerFieldName = 'Authored-by';
         if (this._startsWithFieldName(prDescription) === headerFieldName) {
-            let tokenizer = new FieldsTokenizer(prDescription);
+            const tag = "message header";
+            let tokenizer = new FieldsTokenizer(prDescription, tag);
             const authorField = tokenizer.nextField();
             assert(authorField);
             assert(authorField.name === headerFieldName);
-            this._customAuthor = this._parseAuthor(authorField);
+            this._customAuthor = this._parseAuthor(authorField, tag);
             if (!tokenizer.atEnd())
-                throw new Error(`unexpected header lines after a single Authored-by attribute`);
+                throw new Error(`Invalid ${tag}: unexpected header lines after a single Authored-by attribute`);
             return tokenizer.remaining();
         } else {
             return prDescription;
@@ -745,8 +751,9 @@ class CommitMessage
     _parseBody(prDescriptionWithoutHeaderAndTrailerRaw) {
         const prDescriptionWithoutHeaderAndTrailer = this._trim(prDescriptionWithoutHeaderAndTrailerRaw);
         if (prDescriptionWithoutHeaderAndTrailer.length > 0) {
-            this._checkMessageLength(prDescriptionWithoutHeaderAndTrailer);
-            this._checkForTypos(prDescriptionWithoutHeaderAndTrailer);
+            const tag = "message body";
+            this._checkMessageLength(prDescriptionWithoutHeaderAndTrailer, tag);
+            this._checkForTypos(prDescriptionWithoutHeaderAndTrailer, tag);
             this._body = prDescriptionWithoutHeaderAndTrailer;
         }
     }
@@ -754,20 +761,21 @@ class CommitMessage
     // parses the extracted trailer into this._trailer
     _parseTrailer(trailerRaw) {
         const trailer = this._trim(trailerRaw);
-        let tokenizer = new FieldsTokenizer(trailer);
+        const tag = "message trailer";
+        let tokenizer = new FieldsTokenizer(trailer, tag);
 
         if (tokenizer.atEnd())
-            throw new Error(`an empty trailer`);
+            throw new Error(`Invalid ${tag}: an empty trailer`);
 
         while (!tokenizer.atEnd()) {
             const field = tokenizer.nextField();
             if (field.name === "Co-authored-by") {
-                const coAuthor = JSON.stringify(this._parseAuthor(field));
+                const coAuthor = JSON.stringify(this._parseAuthor(field, tag));
                 this._log(`accepting trailer field: ${coAuthor}`);
             } else {
-                this._checkForTypos(field.name);
+                this._checkForTypos(field.name, tag);
             }
-            this._checkForTypos(field.value);
+            this._checkForTypos(field.value, tag);
         }
 
         if (trailer.length > 0)
@@ -776,10 +784,11 @@ class CommitMessage
 
     // checks the PR message (or its part) for some common/expected typos that may occur
     // when filling in PR attributes
-    _checkForTypos(text) {
+    _checkForTypos(text, tag) {
+        assert(tag);
         const possibleAuthoredByTypoRegex = /^\s*\S*authored[-_]?by/mi;
         if (text.search(possibleAuthoredByTypoRegex) >= 0)
-            throw new Error(`suspicious '*Authored-by' attribute in the PR description`);
+            throw new Error(`Invalid ${tag}: suspicious '*Authored-by' attribute in the PR description`);
     }
 
     _log(msg) {
@@ -1418,9 +1427,9 @@ class PullRequest {
             let errorMessage = `Commit message problem detected:\n\n    ${e.message}\n\n`;
             errorMessage += 'Please see PR description formatting [requirements](https://github.com/measurement-factory/anubis?tab=readme-ov-file#pr-description) for more details.';
             if (lastComment !== errorMessage)
-                await GH.createComment(this._prNumber(), msg);
+                await GH.createComment(this._prNumber(), errorMessage);
             else
-                this._log(`Skip duplicating an existing GitHub comment: ${msg}`);
+                this._log(`Skip duplicating an existing GitHub comment: ${errorMessage}`);
         }
     }
 
