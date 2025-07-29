@@ -558,6 +558,8 @@ class CommitMessage
 {
     constructor(rawPr, defaultAuthor, stageable) {
 
+        this._prohibitedCharacters = "[^\u{20}-\u{7e}]";
+
         this._parseTitle(rawPr.title, rawPr.number);
 
         assert(stageable !== undefined && stageable !== null);
@@ -618,12 +620,23 @@ class CommitMessage
         return {name: this._customAuthor.name, email: this._customAuthor.email, date: this._defaultAuthor.date};
     }
 
+    escapeUnicode(str) {
+        return str.replace(new RegExp(this._prohibitedCharacters, 'gu'), (uchar) => {
+            // Pad with leading zeros to ensure 4 digits (e.g., \u00E9)
+            const encoded = uchar.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0');
+            return '\\u' + encoded;
+        });
+    }
+
     // checks that the line represents only ASCII_printable characters
-    _checkRawCharacters(line) {
-        const prohibitedCharacters = /[^\u{20}-\u{7e}]/u;
-        const match = prohibitedCharacters.exec(line);
-        if (match)
-            throw new Error(`bad character at ${match.index} in '${line}'`);
+    _checkRawCharacters(line, lineNumber) {
+        const prohibitedRegExp = new RegExp(this._prohibitedCharacters, 'u');
+        const match = prohibitedRegExp.exec(line);
+        if (match) {
+            const coord = lineNumber !== undefined ? `message position ${lineNumber},${match.index}` : `title position ${match.index}`;
+            const escaped = this.escapeUnicode(line);
+            throw new Error(`invalid character at ${coord} in '${escaped}'`);
+        }
     }
 
     // performs basic checks for a multi-line message
@@ -634,8 +647,9 @@ class CommitMessage
         const untrimmedMessage = rawMessage.replace(/\r+\n/g, '\n');
         const untrimmedLines = untrimmedMessage.split('\n');
         let lines = [];
-        for (let untrimmedLine of untrimmedLines) {
-            this._checkRawCharacters(untrimmedLine);
+        for (let i = 0; i < untrimmedLines.length; ++i) {
+            let untrimmedLine = untrimmedLines[i];
+            this._checkRawCharacters(untrimmedLine, i);
             // allow excessively long whitespace-only lines
             // that some copy-pasted PR descriptions may include
             const line = untrimmedLine.trimEnd();
@@ -1396,6 +1410,17 @@ class PullRequest {
             this._commitMessage = new CommitMessage(this._rawPr, defaultAuthor, stageable);
         } catch (e) {
             this._logEx(e, "cannot parse commit message");
+
+            const comments = await GH.getComments(this._prNumber());
+            const filtered = comments.filter(c => c.user.login === Config.githubUserLogin());
+            const lastComment = filtered.length ? filtered[filtered.length-1].body : null;
+
+            let errorMessage = `Commit message problem detected:\n\n    ${e.message}\n\n`;
+            errorMessage += 'Please see PR description formatting [requirements](https://github.com/measurement-factory/anubis?tab=readme-ov-file#pr-description) for more details.';
+            if (lastComment !== errorMessage)
+                await GH.createComment(this._prNumber(), msg);
+            else
+                this._log(`Skip duplicating an existing GitHub comment: ${msg}`);
         }
     }
 
