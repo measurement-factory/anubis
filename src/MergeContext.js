@@ -495,20 +495,20 @@ class BranchPosition
     }
 }
 
-function checkLineLength(line, tag, limit = 72) {
-    assert(tag);
+function checkLineLength(line, parsingContext, limit = 72) {
+    assert(parsingContext);
     if (line.length > limit)
-        throw new Error(`Invalid ${tag}: the line is too long ${line.length}>${limit}: '${line}'`);
+        throw new Error(`Invalid ${parsingContext}: the line is too long ${line.length}>${limit}: '${line}'`);
 }
 
 // Forward iterator for fields in the 'name:value' format.
 class FieldsTokenizer
 {
-    constructor(str, tag) {
-        assert(tag);
+    constructor(str, parsingContext) {
+        assert(parsingContext);
         this._lines = str.split('\n');
         this._remainingFields = [];
-        this._tokenizeAll(tag);
+        this._tokenizeAll(parsingContext);
     }
 
     // returns the next parsed field in the {name, value, raw} format
@@ -518,7 +518,7 @@ class FieldsTokenizer
     }
 
     // parses all input in advance
-    _tokenizeAll(tag) {
+    _tokenizeAll(parsingContext) {
         while (this._lines.length) {
             const line = this._lines.shift();
 
@@ -527,23 +527,23 @@ class FieldsTokenizer
                 break;
 
             if (/^\s/.test(line))
-                throw new Error(`Invalid ${tag}: a field cannot start with whitespace: '${line}'`);
+                throw new Error(`Invalid ${parsingContext}: a field cannot start with whitespace: '${line}'`);
 
             const pos = line.search(': ');
             if (pos < 0)
-                throw new Error(`Invalid ${tag}: a field without a name: value delimiter: '${line}'`);
+                throw new Error(`Invalid ${parsingContext}: a field without a name: value delimiter: '${line}'`);
 
             const name = line.substring(0, pos);
             if (/[^\w-]/.test(name))
-                throw new Error(`Invalid ${tag}: the field name cannot contain non-word characters: '${name}'`);
+                throw new Error(`Invalid ${parsingContext}: the field name cannot contain non-word characters: '${name}'`);
 
             const value = line.substring(pos+2).trim();
             if (this._remainingFields.some(el => el.name.toUpperCase() === name.toUpperCase() &&
                         el.value.toUpperCase() === value.toUpperCase())) {
-                throw new Error(`Invalid ${tag}: duplicates are not allowed: '${line}'`);
+                throw new Error(`Invalid ${parsingContext}: duplicates are not allowed: '${line}'`);
             }
 
-            checkLineLength(name + ': ' + value, tag, 512);
+            checkLineLength(name + ': ' + value, parsingContext, 512);
 
             this._remainingFields.push({name: name, value: value, raw: line});
         }
@@ -660,12 +660,12 @@ class CommitMessage
         return lines.join('\n');
     }
 
-    _checkMessageLength(message, tag) {
+    _checkMessageLength(message, parsingContext) {
         assert(message);
-        assert(tag);
+        assert(parsingContext);
         const lines = message.split('\n');
         for (let line of lines)
-            checkLineLength(line, tag);
+            checkLineLength(line, parsingContext);
     }
 
     // removes leading empty lines and trims the end
@@ -700,14 +700,14 @@ class CommitMessage
     }
 
     // authorField is a {name, value, raw}
-    _parseAuthor(authorField, tag) {
-        assert(tag);
+    _parseAuthor(authorField, parsingContext) {
+        assert(parsingContext);
         const cred = authorField.value.match(/^([\w][^@<>,]*)\s<(\S+@\S+\.\S+)>$/);
         if (!cred)
-            throw new Error(`Invalid ${tag}: unsupported ${authorField.name} value format: '${authorField.value}'`);
+            throw new Error(`Invalid ${parsingContext}: unsupported ${authorField.name} value format: '${authorField.value}'`);
 
         if (cred[0].includes(','))
-            throw new Error(`Invalid ${tag}: ${authorField.name} author name with a comma: '${authorField.value}'`);
+            throw new Error(`Invalid ${parsingContext}: ${authorField.name} author name with a comma: '${authorField.value}'`);
 
         return {name: cred[1].trim(), email: cred[2].trim()};
     }
@@ -717,14 +717,14 @@ class CommitMessage
         const prDescription = this._trim(prDescriptionRaw);
         const headerFieldName = 'Authored-by';
         if (this._startsWithFieldName(prDescription) === headerFieldName) {
-            const tag = "message header";
-            let tokenizer = new FieldsTokenizer(prDescription, tag);
+            const parsingContext = "message header";
+            let tokenizer = new FieldsTokenizer(prDescription, parsingContext);
             const authorField = tokenizer.nextField();
             assert(authorField);
             assert(authorField.name === headerFieldName);
-            this._customAuthor = this._parseAuthor(authorField, tag);
+            this._customAuthor = this._parseAuthor(authorField, parsingContext);
             if (!tokenizer.atEnd())
-                throw new Error(`Invalid ${tag}: unexpected header lines after a single Authored-by attribute`);
+                throw new Error(`Invalid ${parsingContext}: unexpected header lines after a single Authored-by attribute`);
             return tokenizer.remaining();
         } else {
             return prDescription;
@@ -751,9 +751,9 @@ class CommitMessage
     _parseBody(prDescriptionWithoutHeaderAndTrailerRaw) {
         const prDescriptionWithoutHeaderAndTrailer = this._trim(prDescriptionWithoutHeaderAndTrailerRaw);
         if (prDescriptionWithoutHeaderAndTrailer.length > 0) {
-            const tag = "message body";
-            this._checkMessageLength(prDescriptionWithoutHeaderAndTrailer, tag);
-            this._checkForTypos(prDescriptionWithoutHeaderAndTrailer, tag);
+            const parsingContext = "message body";
+            this._checkMessageLength(prDescriptionWithoutHeaderAndTrailer, parsingContext);
+            this._checkForTypos(prDescriptionWithoutHeaderAndTrailer, parsingContext);
             this._body = prDescriptionWithoutHeaderAndTrailer;
         }
     }
@@ -761,21 +761,21 @@ class CommitMessage
     // parses the extracted trailer into this._trailer
     _parseTrailer(trailerRaw) {
         const trailer = this._trim(trailerRaw);
-        const tag = "message trailer";
-        let tokenizer = new FieldsTokenizer(trailer, tag);
+        const parsingContext = "message trailer";
+        let tokenizer = new FieldsTokenizer(trailer, parsingContext);
 
         if (tokenizer.atEnd())
-            throw new Error(`Invalid ${tag}: an empty trailer`);
+            throw new Error(`Invalid ${parsingContext}: an empty trailer`);
 
         while (!tokenizer.atEnd()) {
             const field = tokenizer.nextField();
             if (field.name === "Co-authored-by") {
-                const coAuthor = JSON.stringify(this._parseAuthor(field, tag));
+                const coAuthor = JSON.stringify(this._parseAuthor(field, parsingContext));
                 this._log(`accepting trailer field: ${coAuthor}`);
             } else {
-                this._checkForTypos(field.name, tag);
+                this._checkForTypos(field.name, parsingContext);
             }
-            this._checkForTypos(field.value, tag);
+            this._checkForTypos(field.value, parsingContext);
         }
 
         if (trailer.length > 0)
@@ -784,11 +784,11 @@ class CommitMessage
 
     // checks the PR message (or its part) for some common/expected typos that may occur
     // when filling in PR attributes
-    _checkForTypos(text, tag) {
-        assert(tag);
+    _checkForTypos(text, parsingContext) {
+        assert(parsingContext);
         const possibleAuthoredByTypoRegex = /^\s*\S*authored[-_]?by/mi;
         if (text.search(possibleAuthoredByTypoRegex) >= 0)
-            throw new Error(`Invalid ${tag}: suspicious '*Authored-by' attribute in the PR description`);
+            throw new Error(`Invalid ${parsingContext}: suspicious '*Authored-by' attribute in the PR description`);
     }
 
     _log(msg) {
