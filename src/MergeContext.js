@@ -495,10 +495,10 @@ class BranchPosition
     }
 }
 
-function checkLineLength(line, parsingContext, limit = 72) {
-    assert(parsingContext);
+function checkLineLength(line, context, limit = 72) {
+    assert(context);
     if (line.length > limit)
-        throw new Error(`Invalid ${parsingContext}: the line is too long ${line.length}>${limit}: '${line}'`);
+        throw new Error(`Invalid ${context}: the line is too long ${line.length}>${limit}: '${line}'`);
 }
 
 // Forward iterator for fields in the 'name:value' format.
@@ -518,7 +518,7 @@ class FieldsTokenizer
     }
 
     // parses all input in advance
-    _tokenizeAll(parsingContext) {
+    _tokenizeAll(context) {
         while (this._lines.length) {
             const line = this._lines.shift();
 
@@ -527,23 +527,23 @@ class FieldsTokenizer
                 break;
 
             if (/^\s/.test(line))
-                throw new Error(`Invalid ${parsingContext}: a field cannot start with whitespace: '${line}'`);
+                throw new Error(`Invalid ${context}: a field cannot start with whitespace: '${line}'`);
 
             const pos = line.search(': ');
             if (pos < 0)
-                throw new Error(`Invalid ${parsingContext}: a field without a name: value delimiter: '${line}'`);
+                throw new Error(`Invalid ${context}: a field without a name: value delimiter: '${line}'`);
 
             const name = line.substring(0, pos);
             if (/[^\w-]/.test(name))
-                throw new Error(`Invalid ${parsingContext}: the field name cannot contain non-word characters: '${name}'`);
+                throw new Error(`Invalid ${context}: the field name cannot contain non-word characters: '${name}'`);
 
             const value = line.substring(pos+2).trim();
             if (this._remainingFields.some(el => el.name.toUpperCase() === name.toUpperCase() &&
                         el.value.toUpperCase() === value.toUpperCase())) {
-                throw new Error(`Invalid ${parsingContext}: duplicates are not allowed: '${line}'`);
+                throw new Error(`Invalid ${context}: duplicates are not allowed: '${line}'`);
             }
 
-            checkLineLength(name + ': ' + value, parsingContext, 512);
+            checkLineLength(name + ': ' + value, context, 512);
 
             this._remainingFields.push({name: name, value: value, raw: line});
         }
@@ -560,7 +560,7 @@ class CommitMessage
 {
     constructor(rawPr, defaultAuthor, stageable) {
 
-        this._prohibitedCharacters = "[^\u{20}-\u{7e}]";
+        this._prohibitedCharacters = new RegExp("[^\u{20}-\u{7e}]", "u");
 
         this._parseTitle(rawPr.title, rawPr.number);
 
@@ -597,10 +597,11 @@ class CommitMessage
 
     _parseTitle(rawTitle, prNumber) {
         const title = rawTitle.trim();
-        this._checkRawCharacters(title);
+        const parsingContext = "PR description title";
+        this._checkRawCharacters(title, parsingContext);
         // the (required) commit message title
         this._title = title + ' (#' + prNumber + ')';
-        checkLineLength(this._title, 'title');
+        checkLineLength(this._title, parsingContext);
     }
 
     // complete message for the future commit
@@ -630,14 +631,16 @@ class CommitMessage
         });
     }
 
-    // checks that the line represents only ASCII_printable characters
-    _checkRawCharacters(line, lineNumber) {
-        const prohibitedRegExp = new RegExp(this._prohibitedCharacters, 'u');
-        const match = prohibitedRegExp.exec(line);
+     // checks that the line does not contain _prohibitedCharacters
+    _checkRawCharacters(line, context) {
+        if (line.length === 0)
+            return;
+        const match = this._prohibitedCharacters.exec(line);
         if (match) {
-            const coord = lineNumber !== undefined ? `message position ${lineNumber},${match.index}` : `title position ${match.index}`;
             const escaped = this.escapeUnicode(line);
-            throw new Error(`Invalid character at ${coord} in '${escaped}'`);
+            // the encoded length is 6: e.g., \u00E9
+            const badCharEncoded = escaped.substring(match.index, match.index + 6);
+            throw new Error(`Invalid ${context} character (Unicode ${badCharEncoded}) at position ${match.index}: ${escaped}`);
         }
     }
 
@@ -651,7 +654,8 @@ class CommitMessage
         let lines = [];
         for (let i = 0; i < untrimmedLines.length; ++i) {
             let untrimmedLine = untrimmedLines[i];
-            this._checkRawCharacters(untrimmedLine, i);
+            const parsingContext = `PR description (line ${i+1}`;
+            this._checkRawCharacters(untrimmedLine, parsingContext);
             // allow excessively long whitespace-only lines
             // that some copy-pasted PR descriptions may include
             const line = untrimmedLine.trimEnd();
@@ -660,12 +664,12 @@ class CommitMessage
         return lines.join('\n');
     }
 
-    _checkMessageLength(message, parsingContext) {
+    _checkMessageLength(message, context) {
         assert(message);
-        assert(parsingContext);
+        assert(context);
         const lines = message.split('\n');
         for (let line of lines)
-            checkLineLength(line, parsingContext);
+            checkLineLength(line, context);
     }
 
     // removes leading empty lines and trims the end
@@ -700,14 +704,14 @@ class CommitMessage
     }
 
     // authorField is a {name, value, raw}
-    _parseAuthor(authorField, parsingContext) {
-        assert(parsingContext);
+    _parseAuthor(authorField, context) {
+        assert(context);
         const cred = authorField.value.match(/^([\w][^@<>,]*)\s<(\S+@\S+\.\S+)>$/);
         if (!cred)
-            throw new Error(`Invalid ${parsingContext}: unsupported ${authorField.name} value format: '${authorField.value}'`);
+            throw new Error(`Invalid ${context}: unsupported ${authorField.name} value format: '${authorField.value}'`);
 
         if (cred[0].includes(','))
-            throw new Error(`Invalid ${parsingContext}: ${authorField.name} author name with a comma: '${authorField.value}'`);
+            throw new Error(`Invalid ${context}: ${authorField.name} author name with a comma: '${authorField.value}'`);
 
         return {name: cred[1].trim(), email: cred[2].trim()};
     }
@@ -717,7 +721,7 @@ class CommitMessage
         const prDescription = this._trim(prDescriptionRaw);
         const headerFieldName = 'Authored-by';
         if (this._startsWithFieldName(prDescription) === headerFieldName) {
-            const parsingContext = "message header";
+            const parsingContext = "PR description header";
             let tokenizer = new FieldsTokenizer(prDescription, parsingContext);
             const authorField = tokenizer.nextField();
             assert(authorField);
@@ -751,7 +755,7 @@ class CommitMessage
     _parseBody(prDescriptionWithoutHeaderAndTrailerRaw) {
         const prDescriptionWithoutHeaderAndTrailer = this._trim(prDescriptionWithoutHeaderAndTrailerRaw);
         if (prDescriptionWithoutHeaderAndTrailer.length > 0) {
-            const parsingContext = "message body";
+            const parsingContext = "PR description body";
             this._checkMessageLength(prDescriptionWithoutHeaderAndTrailer, parsingContext);
             this._checkForTypos(prDescriptionWithoutHeaderAndTrailer, parsingContext);
             this._body = prDescriptionWithoutHeaderAndTrailer;
@@ -761,7 +765,7 @@ class CommitMessage
     // parses the extracted trailer into this._trailer
     _parseTrailer(trailerRaw) {
         const trailer = this._trim(trailerRaw);
-        const parsingContext = "message trailer";
+        const parsingContext = "PR description trailer";
         let tokenizer = new FieldsTokenizer(trailer, parsingContext);
 
         if (tokenizer.atEnd())
@@ -784,11 +788,11 @@ class CommitMessage
 
     // checks the PR message (or its part) for some common/expected typos that may occur
     // when filling in PR attributes
-    _checkForTypos(text, parsingContext) {
-        assert(parsingContext);
+    _checkForTypos(text, context) {
+        assert(context.length);
         const possibleAuthoredByTypoRegex = /^\s*\S*authored[-_]?by/mi;
         if (text.search(possibleAuthoredByTypoRegex) >= 0)
-            throw new Error(`Invalid ${parsingContext}: suspicious '*Authored-by' attribute in the PR description`);
+            throw new Error(`Invalid ${context}: suspicious '*Authored-by' attribute in the PR description`);
     }
 
     _log(msg) {
@@ -1420,16 +1424,22 @@ class PullRequest {
         } catch (e) {
             this._logEx(e, "cannot parse commit message");
 
+            // indent with 4 spaces to ask GitHub to render exception text without Markdown formatting
+            let errorMessage = `Cannot create a git commit message from PR title and description:\n\n    ${e.message}\n\n`;
+            const mdTitle = `[title](https://github.com/measurement-factory/anubis#pr-title)`;
+            const mdDescription = `[description](https://github.com/measurement-factory/anubis#pr-description)`;
+            errorMessage += `Please see PR ${mdTitle} and ${mdDescription} formatting requirements for more details.\n`;
+            errorMessage += '\n';
+            errorMessage += `This message was added by Anubis bot. `;
+            errorMessage += `Anubis will add a new message if the error text changes. `;
+            errorMessage += `Anubis will remove ${Config.failedDescriptionLabel()} label when there are no errors to report.\n`;
             const comments = await GH.getComments(this._prNumber());
             const filtered = comments.filter(c => c.user.login === Config.githubUserLogin());
             const lastComment = filtered.length ? filtered[filtered.length-1].body : null;
-
-            let errorMessage = `Commit message problem detected:\n\n    ${e.message}\n\n`;
-            errorMessage += 'Please see PR description formatting [requirements](https://github.com/measurement-factory/anubis?tab=readme-ov-file#pr-description) for more details.';
-            if (lastComment !== errorMessage)
+            if (errorMessage !== lastComment)
                 await GH.createComment(this._prNumber(), errorMessage);
             else
-                this._log(`Skip duplicating an existing GitHub comment: ${errorMessage}`);
+                this._log(`not duplicating the last GitHub comment: ${errorMessage}`);
         }
     }
 
