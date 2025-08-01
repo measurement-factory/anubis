@@ -633,8 +633,7 @@ class CommitMessage
 
      // checks that the line does not contain _prohibitedCharacters
     _checkRawCharacters(line, context) {
-        if (line.length === 0)
-            return;
+        assert(context.length);
         const match = this._prohibitedCharacters.exec(line);
         if (match) {
             const escaped = this.escapeUnicode(line);
@@ -654,7 +653,7 @@ class CommitMessage
         let lines = [];
         for (let i = 0; i < untrimmedLines.length; ++i) {
             let untrimmedLine = untrimmedLines[i];
-            const parsingContext = `PR description (line ${i+1}`;
+            const parsingContext = `PR description line ${i+1}`;
             this._checkRawCharacters(untrimmedLine, parsingContext);
             // allow excessively long whitespace-only lines
             // that some copy-pasted PR descriptions may include
