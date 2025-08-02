@@ -16,6 +16,8 @@ export function commonParams() {
 
 const PrNumberRegex = / \(#(\d+)\)$/;
 
+export const PrMessageProhibitedCharacters = new RegExp("[^\u{20}-\u{7e}]", "u");
+
 export function ParsePrNumber(prMessage) {
     assert(prMessage);
     const lines = prMessage.split(/\r*\n/);

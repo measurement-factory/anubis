@@ -75,6 +75,77 @@ class PrProblem extends Error {
     }
 }
 
+// A PrProblem caused by PR title or description content.
+class PrDescriptionProblem extends PrProblem
+{
+    constructor(parsingContext, errorDescription, problematicInput, ...params) {
+        assert(parsingContext);
+        assert(errorDescription);
+        super(errorDescription, ...params);
+        this._parsingContext = parsingContext;
+        this._errorDescription = errorDescription;
+        this._problematicInput = problematicInput; // may be null
+    }
+
+    // returns a string with Unicode characters replaced with their
+    // hexadecimal Unicode code points
+    _escapeUnicode(str) {
+        return str.replace(new RegExp(Util.PrMessageProhibitedCharacters, 'gu'), (uchar) => {
+            // Pad with leading zeros to ensure 4 digits (e.g., \u00E9)
+            const encoded = uchar.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0');
+            return '\\u' + encoded;
+        });
+    }
+
+    gist() {
+        let gist = `Invalid ${this._parsingContext}: ${this._errorDescription}`;
+        if (this._problematicInput)
+            gist += `: '${this._problematicInput}'`;
+        return gist;
+    }
+
+    // creates a Markdown text suitable for being a second GitHubUtil::createComment() parameter
+    toGitHubComment() {
+        let invalidCharacterMessage = null;
+        let originalCodePointMessage = null;
+        if (this._problematicInput !== null) {
+            const match = Util.PrMessageProhibitedCharacters.exec(this._problematicInput);
+            if (match) {
+                const escaped = this._escapeUnicode(this._problematicInput);
+                // the encoded length is 6: e.g., \u00E9
+                const badCharEncoded = escaped.substring(match.index, match.index + 6);
+                invalidCharacterMessage = `Invalid ${this._parsingContext} character (Unicode ${badCharEncoded}) at position ${match.index}: ${escaped}`;
+
+                if (this._problematicInput.match(/\\u([0-9A-Fa-f]{4})/))
+                    originalCodePointMessage = "Original Unicode code point sequences were preserved.";
+            }
+        }
+
+        let errorMessage = `Cannot create a git commit message from PR title and description:\n\n`;
+        // indent with 4 spaces to ask GitHub to render exception text without Markdown formatting
+        if (this._errorDescription !== 'invalid character') // avoid duplication (this problem is detailed below anyway)
+            errorMessage += `    ${this.gist()}\n`;
+        if (invalidCharacterMessage !== null)
+            errorMessage += `    ${invalidCharacterMessage}\n`;
+        errorMessage += '\n';
+        const mdTitle = `[title](https://github.com/measurement-factory/anubis#pr-title)`;
+        const mdDescription = `[description](https://github.com/measurement-factory/anubis#pr-description)`;
+        if (invalidCharacterMessage !== null) {
+            errorMessage += 'Please note that the text quoted above was modified from its original to replace ';
+            errorMessage += 'bytes outside of ASCII space-tilde range with their Unicode code point sequences (i.e. \\u00NN). ';
+            if (originalCodePointMessage !== null)
+                errorMessage += originalCodePointMessage;
+            errorMessage += '\n';
+        }
+        errorMessage += `Please see PR ${mdTitle} and ${mdDescription} formatting requirements for more details.\n`;
+        errorMessage += '\n';
+        errorMessage += `This message was added by Anubis bot. `;
+        errorMessage += `Anubis will add a new message if the error text changes. `;
+        errorMessage += `Anubis will remove ${Config.failedDescriptionLabel()} label when there are no errors to report.\n`;
+        return errorMessage;
+    }
+}
+
 // Contains properties used for approval test status creation
 class Approval {
     // treat as private; use static methods below instead
@@ -498,7 +569,7 @@ class BranchPosition
 function checkLineLength(line, context, limit = 72) {
     assert(context);
     if (line.length > limit)
-        throw new Error(`Invalid ${context}: the line is too long ${line.length}>${limit}: '${line}'`);
+        throw new PrDescriptionProblem(context, `the line is too long ${line.length}>${limit}`, line);
 }
 
 // Forward iterator for fields in the 'name:value' format.
@@ -527,20 +598,20 @@ class FieldsTokenizer
                 break;
 
             if (/^\s/.test(line))
-                throw new Error(`Invalid ${context}: a field cannot start with whitespace: '${line}'`);
+                throw new PrDescriptionProblem(context, `a field cannot start with whitespace`, line);
 
             const pos = line.search(': ');
             if (pos < 0)
-                throw new Error(`Invalid ${context}: a field without a name: value delimiter: '${line}'`);
+                throw new PrDescriptionProblem(context, `a field without a name: value delimiter`, line);
 
             const name = line.substring(0, pos);
             if (/[^\w-]/.test(name))
-                throw new Error(`Invalid ${context}: the field name cannot contain non-word characters: '${name}'`);
+                throw new PrDescriptionProblem(context, `the field name cannot contain non-word characters`, `${name}`);
 
             const value = line.substring(pos+2).trim();
             if (this._remainingFields.some(el => el.name.toUpperCase() === name.toUpperCase() &&
                         el.value.toUpperCase() === value.toUpperCase())) {
-                throw new Error(`Invalid ${context}: duplicates are not allowed: '${line}'`);
+                throw new PrDescriptionProblem(context, `duplicates are not allowed`, line);
             }
 
             checkLineLength(name + ': ' + value, context, 512);
@@ -559,8 +630,6 @@ class FieldsTokenizer
 class CommitMessage
 {
     constructor(rawPr, defaultAuthor, stageable) {
-
-        this._prohibitedCharacters = new RegExp("[^\u{20}-\u{7e}]", "u");
 
         this._parseTitle(rawPr.title, rawPr.number);
 
@@ -623,24 +692,12 @@ class CommitMessage
         return {name: this._customAuthor.name, email: this._customAuthor.email, date: this._defaultAuthor.date};
     }
 
-    escapeUnicode(str) {
-        return str.replace(new RegExp(this._prohibitedCharacters, 'gu'), (uchar) => {
-            // Pad with leading zeros to ensure 4 digits (e.g., \u00E9)
-            const encoded = uchar.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0');
-            return '\\u' + encoded;
-        });
-    }
-
      // checks that the line does not contain _prohibitedCharacters
     _checkRawCharacters(line, context) {
         assert(context.length);
-        const match = this._prohibitedCharacters.exec(line);
-        if (match) {
-            const escaped = this.escapeUnicode(line);
-            // the encoded length is 6: e.g., \u00E9
-            const badCharEncoded = escaped.substring(match.index, match.index + 6);
-            throw new Error(`Invalid ${context} character (Unicode ${badCharEncoded}) at position ${match.index}: ${escaped}`);
-        }
+        const match = Util.PrMessageProhibitedCharacters.exec(line);
+        if (match)
+            throw new PrDescriptionProblem(context, 'invalid character', line);
     }
 
     // performs basic checks for a multi-line message
@@ -707,10 +764,10 @@ class CommitMessage
         assert(context);
         const cred = authorField.value.match(/^([\w][^@<>,]*)\s<(\S+@\S+\.\S+)>$/);
         if (!cred)
-            throw new Error(`Invalid ${context}: unsupported ${authorField.name} value format: '${authorField.value}'`);
+            throw new PrDescriptionProblem(context, `unsupported ${authorField.name} value format`, `${authorField.value}`);
 
         if (cred[0].includes(','))
-            throw new Error(`Invalid ${context}: ${authorField.name} author name with a comma: '${authorField.value}'`);
+            throw new PrDescriptionProblem(context, `${authorField.name} author name with a comma`, `${authorField.value}`);
 
         return {name: cred[1].trim(), email: cred[2].trim()};
     }
@@ -727,7 +784,7 @@ class CommitMessage
             assert(authorField.name === headerFieldName);
             this._customAuthor = this._parseAuthor(authorField, parsingContext);
             if (!tokenizer.atEnd())
-                throw new Error(`Invalid ${parsingContext}: unexpected header lines after a single Authored-by attribute`);
+                throw new PrDescriptionProblem(parsingContext, `unexpected header lines after a single Authored-by attribute`, null);
             return tokenizer.remaining();
         } else {
             return prDescription;
@@ -768,7 +825,7 @@ class CommitMessage
         let tokenizer = new FieldsTokenizer(trailer, parsingContext);
 
         if (tokenizer.atEnd())
-            throw new Error(`Invalid ${parsingContext}: an empty trailer`);
+            throw new PrDescriptionProblem(parsingContext, 'an empty trailer', null);
 
         while (!tokenizer.atEnd()) {
             const field = tokenizer.nextField();
@@ -791,7 +848,7 @@ class CommitMessage
         assert(context.length);
         const possibleAuthoredByTypoRegex = /^\s*\S*authored[-_]?by/mi;
         if (text.search(possibleAuthoredByTypoRegex) >= 0)
-            throw new Error(`Invalid ${context}: suspicious '*Authored-by' attribute in the PR description`);
+            throw new PrDescriptionProblem(context, `suspicious '*Authored-by' attribute in the PR description`, null);
     }
 
     _log(msg) {
@@ -1421,24 +1478,17 @@ class PullRequest {
         try {
             this._commitMessage = new CommitMessage(this._rawPr, defaultAuthor, stageable);
         } catch (e) {
-            this._logEx(e, "cannot parse commit message");
+            if (!(e instanceof PrDescriptionProblem))
+                throw e;
 
-            // indent with 4 spaces to ask GitHub to render exception text without Markdown formatting
-            let errorMessage = `Cannot create a git commit message from PR title and description:\n\n    ${e.message}\n\n`;
-            const mdTitle = `[title](https://github.com/measurement-factory/anubis#pr-title)`;
-            const mdDescription = `[description](https://github.com/measurement-factory/anubis#pr-description)`;
-            errorMessage += `Please see PR ${mdTitle} and ${mdDescription} formatting requirements for more details.\n`;
-            errorMessage += '\n';
-            errorMessage += `This message was added by Anubis bot. `;
-            errorMessage += `Anubis will add a new message if the error text changes. `;
-            errorMessage += `Anubis will remove ${Config.failedDescriptionLabel()} label when there are no errors to report.\n`;
             const comments = await GH.getComments(this._prNumber());
             const filtered = comments.filter(c => c.user.login === Config.githubUserLogin());
             const lastComment = filtered.length ? filtered[filtered.length-1].body : null;
-            if (errorMessage !== lastComment)
-                await GH.createComment(this._prNumber(), errorMessage);
+            const newComment = e.toGitHubComment();
+            if (newComment !== lastComment)
+                await GH.createComment(this._prNumber(), newComment);
             else
-                this._log(`not duplicating the last GitHub comment: ${errorMessage}`);
+                this._log(`not duplicating the last GitHub comment: ${lastComment}`);
         }
     }
 
