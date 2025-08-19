@@ -102,7 +102,7 @@ class PrDescriptionProblem extends PrProblem
     // creates a Markdown text suitable for being a second GitHubUtil::createComment() parameter
     toGitHubComment() {
         let errorMessage = `Cannot create a git commit message from PR title and description.\n\n`;
-        errorMessage += `Invalid ${this._parsingContext}: `;
+        errorMessage += `Invalid PR description ${this._parsingContext}: `;
 
         if (this._errorDescription === ErrorDescriptionInvalidCharacter) {
             const match = Util.PrMessageProhibitedCharacters.exec(this._problematicInput);
@@ -660,7 +660,7 @@ class CommitMessage
 
     _parseTitle(rawTitle, prNumber) {
         const title = rawTitle.trim();
-        const parsingContext = "PR description title";
+        const parsingContext = "title";
         this._checkRawCharacters(title, parsingContext);
         // the (required) commit message title
         this._title = title + ' (#' + prNumber + ')';
@@ -704,7 +704,7 @@ class CommitMessage
         let lines = [];
         for (let i = 0; i < untrimmedLines.length; ++i) {
             let untrimmedLine = untrimmedLines[i];
-            const parsingContext = `PR description line ${i+1}`;
+            const parsingContext = `line ${i+1}`;
             this._checkRawCharacters(untrimmedLine, parsingContext);
             // allow excessively long whitespace-only lines
             // that some copy-pasted PR descriptions may include
@@ -771,7 +771,7 @@ class CommitMessage
         const prDescription = this._trim(prDescriptionRaw);
         const headerFieldName = 'Authored-by';
         if (this._startsWithFieldName(prDescription) === headerFieldName) {
-            const parsingContext = "PR description header";
+            const parsingContext = "header";
             let tokenizer = new FieldsTokenizer(prDescription, parsingContext);
             const authorField = tokenizer.nextField();
             assert(authorField);
@@ -805,7 +805,7 @@ class CommitMessage
     _parseBody(prDescriptionWithoutHeaderAndTrailerRaw) {
         const prDescriptionWithoutHeaderAndTrailer = this._trim(prDescriptionWithoutHeaderAndTrailerRaw);
         if (prDescriptionWithoutHeaderAndTrailer.length > 0) {
-            const parsingContext = "PR description body";
+            const parsingContext = "body";
             this._checkMessageLength(prDescriptionWithoutHeaderAndTrailer, parsingContext);
             this._checkForTypos(prDescriptionWithoutHeaderAndTrailer, parsingContext);
             this._body = prDescriptionWithoutHeaderAndTrailer;
@@ -815,7 +815,7 @@ class CommitMessage
     // parses the extracted trailer into this._trailer
     _parseTrailer(trailerRaw) {
         const trailer = this._trim(trailerRaw);
-        const parsingContext = "PR description trailer";
+        const parsingContext = "trailer";
         let tokenizer = new FieldsTokenizer(trailer, parsingContext);
 
         if (tokenizer.atEnd())
