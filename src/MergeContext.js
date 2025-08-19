@@ -110,7 +110,7 @@ class PrDescriptionProblem extends PrProblem
             const escaped = EscapeUnsafeCharacters(this._problematicInput);
             // the encoded length is 6: e.g., \u00E9
             const badCharEncoded = escaped.substring(match.index, match.index + 6);
-            errorMessage += `Invalid ${this._parsingContext} character (Unicode ${badCharEncoded}) at position ${match.index}:\n`;
+            errorMessage += `\`Invalid ${this._parsingContext} character (Unicode ${badCharEncoded}) at position ${match.index}\`:\n`;
         } else {
             errorMessage += `\`${this._errorDescription}\`:\n`;
         }
