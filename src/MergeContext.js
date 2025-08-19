@@ -686,7 +686,7 @@ class CommitMessage
         return {name: this._customAuthor.name, email: this._customAuthor.email, date: this._defaultAuthor.date};
     }
 
-     // checks that the line does not contain _prohibitedCharacters
+    // checks that the line does not contain _prohibitedCharacters
     _checkRawCharacters(line, context) {
         assert(context.length);
         const match = Util.PrMessageProhibitedCharacters.exec(line);
