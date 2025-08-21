@@ -1479,11 +1479,13 @@ class PullRequest {
 
             const comments = await GH.getComments(this._prNumber());
             const filtered = comments.filter(c => c.user.login === Config.githubUserLogin());
-            const lastComment = filtered.length ? filtered[filtered.length-1].body : null;
             const newComment = e.toGitHubComment();
-            // remove CRs in CRLF sequences (added by GitHub after saving edited messages)
-            const adjustedLastComment = lastComment.replace(/\r+\n/g, '\n');
-            if (newComment !== adjustedLastComment)
+            let lastComment = filtered.length ? filtered[filtered.length-1].body : null;
+            if (lastComment) {
+                // remove CRs in CRLF sequences (added by GitHub after saving edited messages)
+                lastComment = lastComment.replace(/\r+\n/g, '\n');
+            }
+            if (newComment !== lastComment)
                 await GH.createComment(this._prNumber(), newComment);
             else
                 this._log(`not duplicating the last GitHub comment: ${lastComment}`);
