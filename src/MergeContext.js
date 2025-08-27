@@ -118,11 +118,14 @@ class PrDescriptionProblem extends PrProblem
         }
 
         if (this._problematicInput) {
-            const escaped = EscapeUnsafeCharacters(this._problematicInput);
+            // We expect that input contains no new lines. If our expectations are wrong, then
+            // EscapeUnsafeCharacters() should escape/replace any new lines, and the indentation
+            // trick below should still work.
+            const escapedLine = EscapeUnsafeCharacters(this._problematicInput);
             // indent with 4 spaces to ask GitHub to render user input without Markdown formatting
-            errorMessage += `\nProblematic parser input:\n\n    ${escaped}\n`;
+            errorMessage += `\nProblematic parser input:\n\n    ${escapedLine}\n`;
 
-            if (escaped !== this._problematicInput) {
+            if (escapedLine !== this._problematicInput) {
                 errorMessage += 'Please note that the text quoted above was modified from its original to replace ';
                 errorMessage += 'bytes outside of ASCII space-tilde range with their Unicode code point sequences (i.e. \\u00NN). ';
             }
