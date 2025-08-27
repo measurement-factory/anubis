@@ -16,6 +16,9 @@ export function commonParams() {
 
 const PrNumberRegex = / \(#(\d+)\)$/;
 
+// this regex is applied to individual PR title and description lines, so we do not need to allow LF
+export const ProhibitedCommitMessageLineCharacters = new RegExp("[^\u{20}-\u{7e}]", "u");
+
 export function ParsePrNumber(prMessage) {
     assert(prMessage);
     const lines = prMessage.split(/\r*\n/);
