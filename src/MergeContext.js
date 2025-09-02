@@ -901,6 +901,10 @@ class PullRequest {
         this._labelPushBan = false;
 
         this._commitMessage = undefined;
+
+        // the PR description problem discovered by the message parser that will be posted to
+        // GitHub by GitHubUtil::createComment()
+        this._prDescriptionProblem = undefined;
     }
 
     // this PR will need to be reprocessed in this many milliseconds
@@ -1169,6 +1173,13 @@ class PullRequest {
             throw this._exLostControl("unexpected " + Config.ignoredByMergeBotsLabel());
     }
 
+    async throwOnInvalidCommitMessage(exMessage) {
+        if (this._prDescriptionProblem !== undefined) {
+            await GH.createComment(this._prNumber(), this._prDescriptionProblem);
+        }
+        throw this._exLabeledFailure(exMessage, Config.failedDescriptionLabel());
+    }
+
     // whether the PR should be staged (including re-staged)
     async _checkStagingPreconditions() {
         this._log("checking staging preconditions");
@@ -1186,8 +1197,9 @@ class PullRequest {
         if (this._draftPr())
             throw this._exObviousFailure("just a draft");
 
-        if (!this._commitMessage)
-            throw this._exLabeledFailure("invalid commit message", Config.failedDescriptionLabel());
+        if (!this._commitMessage) {
+            await this.throwOnInvalidCommitMessage("invalid commit message");
+        }
 
         if (!this._prMergeable())
             throw this._exObviousFailure("GitHub will not be able to merge");
@@ -1489,7 +1501,7 @@ class PullRequest {
                 lastComment = lastComment.replace(/\r+\n/g, '\n');
             }
             if (newComment !== lastComment)
-                await GH.createComment(this._prNumber(), newComment);
+                this._prDescriptionProblem = newComment;
             else
                 this._log(`not duplicating the last GitHub comment: ${lastComment}`);
         }
@@ -1607,8 +1619,9 @@ class PullRequest {
 
         // yes, _checkStagingPreconditions() has checked the same message
         // already, but our _criteria_ might have changed since that check
-        if (!this._commitMessage)
-            throw this._exLabeledFailure("commit message is now considered invalid", Config.failedDescriptionLabel());
+        if (!this._commitMessage) {
+            await this.throwOnInvalidCommitMessage("commit message is now considered invalid");
+        }
 
         // yes, _checkStagingPreconditions() has checked this already, but
         // humans may have changed the PR stage since that check, and our
