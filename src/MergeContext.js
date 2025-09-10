@@ -1256,7 +1256,6 @@ class PullRequest {
                         await GH.createComment(this._prNumber(), this._prDescriptionProblem);
                     else
                         this._log(`not duplicating the last GitHub comment: ${lastComment}`);
-
                 }
             }
         }
