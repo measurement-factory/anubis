@@ -1173,13 +1173,6 @@ class PullRequest {
             throw this._exLostControl("unexpected " + Config.ignoredByMergeBotsLabel());
     }
 
-    async throwOnInvalidCommitMessage(exMessage) {
-        if (this._prDescriptionProblem !== undefined) {
-            await GH.createComment(this._prNumber(), this._prDescriptionProblem);
-        }
-        throw this._exLabeledFailure(exMessage, Config.failedDescriptionLabel());
-    }
-
     // whether the PR should be staged (including re-staged)
     async _checkStagingPreconditions() {
         this._log("checking staging preconditions");
@@ -1197,9 +1190,8 @@ class PullRequest {
         if (this._draftPr())
             throw this._exObviousFailure("just a draft");
 
-        if (!this._commitMessage) {
-            await this.throwOnInvalidCommitMessage("invalid commit message");
-        }
+        if (!this._commitMessage)
+            throw this._exLabeledFailure("invalid commit message", Config.failedDescriptionLabel());
 
         if (!this._prMergeable())
             throw this._exObviousFailure("GitHub will not be able to merge");
@@ -1248,8 +1240,25 @@ class PullRequest {
                 return;
             }
             this._log("pushing changed labels: " + this._labels.diff());
-            if (!this._dryRun("pushing labels"))
+            if (!this._dryRun("pushing labels")) {
                 await this._labels.pushToGitHub();
+
+                if (this._labels.has(Config.failedDescriptionLabel())) {
+                    assert(this._prDescriptionProblem !== undefined);
+                    const comments = await GH.getComments(this._prNumber());
+                    const filtered = comments.filter(c => c.user.login === Config.githubUserLogin());
+                    let lastComment = filtered.length ? filtered[filtered.length-1].body : null;
+                    if (lastComment) {
+                        // remove CRs in CRLF sequences (added by GitHub after saving edited messages)
+                        lastComment = lastComment.replace(/\r+\n/g, '\n');
+                    }
+                    if (this._prDescriptionProblem !== lastComment)
+                        await GH.createComment(this._prNumber(), this._prDescriptionProblem);
+                    else
+                        this._log(`not duplicating the last GitHub comment: ${lastComment}`);
+
+                }
+            }
         }
     }
 
@@ -1491,19 +1500,7 @@ class PullRequest {
         } catch (e) {
             if (!(e instanceof PrDescriptionProblem))
                 throw e;
-
-            const comments = await GH.getComments(this._prNumber());
-            const filtered = comments.filter(c => c.user.login === Config.githubUserLogin());
-            const newComment = e.toGitHubComment();
-            let lastComment = filtered.length ? filtered[filtered.length-1].body : null;
-            if (lastComment) {
-                // remove CRs in CRLF sequences (added by GitHub after saving edited messages)
-                lastComment = lastComment.replace(/\r+\n/g, '\n');
-            }
-            if (newComment !== lastComment)
-                this._prDescriptionProblem = newComment;
-            else
-                this._log(`not duplicating the last GitHub comment: ${lastComment}`);
+            this._prDescriptionProblem = e.toGitHubComment();
         }
     }
 
@@ -1619,9 +1616,8 @@ class PullRequest {
 
         // yes, _checkStagingPreconditions() has checked the same message
         // already, but our _criteria_ might have changed since that check
-        if (!this._commitMessage) {
-            await this.throwOnInvalidCommitMessage("commit message is now considered invalid");
-        }
+        if (!this._commitMessage)
+            throw this._exLabeledFailure("commit message is now considered invalid", Config.failedDescriptionLabel());
 
         // yes, _checkStagingPreconditions() has checked this already, but
         // humans may have changed the PR stage since that check, and our
