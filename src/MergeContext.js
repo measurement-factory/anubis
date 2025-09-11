@@ -902,9 +902,8 @@ class PullRequest {
 
         this._commitMessage = undefined;
 
-        // the PR description problem discovered by the message parser that will be posted to
-        // GitHub by GitHubUtil::createComment()
-        this._prDescriptionProblem = undefined;
+        // a PrDescriptionProblem instance if PR description problems were detected
+        this._prDescriptionProblem = null;
     }
 
     // this PR will need to be reprocessed in this many milliseconds
@@ -1244,7 +1243,7 @@ class PullRequest {
                 await this._labels.pushToGitHub();
 
                 if (this._labels.has(Config.failedDescriptionLabel())) {
-                    assert(this._prDescriptionProblem !== undefined);
+                    assert(this._prDescriptionProblem);
                     const comments = await GH.getComments(this._prNumber());
                     const filtered = comments.filter(c => c.user.login === Config.githubUserLogin());
                     let lastComment = filtered.length ? filtered[filtered.length-1].body : null;
@@ -1252,8 +1251,9 @@ class PullRequest {
                         // remove CRs in CRLF sequences (added by GitHub after saving edited messages)
                         lastComment = lastComment.replace(/\r+\n/g, '\n');
                     }
-                    if (this._prDescriptionProblem !== lastComment)
-                        await GH.createComment(this._prNumber(), this._prDescriptionProblem);
+                    const newComment = this._prDescriptionProblem.toGitHubComment();
+                    if (lastComment === null || newComment !== lastComment)
+                        await GH.createComment(this._prNumber(), newComment);
                     else
                         this._log(`not duplicating the last GitHub comment: ${lastComment}`);
                 }
@@ -1499,7 +1499,9 @@ class PullRequest {
         } catch (e) {
             if (!(e instanceof PrDescriptionProblem))
                 throw e;
-            this._prDescriptionProblem = e.toGitHubComment();
+            this._prDescriptionProblem = e;
+            // saved exception will be used when/if we check commit message
+            assert(!this._commitMessage);
         }
     }
 
