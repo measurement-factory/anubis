@@ -1231,6 +1231,22 @@ class PullRequest {
         this._updated = true;
     }
 
+    async _pushFailedDescriptionCommentToGitHub() {
+        assert(this._prDescriptionProblem);
+        const comments = await GH.getComments(this._prNumber());
+        const filtered = comments.filter(c => c.user.login === Config.githubUserLogin());
+        let lastComment = filtered.length ? filtered[filtered.length-1].body : null;
+        if (lastComment) {
+            // remove CRs in CRLF sequences (added by GitHub after saving edited messages)
+            lastComment = lastComment.replace(/\r+\n/g, '\n');
+        }
+        const newComment = this._prDescriptionProblem.toGitHubComment();
+        if (lastComment === null || newComment !== lastComment)
+            await GH.createComment(this._prNumber(), newComment);
+        else
+            this._log(`not duplicating the last GitHub comment: ${lastComment}`);
+    }
+
     // brings GitHub labels in sync with ours
     async _pushLabelsToGitHub() {
         if (this._labels) {
@@ -1242,21 +1258,8 @@ class PullRequest {
             if (!this._dryRun("pushing labels")) {
                 await this._labels.pushToGitHub();
 
-                if (this._labels.has(Config.failedDescriptionLabel())) {
-                    assert(this._prDescriptionProblem);
-                    const comments = await GH.getComments(this._prNumber());
-                    const filtered = comments.filter(c => c.user.login === Config.githubUserLogin());
-                    let lastComment = filtered.length ? filtered[filtered.length-1].body : null;
-                    if (lastComment) {
-                        // remove CRs in CRLF sequences (added by GitHub after saving edited messages)
-                        lastComment = lastComment.replace(/\r+\n/g, '\n');
-                    }
-                    const newComment = this._prDescriptionProblem.toGitHubComment();
-                    if (lastComment === null || newComment !== lastComment)
-                        await GH.createComment(this._prNumber(), newComment);
-                    else
-                        this._log(`not duplicating the last GitHub comment: ${lastComment}`);
-                }
+                if (this._labels.has(Config.failedDescriptionLabel()))
+                    await this._pushFailedDescriptionCommentToGitHub();
             }
         }
     }
