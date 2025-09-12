@@ -901,6 +901,9 @@ class PullRequest {
         this._labelPushBan = false;
 
         this._commitMessage = undefined;
+
+        // a PrDescriptionProblem instance if PR description problems were detected
+        this._prDescriptionProblem = null;
     }
 
     // this PR will need to be reprocessed in this many milliseconds
@@ -1228,6 +1231,22 @@ class PullRequest {
         this._updated = true;
     }
 
+    async _pushFailedDescriptionCommentToGitHub() {
+        assert(this._prDescriptionProblem);
+        const comments = await GH.getComments(this._prNumber());
+        const filtered = comments.filter(c => c.user.login === Config.githubUserLogin());
+        let lastComment = filtered.length ? filtered[filtered.length-1].body : null;
+        if (lastComment) {
+            // remove CRs in CRLF sequences (added by GitHub after saving edited messages)
+            lastComment = lastComment.replace(/\r+\n/g, '\n');
+        }
+        const newComment = this._prDescriptionProblem.toGitHubComment();
+        if (lastComment === null || newComment !== lastComment)
+            await GH.createComment(this._prNumber(), newComment);
+        else
+            this._log(`not duplicating the last GitHub comment: ${lastComment}`);
+    }
+
     // brings GitHub labels in sync with ours
     async _pushLabelsToGitHub() {
         if (this._labels) {
@@ -1236,8 +1255,12 @@ class PullRequest {
                 return;
             }
             this._log("pushing changed labels: " + this._labels.diff());
-            if (!this._dryRun("pushing labels"))
+            if (!this._dryRun("pushing labels")) {
                 await this._labels.pushToGitHub();
+
+                if (this._labels.has(Config.failedDescriptionLabel()))
+                    await this._pushFailedDescriptionCommentToGitHub();
+            }
         }
     }
 
@@ -1479,19 +1502,9 @@ class PullRequest {
         } catch (e) {
             if (!(e instanceof PrDescriptionProblem))
                 throw e;
-
-            const comments = await GH.getComments(this._prNumber());
-            const filtered = comments.filter(c => c.user.login === Config.githubUserLogin());
-            const newComment = e.toGitHubComment();
-            let lastComment = filtered.length ? filtered[filtered.length-1].body : null;
-            if (lastComment) {
-                // remove CRs in CRLF sequences (added by GitHub after saving edited messages)
-                lastComment = lastComment.replace(/\r+\n/g, '\n');
-            }
-            if (newComment !== lastComment)
-                await GH.createComment(this._prNumber(), newComment);
-            else
-                this._log(`not duplicating the last GitHub comment: ${lastComment}`);
+            this._prDescriptionProblem = e;
+            // saved exception will be used when/if we check commit message
+            assert(!this._commitMessage);
         }
     }
 
