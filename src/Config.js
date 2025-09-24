@@ -29,7 +29,6 @@ class ConfigOptions {
         assert(this._sufficientApprovals > 1);
         this._votingDelayMax = timestring(conf.voting_delay_max, 'ms');
         this._votingDelayMin = timestring(conf.voting_delay_min, 'ms');
-        this._stagingChecks = conf.staging_checks;
         this._loggerParams = conf.logger_params;
         this._approvalUrl = conf.approval_url;
         this._coreDevelopers = conf.core_developers;
@@ -97,7 +96,6 @@ class ConfigOptions {
     sufficientApprovals() { return this._sufficientApprovals; }
     votingDelayMax() { return this._votingDelayMax; }
     votingDelayMin() { return this._votingDelayMin; }
-    stagingChecks() { return this._stagingChecks; }
     loggerParams() { return this._loggerParams; }
     // returns a Map of (login,id) pairs
     coreDeveloperIds() { return this._coreDeveloperIds; }
