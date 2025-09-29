@@ -776,7 +776,7 @@ class CommitMessage
 // a single GitHub pull request
 class PullRequest {
 
-    constructor(pr, banStaging, prevStagedPrNumber) {
+    constructor(pr, banStaging) {
         this._rawPr = pr; // may be rather old and lack pr.mergeable; see _loadRawPr()
 
         this._shaLimit = 6; // how many SHA chars to show in debug messages
@@ -815,13 +815,14 @@ class PullRequest {
         // the user should see abandonedStagingChecksLabel()
         this._signalAbandonmentOfStagingChecks = false;
 
+        // whether the PR had waitingStagingChecksLabel() or passedStagingChecksLabel()
+        // at the start of processing
+        this._waitingOrPassedStagingChecks = false;
+
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
         this._labelPushBan = false;
 
         this._commitMessage = undefined;
-
-        // the staged PR number of the previous PR scan (if any)
-        this._prevStagedPrNumber = prevStagedPrNumber;
     }
 
     // this PR will need to be reprocessed in this many milliseconds
@@ -1306,12 +1307,14 @@ class PullRequest {
 
     async _loadPrState() {
         if (!this._stagedSha()) {
-            if (await this._mergedSomeTimeAgo())
+            if (await this._mergedSomeTimeAgo()) {
                 this._enterMerged();
-            else
-                if (this._prNumber() === this._prevStagedPrNumber)
+            } else {
+                // another PR became staged thus obsoleting our running or completed checks
+                if (this._stagingBanned && this._waitingOrPassedStagingChecks)
                     this._signalAbandonmentOfStagingChecks = true;
                 await this._enterBrewing();
+            }
             return;
         }
 
@@ -1654,6 +1657,9 @@ class PullRequest {
 
         await this._loadLabels();
 
+        this._waitingOrPassedStagingChecks = this._labels.has(Config.passedStagingChecksLabel()) ||
+                                             this._labels.has(Config.waitingStagingChecksLabel());
+
         // methods below compute fresh labels from scratch without worrying
         // about stale labels, so we clear all the labels that we must sync
         this._removeTemporaryLabels();
@@ -1800,8 +1806,8 @@ class PullRequest {
 }
 
 // promises to update/advance the given PR, hiding PullRequest from callers
-export function Process(rawPr, banStaging, prevStagedPrNumber) {
-    let pr = new PullRequest(rawPr, banStaging, prevStagedPrNumber);
+export function Process(rawPr, banStaging) {
+    let pr = new PullRequest(rawPr, banStaging);
     return pr.process();
 }
 
