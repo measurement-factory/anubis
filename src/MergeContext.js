@@ -815,10 +815,6 @@ class PullRequest {
         // the user should see abandonedStagingChecksLabel()
         this._signalAbandonmentOfStagingChecks = false;
 
-        // whether the PR had waitingStagingChecksLabel() or passedStagingChecksLabel()
-        // at the start of processing
-        this._waitingOrPassedStagingChecks = false;
-
         // truthy value contains a reason for disabling _pushLabelsToGitHub()
         this._labelPushBan = false;
 
@@ -1310,9 +1306,15 @@ class PullRequest {
             if (await this._mergedSomeTimeAgo()) {
                 this._enterMerged();
             } else {
-                // another PR became staged thus obsoleting our running or completed checks
-                if (this._stagingBanned && this._waitingOrPassedStagingChecks)
+                // check whether this PR was staged some time ago
+                let events = await GH.getRecentEvents(this._prNumber());
+                let staleStagedCommitEvents = events.filter(e => e.event === "referenced"
+                        && e.commit_id !== null
+                        && e.actor.login === Config.githubUserLogin());
+                // whether there is at least one stale staged commit
+                if (staleStagedCommitEvents.length)
                     this._signalAbandonmentOfStagingChecks = true;
+
                 await this._enterBrewing();
             }
             return;
@@ -1656,9 +1658,6 @@ class PullRequest {
          */
 
         await this._loadLabels();
-
-        this._waitingOrPassedStagingChecks = this._labels.has(Config.passedStagingChecksLabel()) ||
-                                             this._labels.has(Config.waitingStagingChecksLabel());
 
         // methods below compute fresh labels from scratch without worrying
         // about stale labels, so we clear all the labels that we must sync
