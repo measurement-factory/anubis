@@ -804,6 +804,9 @@ class PullRequest {
         // while unexpected, PR merging and closing is not prohibited when staging is
         this._stagingBanned = banStaging;
 
+        // whether this PR was probably staged some time ago
+        this._maybeWasStaged = false;
+
         // GitHub statuses of the staged commit
         this._stagedStatuses = null;
 
@@ -1066,6 +1069,13 @@ class PullRequest {
         let labels = await GH.getLabels(this._prNumber());
         assert(!this._labels);
         this._labels = new Labels(labels, this._prNumber());
+
+        this._maybeWasStaged = this._labels.has(Config.passedStagingChecksLabel()) ||
+                               this._labels.has(Config.waitingStagingChecksLabel()) ||
+                               this._labels.has(Config.failedStagingOtherLabel()) ||
+                               this._labels.has(Config.failedStagingChecksLabel()) ||
+                               this._labels.has(Config.failedOtherLabel()) ||
+                               this._labels.has(Config.abandonedStagingChecksLabel());
     }
 
     // stop processing if it is prohibited by a human-controlled label
@@ -1301,20 +1311,29 @@ class PullRequest {
         return false;
     }
 
+    async _checkAbandonment() {
+        // Optimization: get all PR's events (which may be costly) only if the PR
+        // has some indication of being staged some time ago.
+        if (!this._maybeWasStaged)
+            return;
+        let prEvents = await GH.getEvents(this._prNumber());
+        let stagedEvents = prEvents.filter(e => e.event === "referenced"
+                && e.commit_id !== null
+                && e.actor.login === Config.githubUserLogin());
+        // whether there is at least one stale staged commit
+        if (stagedEvents.length) {
+            const lastStagedSha = stagedEvents[stagedEvents.length-1].commit_id;
+            this._log(`abandoned staged commits: ${stagedEvents.length}, last: ${lastStagedSha}`);
+            this._signalAbandonmentOfStagingChecks = true;
+        }
+    }
+
     async _loadPrState() {
         if (!this._stagedSha()) {
             if (await this._mergedSomeTimeAgo()) {
                 this._enterMerged();
             } else {
-                // check whether this PR was staged some time ago
-                let events = await GH.getRecentEvents(this._prNumber());
-                let staleStagedCommitEvents = events.filter(e => e.event === "referenced"
-                        && e.commit_id !== null
-                        && e.actor.login === Config.githubUserLogin());
-                // whether there is at least one stale staged commit
-                if (staleStagedCommitEvents.length)
-                    this._signalAbandonmentOfStagingChecks = true;
-
+                await this._checkAbandonment();
                 await this._enterBrewing();
             }
             return;

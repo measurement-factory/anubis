@@ -62,64 +62,6 @@ async function paginatedGet(githubMethod, params) {
     return result;
 }
 
-// Returns recent githubMethod API call entries.
-// The number of entries may vary depending on pagination and
-// lies within [per_page/2, per_page+per_page/2] range.
-// params.per_page must be configured by the caller.
-async function getRecentEntries(githubMethod, params) {
-    assert(params.per_page);
-
-    const firstPage = await githubMethod(params); // data from the single page
-    const linkHeader = firstPage.headers.link;
-
-
-    if (!linkHeader) {
-        Log.Logger.info("No pagination links found, perhaps all results fit on one page.");
-        return firstPage.data;
-    }
-
-    // parse the Link header to find the 'last' page URL
-
-    const lastPageMatch = linkHeader.match(/<([^>]+)>; rel="last"/);
-    if (!lastPageMatch) {
-        Log.Logger.warn("Could not find the 'last' page link in header.");
-        return firstPage.data;
-    }
-
-    const lastPageUrl = lastPageMatch[1];
-    const urlParts = lastPageUrl.split(/[&?]page=/);
-    if (urlParts.length !== 2) {
-        Log.Logger.warn("Could parse the 'last' page link in header.");
-        return firstPage.data;
-    }
-    const pagesNumber = parseInt(urlParts[1]);
-    if (isNaN(pagesNumber) || pagesNumber < 2) {
-        Log.Logger.warn("Invalid 'last' page link in header.");
-        return firstPage.data;
-    }
-
-    Log.Logger.info(`The last page number is ${pagesNumber}`);
-
-    params.page = pagesNumber;
-    const lastPage = await githubMethod(params);
-    if (lastPage.data.length > params.per_page/2)
-        return lastPage.data; // assume for simplicity that more than 50% is enough
-
-    // the last page contains insufficient entries
-
-    let result = [];
-    if (pagesNumber === 2) {
-        result.push(...firstPage.data);
-    } else {
-        Log.Logger.info(`The last page has too few entries, requesting more...`);
-        params.page = pagesNumber-1;
-        const penultimatePage = await githubMethod(params);
-        result.push(...penultimatePage.data);
-    }
-    result.push(...lastPage.data);
-    return result;
-}
-
 export async function getOpenPrs() {
     let params = commonParams();
 
@@ -139,13 +81,13 @@ export async function getLabels(prNum) {
     return await rateLimitedPromise(result);
 }
 
-export async function getRecentEvents(prNum) {
+export async function getEvents(prNum) {
     let params = commonParams();
     params.issue_number = prNum;
     params.per_page = 100; // the maximum allowed by GitHub
 
-    let data = await getRecentEntries(GitHub.rest.issues.listEvents, params);
-    logApiResult(getRecentEvents.name, params, {events: data.length});
+    let data = await paginatedGet(GitHub.rest.issues.listEvents, params);
+    logApiResult(getEvents.name, params, {events: data.length});
     return data;
 }
 
