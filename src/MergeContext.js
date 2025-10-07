@@ -344,6 +344,9 @@ class Labels
         return label && label.present();
     }
 
+    // whether there is a matching label
+    haveMatching(regex) { return this._labels.some(l => regex.test(l.name)); }
+
     // brings GitHub labels in sync with ours
     async pushToGitHub() {
         let syncedLabels = [];
@@ -804,8 +807,9 @@ class PullRequest {
         // while unexpected, PR merging and closing is not prohibited when staging is
         this._stagingBanned = banStaging;
 
-        // whether this PR was probably staged some time ago
-        this._maybeWasStaged = false;
+        // whether there is some label indicating that
+        // this PR was staged some time ago
+        this._wasStagedIndicator = false;
 
         // GitHub statuses of the staged commit
         this._stagedStatuses = null;
@@ -1070,12 +1074,7 @@ class PullRequest {
         assert(!this._labels);
         this._labels = new Labels(labels, this._prNumber());
 
-        this._maybeWasStaged = this._labels.has(Config.passedStagingChecksLabel()) ||
-                               this._labels.has(Config.waitingStagingChecksLabel()) ||
-                               this._labels.has(Config.failedStagingOtherLabel()) ||
-                               this._labels.has(Config.failedStagingChecksLabel()) ||
-                               this._labels.has(Config.failedOtherLabel()) ||
-                               this._labels.has(Config.abandonedStagingChecksLabel());
+        this._wasStagedIndicator = this._labels.haveMatching(Config.stagingLabelRegex());
     }
 
     // stop processing if it is prohibited by a human-controlled label
@@ -1311,21 +1310,23 @@ class PullRequest {
         return false;
     }
 
-    async _checkAbandonment() {
+    // slowly checks whether this not-yet-merged PR has been staged in the past
+    async _wasStaged() {
         // Optimization: get all PR's events (which may be costly) only if the PR
         // has some indication of being staged some time ago.
-        if (!this._maybeWasStaged)
-            return;
+        if (!this._wasStagedIndicator)
+            return false;
         let prEvents = await GH.getEvents(this._prNumber());
         let stagedEvents = prEvents.filter(e => e.event === "referenced"
                 && e.commit_id !== null
                 && e.actor.login === Config.githubUserLogin());
-        // whether there is at least one stale staged commit
+        // whether there is at least one staged commit
         if (stagedEvents.length) {
             const lastStagedSha = stagedEvents[stagedEvents.length-1].commit_id;
-            this._log(`abandoned staged commits: ${stagedEvents.length}, last: ${lastStagedSha}`);
-            this._signalAbandonmentOfStagingChecks = true;
+            this._log(`staged commits: ${stagedEvents.length}, last: ${lastStagedSha}`);
+            return true;
         }
+        return false;
     }
 
     async _loadPrState() {
@@ -1333,7 +1334,7 @@ class PullRequest {
             if (await this._mergedSomeTimeAgo()) {
                 this._enterMerged();
             } else {
-                await this._checkAbandonment();
+                this._signalAbandonmentOfStagingChecks = await this._wasStaged();
                 await this._enterBrewing();
             }
             return;

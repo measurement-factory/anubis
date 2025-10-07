@@ -84,9 +84,8 @@ export async function getLabels(prNum) {
 export async function getEvents(prNum) {
     let params = commonParams();
     params.issue_number = prNum;
-    params.per_page = 100; // the maximum allowed by GitHub
 
-    let data = await paginatedGet(GitHub.rest.issues.listEvents, params);
+    const data = await paginatedGet(GitHub.rest.issues.listEvents, params);
     logApiResult(getEvents.name, params, {events: data.length});
     return data;
 }
