@@ -118,7 +118,7 @@ class ConfigOptions {
     waitingStagingChecksLabel() { return "M-waiting-staging-checks"; }
     // passed staging checks (in staging-only mode)
     passedStagingChecksLabel() { return "M-passed-staging-checks"; }
-    // whether the PR was abandoned due to a stale staged commit
+    // whether the last staged commit for the labeled PR is now being ignored
     abandonedStagingChecksLabel() { return "M-abandoned-staging-checks"; }
 
     // fast-forward merge succeeded
