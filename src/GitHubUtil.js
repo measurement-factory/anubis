@@ -81,15 +81,6 @@ export async function getLabels(prNum) {
     return await rateLimitedPromise(result);
 }
 
-export async function getEvents(prNum) {
-    let params = commonParams();
-    params.issue_number = prNum;
-
-    const data = await paginatedGet(GitHub.rest.issues.listEvents, params);
-    logApiResult(getEvents.name, params, {events: data.length});
-    return data;
-}
-
 // Gets PR metadata from GitHub
 // If requested and needed, retries until GitHub calculates PR mergeable flag.
 // Those retries, if any, are limited to a few minutes.

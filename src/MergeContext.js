@@ -809,7 +809,7 @@ class PullRequest {
 
         // whether there is some label indicating that
         // this PR was staged some time ago
-        this._wasStagedIndicator = false;
+        this._wasStaged = false;
 
         // GitHub statuses of the staged commit
         this._stagedStatuses = null;
@@ -1074,7 +1074,7 @@ class PullRequest {
         assert(!this._labels);
         this._labels = new Labels(labels, this._prNumber());
 
-        this._wasStagedIndicator = this._labels.haveMatching(Config.stagingLabelRegex());
+        this._wasStaged = this._labels.haveMatching(Config.stagingLabelRegex());
     }
 
     // stop processing if it is prohibited by a human-controlled label
@@ -1310,31 +1310,12 @@ class PullRequest {
         return false;
     }
 
-    // slowly checks whether this not-yet-merged PR has been staged in the past
-    async _wasStaged() {
-        // Optimization: get all PR's events (which may be costly) only if the PR
-        // has some indication of being staged some time ago.
-        if (!this._wasStagedIndicator)
-            return false;
-        let prEvents = await GH.getEvents(this._prNumber());
-        let stagedEvents = prEvents.filter(e => e.event === "referenced"
-                && e.commit_id !== null
-                && e.actor.login === Config.githubUserLogin());
-        // whether there is at least one staged commit
-        if (stagedEvents.length) {
-            const lastStagedSha = stagedEvents[stagedEvents.length-1].commit_id;
-            this._log(`staged commits: ${stagedEvents.length}, last: ${lastStagedSha}`);
-            return true;
-        }
-        return false;
-    }
-
     async _loadPrState() {
         if (!this._stagedSha()) {
             if (await this._mergedSomeTimeAgo()) {
                 this._enterMerged();
             } else {
-                this._signalAbandonmentOfStagingChecks = await this._wasStaged();
+                this._signalAbandonmentOfStagingChecks = this._wasStaged;
                 await this._enterBrewing();
             }
             return;

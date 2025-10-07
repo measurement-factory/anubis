@@ -105,7 +105,7 @@ class ConfigOptions {
     // an unexpected error occurred outside the "staged" phase
     failedOtherLabel() { return "M-failed-other"; }
 
-    // a regex matching all stage-related labels
+    // a regex matching any label that is only set for staged PRs
     stagingLabelRegex() { return /-staging-/; }
 
     // keep stagingLabelRegex() in sync with these labels:
