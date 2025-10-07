@@ -414,6 +414,9 @@ class Labels
         return label && label.present();
     }
 
+    // whether there is a matching label
+    haveMatching(regex) { return this._labels.some(l => regex.test(l.name)); }
+
     // brings GitHub labels in sync with ours
     async pushToGitHub() {
         let syncedLabels = [];
@@ -886,6 +889,10 @@ class PullRequest {
         // while unexpected, PR merging and closing is not prohibited when staging is
         this._stagingBanned = banStaging;
 
+        // whether there is some label indicating that
+        // this PR was staged some time ago
+        this._wasStaged = false;
+
         // GitHub statuses of the staged commit
         this._stagedStatuses = null;
 
@@ -1151,6 +1158,8 @@ class PullRequest {
         let labels = await GH.getLabels(this._prNumber());
         assert(!this._labels);
         this._labels = new Labels(labels, this._prNumber());
+
+        this._wasStaged = this._labels.haveMatching(Config.stagingLabelRegex());
     }
 
     // stop processing if it is prohibited by a human-controlled label
@@ -1408,10 +1417,12 @@ class PullRequest {
 
     async _loadPrState() {
         if (!this._stagedSha()) {
-            if (await this._mergedSomeTimeAgo())
+            if (await this._mergedSomeTimeAgo()) {
                 this._enterMerged();
-            else
+            } else {
+                this._signalAbandonmentOfStagingChecks = this._wasStaged;
                 await this._enterBrewing();
+            }
             return;
         }
 
