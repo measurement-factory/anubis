@@ -107,9 +107,10 @@ function handleCheckEvent(name, e) {
     if (e.head_branch === Config.stagingBranch()) {
         return Util.PrId.Sha(e.head_sha);
     }
-    // check/workflow events for other non-PR branches (e.g., master) are not associated with PRs
-    Logger.info(`${name} event: no PR for`, e.head_sha);
-    return [];
+
+    // Check/workflow events for other branches.
+    // Will check for PR association later.
+    return Util.PrId.BranchList([e.head_branch], null);
 }
 
 // https://docs.github.com/ru/webhooks/webhook-events-and-payloads#workflow_run
