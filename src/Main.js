@@ -104,12 +104,15 @@ function handleCheckEvent(name, e) {
         return [];
     }
 
+    if (e.head_branch === undefined) {
+        Logger.info(`${name} event: no e.head_branch`, e.head_sha);
+        return [];
+    }
+
     if (e.head_branch === Config.stagingBranch()) {
         return Util.PrId.Sha(e.head_sha);
     }
 
-    // Check/workflow events for other branches.
-    // Will check for PR association later.
     return Util.PrId.BranchList([e.head_branch], null);
 }
 
