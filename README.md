@@ -38,7 +38,7 @@ are satisfied:
   branch is out of date with its target branch.
 * The PR is not a
   [draft](https://docs.github.com/en/github/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/changing-the-stage-of-a-pull-request).
-* All the _required_ checks have succeeded on the PR branch:
+* All the _required_ PR checks have succeeded on the PR branch:
   * If _all_ checks have succeeded, then GitHub says "All checks have
     passed" next to a green check mark:
     ![](./docs/images/all_passed.png)
@@ -47,7 +47,7 @@ are satisfied:
     ![](./docs/images/required_passed.png)
   
     Unfortunately, GitHub also displays the above message when some
-    required checks have failed. To determine whether all the required
+    required PR checks have failed. To determine whether all the required PR
     checks have succeeded when some checks have failed, expand the check
     list using the "show all checks" link.
 * The PR is approved for merging (see below for voting rules).
@@ -69,13 +69,9 @@ algorithm:
    section further below.
 2. Reset the staging (a.k.a. "auto") branch to the PR staging commit.
    The previous state of the staging branch is ignored.
-3. Wait for GitHub to report exactly `config::staging_checks` CI test
-   results for the staging branch. The project CI infrastructure is
-   expected to auto-test the staging branch on every change. A check
-   failure is a PR-specific step failure -- in GitHub terminology, all
-   staging checks are currently deemed "required". If discovered, any
-   extra check is considered a configuration problem (not related to any
-   specific PR). Error handling is detailed in the next section.
+3. Wait for GitHub to report that all the _required_ staging checks have
+   succeeded on the staging branch. The project CI infrastructure is
+   expected to auto-test the staging branch on every change.
 4. Fast forward the PR target branch (usually "master") to the
    now-tested staging commit.
 5. Label the PR as merged (see below for PR labels) and close the PR.
@@ -126,7 +122,7 @@ request state:
   for merging, successfully completed the initial merging steps that are
   supposed to trigger CI tests, and is now waiting for the CI test
   results. The bot removes this label when it notices that all
-  `config::staging_checks` tests have completed.
+  required staging checks have succeeded on the staging branch.
 * `M-passed-staging-checks`: Similar to the GitHub "green check" mark
   for the staging branch commit (but ignores failures of optional
   checks). Usually only visible when the bot is running in staging-only
@@ -384,7 +380,6 @@ All configuration fields are required.
 *core_developers* | The comma-separated list of login=id pairs, specifying GitHub login and ID for core developers. | ""
 *voting_delay_min*| The minimum merging age of a PR. Younger PRs are not merged, regardless of the number of votes. The PR age string should comply with [timestring](https://github.com/mike182uk/timestring) parser. | "2d"
 *voting_delay_max* | The maximum merging age of a PR that has fewer than `config::sufficient_approvals` votes. The PR age string should comply with [timestring](https://github.com/mike182uk/timestring) parser. | "10d"
-*staging_checks*| The expected number of CI tests executed against the staging branch. | 2
 *approval_url*| The URL associated with an approval status test description. | ""
 *logger_params* | A JSON-formatted parameter list for the [Bunyan](https://github.com/trentm/node-bunyan) logging library [constructor](https://github.com/trentm/node-bunyan#constructor-api). | <pre>{<br>    "name": "anubis",<br>    "streams": [ ... ]<br>}</pre>
 
