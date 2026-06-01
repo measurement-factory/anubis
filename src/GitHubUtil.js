@@ -274,6 +274,26 @@ export async function getComments(prNum) {
 //    });
 //}
 
+async function getStatus(ref, context) {
+    let params = commonParams();
+    params.ref = ref;
+
+    const max = 64 * 1000 + 1; // ~2 min. overall
+    for (let d = 1000; d < max; d *= 2) {
+        const result = await GitHub.rest.repos.getCombinedStatusForRef(params);
+        const statuses = result.data.statuses;
+        if (statuses.some(st => st.context === context)) {
+            Log.Logger.info("Verified that GitHub has successfully created " + context + " status for the " + ref + " commit.");
+            return true;
+        }
+        Log.Logger.info("GitHub is still applying " + context + " status to the " + ref + " commit. Will retry in " + (d/1000) + " seconds");
+        await Util.sleep(d);
+    }
+
+    return Promise.reject(new ErrorContext("Timed out waiting for GitHub to create commit status",
+                getStatus.name, {ref: ref, context: context}));
+}
+
 export async function createStatus(sha, state, targetUrl, description, context) {
     assert(!Config.dryRun());
 
@@ -285,6 +305,7 @@ export async function createStatus(sha, state, targetUrl, description, context) 
     params.context = context;
 
     const result = await GitHub.rest.repos.createCommitStatus(params);
+    await getStatus(sha, context);
     logApiResult(createStatus.name, params, {context: result.data.context});
     return (await rateLimitedPromise(result)).context;
 }

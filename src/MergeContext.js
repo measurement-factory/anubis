@@ -1574,7 +1574,6 @@ class PullRequest {
     async _supplyStagingWithPrRequired() {
         assert(this._stagedStatuses.succeeded());
 
-        let createdStatuses = 0;
         for (let requiredContext of this._contextsRequiredByGitHubConfig) {
             if (this._stagedStatuses.hasStatus(requiredContext)) {
                 this._log("_supplyStagingWithPrRequired: skip existing " + requiredContext);
@@ -1596,17 +1595,8 @@ class PullRequest {
 
             await GH.createStatus(this._stagedSha(), check.state, check.targetUrl,
                     check.description, check.context);
-            createdStatuses++;
 
             this._stagedStatuses.addOptionalStatus(check);
-        }
-
-        await Util.sleep(3000); // hard-coded 3 seconds
-        this._stagedStatuses = await this._getStagingStatuses();
-        for (let requiredContext of this._contextsRequiredByGitHubConfig) {
-            if (!this._stagedStatuses.hasStatus(requiredContext)) {
-                throw new Error(`The applied ${requiredContext} PR status does not exist`);
-            }
         }
     }
 
