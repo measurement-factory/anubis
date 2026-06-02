@@ -14,7 +14,6 @@ const GitHub = new Octokit({
     },
     baseUrl: Config.baseUrl()
 });
-const ErrorContext = Util.ErrorContext;
 const commonParams = Util.commonParams;
 const logApiResult = Log.logApiResult;
 
@@ -99,7 +98,7 @@ async function waitFor(description, code) {
         Log.Logger.info(`Still waiting for ${description}. Will retry in ${singleWait} seconds`);
         await Util.sleep(singleWait*1000);
     }
-    throw new ErrorContext(`Timed out waiting for ${description}`, waitFor.name);
+    throw new Error(`Timed out waiting for ${description}`);
 }
 
 // Gets PR metadata from GitHub
