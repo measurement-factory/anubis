@@ -81,21 +81,38 @@ export async function getLabels(prNum) {
     return await rateLimitedPromise(result);
 }
 
+/// For waitFor() code to signal that more iterations are needed
+const TryAgain = Symbol("TryAgain");
+
+// (Re)runs `code` while it returns a TryAgain value, waiting between retries.
+// Meant for `code` that makes GitHub API call(s) that may not succeed on the
+// first try.
+async function waitFor(description, code) {
+    // this limits total wait time to about 2 minutes
+    const singleWaitMax = 64; // seconds
+    for (let singleWait = 1; singleWait <= singleWaitMax; singleWait *= 2) {
+        const result = await code();
+        if (result !== TryAgain) {
+            Log.Logger.info(`Done waiting for ${description}`);
+            return result;
+        }
+        Log.Logger.info(`Still waiting for ${description}. Will retry in ${singleWait} seconds`);
+        await Util.sleep(singleWait*1000);
+    }
+    throw new ErrorContext(`Timed out waiting for ${description}`, waitFor.name);
+}
+
 // Gets PR metadata from GitHub
 // If requested and needed, retries until GitHub calculates PR mergeable flag.
 // Those retries, if any, are limited to a few minutes.
 export async function getPR(prNum, awaitMergeable) {
-    const max = 64 * 1000 + 1; // ~2 min. overall
-    for (let d = 1000; d < max; d *= 2) {
+    return await waitFor('GitHub to calculate mergeable attribute', async () => {
         const pr = await getRawPR(prNum);
         // pr.mergeable is useless (and not calculated?) for a closed PR
         if (pr.mergeable !== null || pr.state === 'closed' || !awaitMergeable)
             return pr;
-        Log.Logger.info("PR" + prNum + ": GitHub still calculates mergeable attribute. Will retry in " + (d/1000) + " seconds");
-        await Util.sleep(d);
-    }
-    return Promise.reject(new ErrorContext("Timed out waiting for GitHub to calculate mergeable attribute",
-                getPR.name, {pr: prNum}));
+        return TryAgain;
+    });
 }
 
 // gets a PR from GitHub (as is)
@@ -274,26 +291,6 @@ export async function getComments(prNum) {
 //    });
 //}
 
-async function getStatus(ref, context) {
-    let params = commonParams();
-    params.ref = ref;
-
-    const max = 64 * 1000 + 1; // ~2 min. overall
-    for (let d = 1000; d < max; d *= 2) {
-        const result = await GitHub.rest.repos.getCombinedStatusForRef(params);
-        const statuses = result.data.statuses;
-        if (statuses.some(st => st.context === context)) {
-            Log.Logger.info("Verified that GitHub has successfully created " + context + " status for the " + ref + " commit.");
-            return true;
-        }
-        Log.Logger.info("GitHub is still applying " + context + " status to the " + ref + " commit. Will retry in " + (d/1000) + " seconds");
-        await Util.sleep(d);
-    }
-
-    return Promise.reject(new ErrorContext("Timed out waiting for GitHub to create commit status",
-                getStatus.name, {ref: ref, context: context}));
-}
-
 export async function createStatus(sha, state, targetUrl, description, context) {
     assert(!Config.dryRun());
 
@@ -305,9 +302,21 @@ export async function createStatus(sha, state, targetUrl, description, context) 
     params.context = context;
 
     const result = await GitHub.rest.repos.createCommitStatus(params);
-    await getStatus(sha, context);
     logApiResult(createStatus.name, params, {context: result.data.context});
-    return (await rateLimitedPromise(result)).context;
+    await rateLimitedPromise(result);
+
+    const checkParams = commonParams();
+    checkParams.ref = sha;
+    await waitFor(`GitHub to create ${context} status for the ${sha} commit`, async () => {
+        const checkResult = await GitHub.rest.repos.getCombinedStatusForRef(checkParams);
+        await rateLimitedPromise(checkResult);
+        const statuses = checkResult.data.statuses;
+        if (statuses.some(st => st.context === context))
+            return statuses;
+        return TryAgain;
+    });
+
+    return result.data.context;
 }
 
 export async function getProtectedBranchRequiredStatusChecks(branch) {
