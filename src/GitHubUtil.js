@@ -270,26 +270,6 @@ export async function getComments(prNum) {
     return comments;
 }
 
-// XXX: remove if not needed, since the "required_status_checks" api call sometimes
-// does not work(?) for organization repositories (returns 404 Not Found).
-//async function getProtectedBranchRequiredStatusChecks(branch) {
-//    let params = commonParams();
-//    params.branch = branch;
-//    const promise = new Promise( (resolve, reject) => {
-//      GitHub.authenticate(GitHubAuthentication);
-//      GitHub.repos.getProtectedBranchRequiredStatusChecks(params, (err, res) => {
-//          if (err) {
-//             reject(new ErrorContext(err, getProtectedBranchRequiredStatusChecks.name, params));
-//             return;
-//          }
-//          const result = {checks: res.data.contexts.length};
-//          logApiResult(getProtectedBranchRequiredStatusChecks.name, params, result);
-//          resolve(res);
-//      });
-//    return (await rateLimitedPromise(promise)).contexts;
-//    });
-//}
-
 export async function createStatus(sha, state, targetUrl, description, context) {
     assert(!Config.dryRun());
 
