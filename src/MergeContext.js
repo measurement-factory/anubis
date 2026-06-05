@@ -453,7 +453,7 @@ class Labels
         try {
             await GH.removeLabel(name, this._prNum);
         } catch (e) {
-            if (e.name === 'ErrorContext' && e.notFound()) {
+            if (e instanceof RequestError && e.status === 404) {
                 Log.LogException(e, "_removeFromGitHub: " + name + " not found");
                 return;
             }
@@ -1040,7 +1040,7 @@ class PullRequest {
         try {
             this._contextsRequiredByGitHubConfig = await GH.getProtectedBranchRequiredStatusChecks(this._prBaseBranch());
         } catch (e) {
-           if (e.name === 'ErrorContext' && e.notFound())
+           if (e instanceof RequestError && e.status === 404)
                this._logEx(e, "no status checks are required");
            else
                throw e;
@@ -1676,7 +1676,8 @@ class PullRequest {
         try {
             await GH.updateReference(this._prBaseBranchPath(), this._stagedSha(), false);
         } catch (e) {
-            if (e.name === 'ErrorContext' && e.unprocessable()) {
+            if (e instanceof RequestError && e.status === 422) {
+                // fast-forward failure returns 422 (unprocessable entity)
                 await this._stagedPosition.compute();
                 if (this._stagedPosition.diverged())
                     this._log("could not fast-forward, the base " + this._prBaseBranchPath() + " was probably modified while we were merging");

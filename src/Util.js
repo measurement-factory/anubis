@@ -31,44 +31,6 @@ export function ParsePrNumber(prMessage) {
     return prNumber;
 }
 
-// An error context for promisificated wrappers.
-export class ErrorContext extends Error {
-    // The underlying rejection may be a bot-specific Promise.reject() or
-    // be caused by a GitHub API error, so 'err' contains either
-    // an error string or the entire API error object.
-    constructor(err, method, args) {
-        assert(err);
-        let msg = "";
-        if (method !== undefined)
-            msg = method + ", ";
-        msg += "Error: " + JSON.stringify(err);
-        if (args !== undefined)
-            msg += ", params: " + JSON.stringify(args);
-        super(msg);
-        this.name = this.constructor.name;
-        Error.captureStackTrace(this, this.constructor);
-        this._err = err;
-    }
-
-    // 404 (Not found)
-    notFound() {
-        if (this._err.name === "HttpError")
-            return this._err.code === 404;
-        // We treat our local(non-API) promise rejections as
-        // if the requested resource was 'not found'.
-        // TODO: rework if this simple approach does not work.
-        return true;
-    }
-
-    // 422 (unprocessable entity).
-    // E.g., fast-forward failure returns this error.
-    unprocessable() {
-        if (this._err.name === "HttpError")
-            return this._err.code === 422;
-        return false;
-    }
-}
-
 // Identifies or refers to a PR using either
 // PR number, or
 // PR branch name (without 'refs' or 'heads' prefixes), or
