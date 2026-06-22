@@ -1219,10 +1219,6 @@ class PullRequest {
         if (!this._prStatuses.final())
             throw this._exObviousFailure("waiting for PR checks");
 
-        const baseSha = await GH.getReference(this._prBaseBranchPath());
-        if (!this._mergeCommit.parents.some(p => p.sha === baseSha))
-            throw this._exLabeledFailure("PR merge commit is stale", Config.failedOtherLabel());
-
         assert(this._prStatuses.succeeded());
     }
 
@@ -1709,6 +1705,9 @@ class PullRequest {
 
     async _createStaged() {
         const baseSha = await GH.getReference(this._prBaseBranchPath());
+        if (!this._mergeCommit.parents.some(p => p.sha === baseSha))
+            throw this._exLabeledFailure("PR merge commit is stale", Config.failedOtherLabel());
+
         if (!Config.githubUserName())
             await this._acquireUserProperties();
         let now = new Date();
