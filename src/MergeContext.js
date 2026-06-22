@@ -1704,10 +1704,6 @@ class PullRequest {
     }
 
     async _createStaged() {
-        const baseSha = await GH.getReference(this._prBaseBranchPath());
-        if (!this._mergeCommit.parents.some(p => p.sha === baseSha))
-            throw this._exLabeledFailure("PR merge commit is stale", Config.failedOtherLabel());
-
         if (!Config.githubUserName())
             await this._acquireUserProperties();
         let now = new Date();
@@ -1718,6 +1714,18 @@ class PullRequest {
 
         assert(this._commitMessage.stageable);
 
+        const baseSha = await GH.getReference(this._prBaseBranchPath());
+        // We want to fast-forward this._mergeCommit code changes into the base branch, but we
+        // cannot use this._mergeCommit.parents as this._stagedCommit parents because we do
+        // not want to preserve the full, branched history of the PR (in other words, we follow
+        // the "Squash and merge" rather than the "Create a merge commit" strategy that user
+        // selects while they manually merge PRs on Github).
+        // Any commit created with baseSha as a parent can be fast-forwarded. To use baseSha, we must
+        // ensure that this._mergeCommit can still be *fast-forwarded* onto baseSha:
+        if (!this._mergeCommit.parents.some(p => p.sha === baseSha))
+            throw this._exLabeledFailure("PR merge commit is stale", Config.failedOtherLabel());
+        // If base branch changes after the above check, our _stagedPosition.ahead() checks
+        // or, ultimately, GH.updateReference(...force:false) call will reject this._stagedCommit.
         this._stagedCommit = await GH.createCommit(this._mergeCommit.tree.sha, this._commitMessage.whole(), [baseSha], this._commitMessage.author(), committer);
 
         assert(!this._stagingBanned);
