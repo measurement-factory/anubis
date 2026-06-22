@@ -1542,6 +1542,13 @@ class PullRequest {
         if (!treeShaIsFresh)
             return false;
 
+        assert(this._stagedCommit.parents.length === 1);
+        const stagedCommitParentSha = this._stagedCommit.parents[0].sha;
+        const parentIsFresh = this._mergeCommit.parents.some(p => p.sha === stagedCommitParentSha);
+        this._log("staged commit parent freshness: " + parentIsFresh);
+        if (!parentIsFresh)
+            return false;
+
         const stagedCommitDate = new Date(this._stagedCommit.author.date);
         const prCommitDate = new Date(this._commitMessage.author().date);
         // check that a 'no-change' PR commit did not update the merge commit
