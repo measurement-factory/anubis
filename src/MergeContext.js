@@ -1542,6 +1542,13 @@ class PullRequest {
         if (!treeShaIsFresh)
             return false;
 
+        assert(this._stagedCommit.parents.length === 1);
+        const stagedCommitParentSha = this._stagedCommit.parents[0].sha;
+        const parentIsFresh = this._mergeCommit.parents.some(p => p.sha === stagedCommitParentSha);
+        this._log("staged commit parent freshness: " + parentIsFresh);
+        if (!parentIsFresh)
+            return false;
+
         const stagedCommitDate = new Date(this._stagedCommit.author.date);
         const prCommitDate = new Date(this._commitMessage.author().date);
         // check that a 'no-change' PR commit did not update the merge commit
@@ -1704,7 +1711,6 @@ class PullRequest {
     }
 
     async _createStaged() {
-        const baseSha = await GH.getReference(this._prBaseBranchPath());
         if (!Config.githubUserName())
             await this._acquireUserProperties();
         let now = new Date();
@@ -1715,6 +1721,16 @@ class PullRequest {
 
         assert(this._commitMessage.stageable);
 
+        const baseSha = await GH.getReference(this._prBaseBranchPath());
+        // We want to fast-forward this._mergeCommit code changes into the base branch, but we
+        // cannot use both this._mergeCommit.parents as this._stagedCommit parents because that
+        // would create a git merge commit, importing PR branch. We want flat history instead.
+        // Any commit created with baseSha as a parent can be fast-forwarded. To use baseSha, we must
+        // ensure that this._mergeCommit can still be fast-forwarded onto baseSha:
+        if (!this._mergeCommit.parents.some(p => p.sha === baseSha))
+            throw this._exLabeledFailure("PR merge commit is stale", Config.failedOtherLabel());
+        // If base branch changes after the above check, our _stagedPosition.ahead() checks
+        // or, ultimately, GH.updateReference(...force:false) call will reject this._stagedCommit.
         this._stagedCommit = await GH.createCommit(this._mergeCommit.tree.sha, this._commitMessage.whole(), [baseSha], this._commitMessage.author(), committer);
 
         assert(!this._stagingBanned);
