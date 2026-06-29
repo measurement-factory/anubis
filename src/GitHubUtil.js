@@ -205,7 +205,7 @@ export async function getReference(ref) {
 
 export async function updateReference(ref, sha, force) {
     assert(!Config.dryRun());
-    assert((ref === Config.stagingBranchPath()) || !Config.stagedRun());
+    assert((ref === Config.stagingBranchPath() || ref === Config.mergingBranchPath()) || !Config.stagedRun());
 
     let params = commonParams();
     params.ref = ref;
@@ -217,6 +217,20 @@ export async function updateReference(ref, sha, force) {
     return await rateLimitedPromise(result);
 }
 
+export async function mergeBranch(base, head) {
+    assert(!Config.dryRun());
+    let params = commonParams();
+    params.base = base;
+    params.head = head;
+    params.commit_message = `Merged ${head} into ${base}`;
+    const result = await GitHub.rest.repos.merge(params);
+    if (result.status === 204) {
+        throw new Error(`did not merge ${head} into ${base}: already merged`);
+    }
+    assert(result.status === 201);
+    logApiResult(mergeBranch.name, params, {sha: result.data.sha});
+    return await rateLimitedPromise(result);
+}
 
 export async function updatePR(prNum, state) {
     assert(!Config.dryRun());

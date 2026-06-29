@@ -90,6 +90,10 @@ class ConfigOptions {
     baseUrl() { return 'https://api.github.com'; }
     stagingBranchPath() { return "heads/" + this._stagingBranch; }
     stagingBranch() { return this._stagingBranch; }
+    // A special branch that is set to point to a
+    // manually created PR merge commit. TODO: make configurable.
+    mergingBranch() { return "merge_branch"; }
+    mergingBranchPath() { return "heads/" + this.mergingBranch(); }
     dryRun() { return this._dryRun; }
     stagedRun() { return this._stagedRun; }
     guardedRun() { return this._guardedRun; }
