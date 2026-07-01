@@ -1128,7 +1128,7 @@ class PullRequest {
             // check this separately because GitHub does not recreate PR merge commits
             // for conflicted PR branches (leaving stale PR merge commits).
             this._prMergeable() &&
-            this._stagedCommitMetadataIsFresh()) {
+            (await this._stagedCommitMetadataIsFresh())) {
 
             this._log("the staged commit is fresh");
             return true;
@@ -1296,6 +1296,8 @@ class PullRequest {
 
     _prHeadSha() { return this._rawPr.head.sha; }
 
+    _prHeadBranch() { return this._rawPr.head.ref; }
+
     _draftPr() {
         // TODO: Remove this backward compatibility code after 2021-12-24.
         if (this._rawPr.title.startsWith('WIP:'))
@@ -1329,13 +1331,12 @@ class PullRequest {
 
     _prBaseBranchPath() { return "heads/" + this._prBaseBranch(); }
 
-    _prHeadBranch() { return this._rawPr.head.ref; }
-
     _prOpen() { return this._rawPr.state === 'open'; }
 
     _createdAt() { return this._rawPr.created_at; }
 
-    _mergePath() { return "pull/" + this._rawPr.number + "/merge"; }
+    // Github-generated merge commit path
+    _defaultMergePath() { return "pull/" + this._rawPr.number + "/merge"; }
 
     _stagedSha() { return this._stagedCommit ? this._stagedCommit.sha : null; }
 
@@ -1495,8 +1496,17 @@ class PullRequest {
 
         this._rawPr = pr;
 
-        const headCommit = await GH.getCommit(this._prHeadSha());
-        let defaultAuthor = headCommit.author;
+        let defaultAuthor = null;
+        let stageable = false;
+        if (this._prMergeable()) {
+            const defaultMergeSha = await GH.getReference(this._defaultMergePath());
+            const defaultMergeCommit = await GH.getCommit(defaultMergeSha);
+            defaultAuthor = defaultMergeCommit.author;
+            stageable = true;
+        } else {
+            const headCommit = await GH.getCommit(this._prHeadSha());
+            defaultAuthor = headCommit.author;
+        }
 
         try {
             this._commitMessage = new CommitMessage(this._rawPr, defaultAuthor, this._prMergeable());
@@ -1510,7 +1520,7 @@ class PullRequest {
     }
 
     // Whether the staged commit metadata remained intact since staging.
-    _stagedCommitMetadataIsFresh() {
+    async _stagedCommitMetadataIsFresh() {
         if (!this._commitMessage) {
             this._log("staged commit message became invalid (and will be treated as stale)");
             return false;
@@ -1525,6 +1535,21 @@ class PullRequest {
         const authorIsFresh = oldAuthor.name === newAuthor.name && oldAuthor.email === newAuthor.email;
         this._log("staged commit author freshness: " + authorIsFresh);
         if (!authorIsFresh)
+            return false;
+
+        const mergeSha = await GH.getReference(Config.mergingBranchPath());
+        const mergeCommit = await GH.getCommit(mergeSha);
+
+        const treeShaIsFresh = this._stagedCommit.tree.sha === mergeCommit.tree.sha;
+        this._log("staged commit tree sha freshness: " + treeShaIsFresh);
+        if (!treeShaIsFresh)
+            return false;
+
+        assert(this._stagedCommit.parents.length === 1);
+        const stagedCommitParentSha = this._stagedCommit.parents[0].sha;
+        const parentIsFresh = mergeCommit.parents.some(p => p.sha === stagedCommitParentSha);
+        this._log("staged commit parent freshness: " + parentIsFresh);
+        if (!parentIsFresh)
             return false;
 
         const stagedCommitDate = new Date(this._stagedCommit.author.date);
@@ -1708,11 +1733,9 @@ class PullRequest {
         // If base branch changes after the above check, our _stagedPosition.ahead() checks
         // or, ultimately, GH.updateReference(...force:false) call will reject this._stagedCommit.
         this._stagedCommit = await GH.createCommit(mergeCommit.commit.tree.sha, this._commitMessage.whole(), [baseSha], this._commitMessage.author(), committer);
+
         assert(!this._stagingBanned);
         await GH.updateReference(Config.stagingBranchPath(), this._stagedSha(), true);
-        // Github does not automatically link our staged commit with the PR, do this manually.
-        const stagedCommitComment = `Created staged commit ${this._stagedCommit.sha}.`;
-        await GH.createComment(this._prNumber(), stagedCommitComment);
 
         this._stagedPosition = new BranchPosition(this._prBaseBranch(), Config.stagingBranch());
         // If needed, give GitHub extra time to update the staging branch,
