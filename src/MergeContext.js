@@ -1501,6 +1501,8 @@ class PullRequest {
         if (this._prMergeable()) {
             const defaultMergeSha = await GH.getReference(this._defaultMergePath());
             const defaultMergeCommit = await GH.getCommit(defaultMergeSha);
+            // Github regenerates its ephemeral merge commit each time the PR branch is updated.
+            // Author attributes will be up to date with the latest PR branch changes.
             defaultAuthor = defaultMergeCommit.author;
             stageable = true;
         } else {
@@ -1509,7 +1511,7 @@ class PullRequest {
         }
 
         try {
-            this._commitMessage = new CommitMessage(this._rawPr, defaultAuthor, this._prMergeable());
+            this._commitMessage = new CommitMessage(this._rawPr, defaultAuthor, stageable);
         } catch (e) {
             if (!(e instanceof PrDescriptionProblem))
                 throw e;
@@ -1537,7 +1539,7 @@ class PullRequest {
         if (!authorIsFresh)
             return false;
 
-        const mergeSha = await GH.getReference(Config.mergingBranchPath());
+        const mergeSha = await GH.getReference(Config.mergeBranchPath());
         const mergeCommit = await GH.getCommit(mergeSha);
 
         const treeShaIsFresh = this._stagedCommit.tree.sha === mergeCommit.tree.sha;
@@ -1727,8 +1729,8 @@ class PullRequest {
         // We have to create the merge commit manually because Github stopped generating merge commits
         // reliably any time the base branch changes.
         const baseSha = await GH.getReference(this._prBaseBranchPath());
-        await GH.updateReference(Config.mergingBranchPath(), baseSha, true);
-        const mergeCommit = await GH.mergeBranch(Config.mergingBranch(), this._prHeadBranch());
+        await GH.updateReference(Config.mergeBranchPath(), baseSha, true);
+        const mergeCommit = await GH.mergeBranch(Config.mergeBranch(), this._prHeadBranch());
 
         // If base branch changes after the above check, our _stagedPosition.ahead() checks
         // or, ultimately, GH.updateReference(...force:false) call will reject this._stagedCommit.
