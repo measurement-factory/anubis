@@ -248,9 +248,7 @@ formatting but strips any trailing whitespace.
 Anubis assembles the staging git commit (and, hence, in case of a successful
 PR merge, the target branch commit) from the following parts:
 
-* `tree`: The git tree object of the PR [merge
-  commit](https://developer.github.com/v3/pulls/#get-a-single-pull-request)
-  created by GitHub.
+* `tree`: The git tree object from the PR merge commit.
 * `parents`: The HEAD commit of the PR base branch.
 * `message`: See the "Commit message" subsection for details.
 * `author`: The name and email from the author object of the PR merge commit
@@ -379,7 +377,7 @@ All configuration fields are required.
 *staged_run*| A boolean option to enable staging-only mode where the bot performs all the merging steps up to (but not including) the target branch update. Eligible PRs are merged into and tested on the staging branch but are never merged into their target branches. Staging-only mode prevents any target branch modifications by the bot. TODO: Check that the PR target branch is not the configured staging branch, setting `M-failed-other` if needed. | false
 *guarded_run*| Enables staging-only mode (see `config::staged_run`) for PRs without a `M-cleared-for-merge` label. Has no effect on PRs with that label. While `config::staged_run` blocks target branch modifications, this option allows them for a human-designated subset of PRs. | false
 *staging_branch* | The name of the bot-maintained git branch used for testing PR changes as if they were merged into their target branch. | auto
-*merge_branch* | The name of the bot-maintained git branch used for keeping the result of merging the PR branch into the target branch. | auto__
+*bot_merge_branch* | The name of the bot-maintained git branch that is very similar to GitHub-maintained PR merge branch. GitHub no longer updates its PR merge branches (i.e. refs/pull/PULL_REQUEST_NUMBER/merge references) in some important use cases, so Anubis uses its own branch (with a configurable name) instead. The last commit on Anubis bot_merge_branch (PR merge commit) is the result of merging PR branch into PR target branch, as a regular git merge command would do. Anubis uses the code tree from that last commit when creating a squashed commit on the staging_branch. The primary difference between the two branches is that staging_branch ends in a squashed (i.e. single-parent) commit rather than a regular two-parent merge commit; after both branches are updated, a git diff staging_branch..bot_merge_branch command produces no output because both branches contain the same code tree. | auto__
 *necessary_approvals* | The minimal number of core developers required for a PR to be merged. PRs with fewer votes are not merged, regardless of their age. | 1
 *sufficient_approvals* | The minimal number of core developers required for a PR to be merged fast (i.e., without waiting for `config::voting_delay_max`) | 2
 *core_developers* | The comma-separated list of login=id pairs, specifying GitHub login and ID for core developers. | ""
