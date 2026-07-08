@@ -10,7 +10,7 @@
     "dry_run": false,
     "staged_run": false,
     "staging_branch": "auto",
-    "merge_branch": "auto__",
+    "bot_merge_branch": "auto__",
     "necessary_approvals": 1,
     "sufficient_approvals": 2,
     "voting_delay_min": "2d",
