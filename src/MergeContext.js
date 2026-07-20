@@ -1745,7 +1745,7 @@ class PullRequest {
         await GH.updateReference(Config.botMergeBranchPath(), baseSha, true);
 
         // And then merge PR branch changes into our merge branch (as a two-parent merge commit).
-        const mergeCommit = await GH.mergeAintoB(this._prHeadBranch(), Config.botMergeBranch());
+        const mergeCommit = await GH.mergeAintoB(this._prHeadSha(), Config.botMergeBranch());
 
         // We want to eventually fast-forward mergeCommit into the base branch, but we
         // cannot use both mergeCommit.parents as this._stagedCommit parents because that
