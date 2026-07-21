@@ -1296,8 +1296,6 @@ class PullRequest {
 
     _prHeadSha() { return this._rawPr.head.sha; }
 
-    _prHeadBranch() { return this._rawPr.head.ref; }
-
     _draftPr() {
         // TODO: Remove this backward compatibility code after 2021-12-24.
         if (this._rawPr.title.startsWith('WIP:'))
@@ -1745,7 +1743,7 @@ class PullRequest {
         await GH.updateReference(Config.botMergeBranchPath(), baseSha, true);
 
         // And then merge PR branch changes into our merge branch (as a two-parent merge commit).
-        const mergeCommit = await GH.mergeAintoB(this._prHeadBranch(), Config.botMergeBranch());
+        const mergeCommit = await GH.mergeAintoB(this._prHeadSha(), Config.botMergeBranch());
 
         // We want to eventually fast-forward mergeCommit into the base branch, but we
         // cannot use both mergeCommit.parents as this._stagedCommit parents because that
