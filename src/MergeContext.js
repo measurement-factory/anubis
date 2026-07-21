@@ -1296,8 +1296,6 @@ class PullRequest {
 
     _prHeadSha() { return this._rawPr.head.sha; }
 
-    _prHeadBranch() { return this._rawPr.head.ref; }
-
     _draftPr() {
         // TODO: Remove this backward compatibility code after 2021-12-24.
         if (this._rawPr.title.startsWith('WIP:'))
