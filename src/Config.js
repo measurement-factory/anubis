@@ -21,6 +21,7 @@ class ConfigOptions {
         this._port = conf.port;
         this._owner = conf.owner;
         this._stagingBranch = conf.staging_branch;
+        this._botMergeBranch = conf.bot_merge_branch;
         this._dryRun = conf.dry_run;
         this._stagedRun = conf.staged_run;
         this._guardedRun = conf.guarded_run;
@@ -90,6 +91,8 @@ class ConfigOptions {
     baseUrl() { return 'https://api.github.com'; }
     stagingBranchPath() { return "heads/" + this._stagingBranch; }
     stagingBranch() { return this._stagingBranch; }
+    botMergeBranchPath() { return "heads/" + this._botMergeBranch; }
+    botMergeBranch() { return this._botMergeBranch; }
     dryRun() { return this._dryRun; }
     stagedRun() { return this._stagedRun; }
     guardedRun() { return this._guardedRun; }

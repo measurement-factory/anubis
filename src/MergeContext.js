@@ -873,9 +873,6 @@ class PullRequest {
 
         this._stagedPosition = null;
 
-        // this PR merge commit received from GitHub, if any
-        this._mergeCommit = null;
-
         // this PR staged commit received from GitHub, if any
         this._stagedCommit = null;
 
@@ -1136,7 +1133,7 @@ class PullRequest {
             // check this separately because GitHub does not recreate PR merge commits
             // for conflicted PR branches (leaving stale PR merge commits).
             this._prMergeable() &&
-            this._stagedCommitMetadataIsFresh()) {
+            (await this._stagedCommitMetadataIsFresh())) {
 
             this._log("the staged commit is fresh");
             return true;
@@ -1341,7 +1338,8 @@ class PullRequest {
 
     _createdAt() { return this._rawPr.created_at; }
 
-    _mergePath() { return "pull/" + this._rawPr.number + "/merge"; }
+    // GitHub-generated PR merge branch. This branch may not reflect the latest target branch changes!
+    _oldGhMergeBranchPath() { return "pull/" + this._rawPr.number + "/merge"; }
 
     _stagedSha() { return this._stagedCommit ? this._stagedCommit.sha : null; }
 
@@ -1559,9 +1557,11 @@ class PullRequest {
         let defaultAuthor = null;
         let stageable = false;
         if (this._prMergeable()) {
-            const mergeSha = await GH.getReference(this._mergePath());
-            this._mergeCommit = await GH.getCommit(mergeSha);
-            defaultAuthor = this._mergeCommit.author;
+            const oldGhMergeBranchSha = await GH.getReference(this._oldGhMergeBranchPath());
+            const oldGhMergeBranchCommit = await GH.getCommit(oldGhMergeBranchSha);
+            // GitHub does reset its merge branch each time the PR branch is updated,
+            // keeping author attributes up to date with the latest PR branch changes.
+            defaultAuthor = oldGhMergeBranchCommit.author;
             stageable = true;
         } else {
             const headCommit = await GH.getCommit(this._prHeadSha());
@@ -1580,7 +1580,7 @@ class PullRequest {
     }
 
     // Whether the staged commit metadata remained intact since staging.
-    _stagedCommitMetadataIsFresh() {
+    async _stagedCommitMetadataIsFresh() {
         if (!this._commitMessage) {
             this._log("staged commit message became invalid (and will be treated as stale)");
             return false;
@@ -1597,16 +1597,32 @@ class PullRequest {
         if (!authorIsFresh)
             return false;
 
-        const treeShaIsFresh = this._stagedCommit.tree.sha === this._mergeCommit.tree.sha;
+        const mergeSha = await GH.getReference(Config.botMergeBranchPath());
+        const mergeCommit = await GH.getCommit(mergeSha);
+
+        assert(this._stagedCommit.parents.length === 1);
+        assert(mergeCommit.parents.length === 2);
+
+        const prParentIsFresh = mergeCommit.parents.some(p => p.sha === this._prHeadSha());
+        this._log("merge commit PR branch parent freshness: " + prParentIsFresh);
+        if (!prParentIsFresh)
+            return false;
+
+        const baseSha = await GH.getReference(this._prBaseBranchPath());
+        const baseParentIsFresh = mergeCommit.parents.some(p => p.sha === baseSha);
+        this._log("merge commit base branch parent freshness: " + baseParentIsFresh);
+        if (!baseParentIsFresh)
+            return false;
+
+        const treeShaIsFresh = this._stagedCommit.tree.sha === mergeCommit.tree.sha;
         this._log("staged commit tree sha freshness: " + treeShaIsFresh);
         if (!treeShaIsFresh)
             return false;
 
-        assert(this._stagedCommit.parents.length === 1);
         const stagedCommitParentSha = this._stagedCommit.parents[0].sha;
-        const parentIsFresh = this._mergeCommit.parents.some(p => p.sha === stagedCommitParentSha);
-        this._log("staged commit parent freshness: " + parentIsFresh);
-        if (!parentIsFresh)
+        const stagedCommitParentShaIsFresh = stagedCommitParentSha === baseSha;
+        this._log("staged commit parent sha freshness: " + stagedCommitParentShaIsFresh);
+        if (!stagedCommitParentShaIsFresh)
             return false;
 
         const stagedCommitDate = new Date(this._stagedCommit.author.date);
@@ -1781,17 +1797,20 @@ class PullRequest {
 
         assert(this._commitMessage.stageable);
 
+        // To create a PR merge commit manually,
+        // we start by resetting our PR merge branch to become the same as PR base branch.
         const baseSha = await GH.getReference(this._prBaseBranchPath());
-        // We want to fast-forward this._mergeCommit code changes into the base branch, but we
-        // cannot use both this._mergeCommit.parents as this._stagedCommit parents because that
-        // would create a git merge commit, importing PR branch. We want flat history instead.
-        // Any commit created with baseSha as a parent can be fast-forwarded. To use baseSha, we must
-        // ensure that this._mergeCommit can still be fast-forwarded onto baseSha:
-        if (!this._mergeCommit.parents.some(p => p.sha === baseSha))
-            throw this._exLabeledFailure("PR merge commit is stale", Config.failedOtherLabel());
-        // If base branch changes after the above check, our _stagedPosition.ahead() checks
+        await GH.updateReference(Config.botMergeBranchPath(), baseSha, true);
+
+        // And then merge PR branch changes into our merge branch (as a two-parent merge commit).
+        const mergeCommit = await GH.mergeAintoB(this._prHeadSha(), Config.botMergeBranch());
+
+        // We want to eventually fast-forward mergeCommit into the base branch, but we
+        // cannot use both mergeCommit.parents as this._stagedCommit parents because that
+        // would create a git merge commit, importing PR branch. We want flat history with one commit per PR instead.
+        // If base branch changes after mergeCommit creation, our _stagedPosition.ahead() checks
         // or, ultimately, GH.updateReference(...force:false) call will reject this._stagedCommit.
-        this._stagedCommit = await GH.createCommit(this._mergeCommit.tree.sha, this._commitMessage.whole(), [baseSha], this._commitMessage.author(), committer);
+        this._stagedCommit = await GH.createCommit(mergeCommit.commit.tree.sha, this._commitMessage.whole(), [baseSha], this._commitMessage.author(), committer);
 
         assert(!this._stagingBanned);
         await GH.updateReference(Config.stagingBranchPath(), this._stagedSha(), true);
