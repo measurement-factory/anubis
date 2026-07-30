@@ -1,9 +1,11 @@
-const assert = require('assert');
-const Config = require('./Config.js');
-const Log = require('./Logger.js');
-const GH = require('./GitHubUtil.js');
-const Util = require('./Util.js');
+import * as GH from './GitHubUtil.js';
+import * as Log from './Logger.js';
+import * as Util from './Util.js';
+import Config from './Config.js';
 
+import assert from 'assert';
+
+const ErrorDescriptionInvalidCharacter = 'invalid character';
 
 // Process() outcome
 class ProcessResult
@@ -75,6 +77,74 @@ class PrProblem extends Error {
     }
 }
 
+// a given string with all prohibited (in a commit message) characters replaced with their
+// hexadecimal Unicode code points
+function EscapeUnsafeCharacters(str) {
+    return str.replace(new RegExp(Util.ProhibitedCommitMessageLineCharacters, 'gu'), (uchar) => {
+        // Pad with leading zeros to ensure 4 digits (e.g., \u00E9)
+        const encoded = uchar.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0');
+        return '\\u' + encoded;
+    });
+}
+
+// A PrProblem caused by PR title or description content.
+class PrDescriptionProblem extends PrProblem
+{
+    constructor(parsingContext, errorDescription, problematicInput, ...params) {
+        assert(parsingContext);
+        assert(errorDescription);
+        assert(problematicInput !== undefined);
+        super(errorDescription, ...params);
+        this._parsingContext = parsingContext;
+        this._errorDescription = errorDescription;
+        this._problematicInput = problematicInput; // may be null
+    }
+
+    // creates a Markdown text suitable for being a second GitHubUtil::createComment() parameter
+    toGitHubComment() {
+        let errorMessage = `Cannot create a git commit message from PR title and description.\n\n`;
+        errorMessage += `Error while parsing ${this._parsingContext}: `;
+
+        if (this._errorDescription === ErrorDescriptionInvalidCharacter) {
+            assert(this._problematicInput);
+            const match = Util.ProhibitedCommitMessageLineCharacters.exec(this._problematicInput);
+            assert(match);
+            const escaped = EscapeUnsafeCharacters(this._problematicInput);
+            // the encoded length is 6: e.g., \u00E9
+            const badCharEncoded = escaped.substring(match.index, match.index + 6);
+            errorMessage += `\`Invalid ${this._parsingContext} character (Unicode ${badCharEncoded}) at position ${match.index}\`:\n`;
+        } else {
+            errorMessage += `\`${this._errorDescription}\`\n`;
+        }
+
+        if (this._problematicInput) {
+            // We expect that input contains no new lines. If our expectations are wrong, then
+            // EscapeUnsafeCharacters() should escape/replace any new lines, and the indentation
+            // trick below should still work.
+            const escapedLine = EscapeUnsafeCharacters(this._problematicInput);
+            // indent with 4 spaces to ask GitHub to render user input without Markdown formatting
+            errorMessage += `\nProblematic parser input:\n\n    ${escapedLine}\n`;
+
+            if (escapedLine !== this._problematicInput) {
+                errorMessage += 'Please note that the text quoted above was modified from its original to replace ';
+                errorMessage += 'bytes outside of ASCII space-tilde range with their Unicode code point sequences (i.e. \\u00NN). ';
+            }
+
+            if (this._problematicInput.match(/\\u([0-9A-Fa-f]{4})/))
+                errorMessage += "Original Unicode code point sequences were preserved. ";
+        }
+
+        const mdTitle = `[title](https://github.com/measurement-factory/anubis#pr-title)`;
+        const mdDescription = `[description](https://github.com/measurement-factory/anubis#pr-description)`;
+        errorMessage += `Please see PR ${mdTitle} and ${mdDescription} formatting requirements for more details.\n`;
+        errorMessage += '\n';
+        errorMessage += `This message was added by Anubis bot. `;
+        errorMessage += `Anubis will add a new message if the error text changes. `;
+        errorMessage += `Anubis will remove ${Config.failedDescriptionLabel()} label when there are no corresponding failures to report.\n`;
+        return errorMessage;
+    }
+}
+
 // Contains properties used for approval test status creation
 class Approval {
     // treat as private; use static methods below instead
@@ -135,6 +205,27 @@ class StatusCheck
         this.state = raw.state;
         this.targetUrl = raw.target_url;
         this.description = raw.description;
+    }
+
+    // A simple way to convert GitHub Check Runs (https://docs.github.com/en/rest/checks) state to StatusCheck.
+    // The Check Runs state is determined by two variables:
+    // status: one of 'queued', 'in_progress', 'completed'
+    // conclusion: one of 'action_required', 'cancelled', 'failure', 'neutral', 'success', 'skipped', 'stale', 'timed_out'
+    static FromCheckRun(checkRun) {
+        let state = null;
+        if (checkRun.status !== 'completed')
+            state = 'pending';
+        else
+            state = (checkRun.conclusion === 'success') ? 'success' : 'failure';
+
+        let raw = {
+            state: state,
+            target_url: checkRun.details_url,
+            description: checkRun.name,
+            context: checkRun.name
+        };
+
+        return new StatusCheck(raw);
     }
 
     failed() { return !(this.pending() || this.success()); }
@@ -323,6 +414,9 @@ class Labels
         return label && label.present();
     }
 
+    // whether there is a matching label
+    haveMatching(regex) { return this._labels.some(l => regex.test(l.name)); }
+
     // brings GitHub labels in sync with ours
     async pushToGitHub() {
         let syncedLabels = [];
@@ -359,7 +453,7 @@ class Labels
         try {
             await GH.removeLabel(name, this._prNum);
         } catch (e) {
-            if (e.name === 'ErrorContext' && e.notFound()) {
+            if (e instanceof RequestError && e.status === 404) {
                 Log.LogException(e, "_removeFromGitHub: " + name + " not found");
                 return;
             }
@@ -370,7 +464,7 @@ class Labels
     // adds a single label to GitHub
     async _addToGitHub(label) {
         let params = Util.commonParams();
-        params.number = this._prNum;
+        params.issue_number = this._prNum;
         params.labels = [];
         params.labels.push(label.name);
 
@@ -428,6 +522,26 @@ class BranchPosition
 
     async compute() {
         this._status = await GH.compareCommits(this._baseRef, this._featureRef);
+        return this._status;
+    }
+
+    async computeUntilAhead() {
+        const desiredStatus = "ahead";
+        // TODO: Stop (poorly) duplicating these Util.sleep() loops.
+        const firstSleep = 1000; // ms
+        const longestSleep = 16 * firstSleep; // ~30 seconds overall
+        let nextSleep = 0;
+        const startedAt = new Date();
+        while (await this.compute() !== desiredStatus) {
+            if (nextSleep >= longestSleep) {
+                const elapsedSeconds = Math.round((new Date() - startedAt)/1000);
+                throw new Error(`failed to reach the desired branch state; wanted ${desiredStatus} but got ${this._status} despite waiting for ${elapsedSeconds} seconds`);
+            }
+            nextSleep = nextSleep > 0 ? nextSleep * 2 : firstSleep; // ms
+            Log.Logger.info(`GitHub may still be updating the branch. Sleeping for ${nextSleep/1000} seconds...`);
+            await Util.sleep(nextSleep);
+        }
+        // success
     }
 
     // feature > base:
@@ -454,13 +568,20 @@ class BranchPosition
     }
 }
 
+function checkLineLength(line, parsingContext, limit = 72) {
+    assert(parsingContext);
+    if (line.length > limit)
+        throw new PrDescriptionProblem(parsingContext, `the line is too long ${line.length}>${limit}`, line);
+}
+
 // Forward iterator for fields in the 'name:value' format.
 class FieldsTokenizer
 {
-    constructor(str) {
+    constructor(str, parsingContext) {
+        assert(parsingContext);
         this._lines = str.split('\n');
         this._remainingFields = [];
-        this._tokenizeAll();
+        this._tokenizeAll(parsingContext);
     }
 
     // returns the next parsed field in the {name, value, raw} format
@@ -470,7 +591,7 @@ class FieldsTokenizer
     }
 
     // parses all input in advance
-    _tokenizeAll() {
+    _tokenizeAll(parsingContext) {
         while (this._lines.length) {
             const line = this._lines.shift();
 
@@ -479,21 +600,24 @@ class FieldsTokenizer
                 break;
 
             if (/^\s/.test(line))
-                throw new Error(`a field cannot start with whitespace: ${line}`);
+                throw new PrDescriptionProblem(parsingContext, `a field cannot start with whitespace`, line);
 
             const pos = line.search(': ');
             if (pos < 0)
-                throw new Error(`a field without a name: value delimiter: '${line}'`);
+                throw new PrDescriptionProblem(parsingContext, `a field without a required column character (:) delimiting field name from the field value`, line);
 
             const name = line.substring(0, pos);
             if (/[^\w-]/.test(name))
-                throw new Error(`the field name cannot contain non-word characters: ${name}`);
+                throw new PrDescriptionProblem(parsingContext, `a field name cannot contain non-word characters`, `${name}`);
 
             const value = line.substring(pos+2).trim();
             if (this._remainingFields.some(el => el.name.toUpperCase() === name.toUpperCase() &&
                         el.value.toUpperCase() === value.toUpperCase())) {
-                throw new Error(`duplicates are not allowed: ${line}`);
+                throw new PrDescriptionProblem(parsingContext, `duplicate fields are not allowed`, line);
             }
+
+            checkLineLength(name + ': ' + value, parsingContext, 512);
+
             this._remainingFields.push({name: name, value: value, raw: line});
         }
     }
@@ -507,9 +631,12 @@ class FieldsTokenizer
 // computes future commit message from raw PR
 class CommitMessage
 {
-    constructor(rawPr, defaultAuthor) {
+    constructor(rawPr, defaultAuthor, stageable) {
 
         this._parseTitle(rawPr.title, rawPr.number);
+
+        assert(stageable !== undefined && stageable !== null);
+        this.stageable = stageable; // whether this message can be used for staged commit
 
         // PR description has three optional parts: [header]+[body]+[trailer]
         // The parts are separated by empty lines.
@@ -541,10 +668,10 @@ class CommitMessage
 
     _parseTitle(rawTitle, prNumber) {
         const title = rawTitle.trim();
-        this._checkRawCharacters(title);
+        this._checkRawCharacters(title, "PR title");
         // the (required) commit message title
         this._title = title + ' (#' + prNumber + ')';
-        this._checkLineLength(this._title);
+        checkLineLength(this._title, "future commit message title");
     }
 
     // complete message for the future commit
@@ -566,17 +693,12 @@ class CommitMessage
         return {name: this._customAuthor.name, email: this._customAuthor.email, date: this._defaultAuthor.date};
     }
 
-    // checks that the line represents only ASCII_printable characters
-    _checkRawCharacters(line) {
-        const prohibitedCharacters = /[^\u{20}-\u{7e}]/u;
-        const match = prohibitedCharacters.exec(line);
+    // checks that the line does not contain _prohibitedCharacters
+    _checkRawCharacters(line, parsingContext) {
+        assert(parsingContext.length);
+        const match = Util.ProhibitedCommitMessageLineCharacters.exec(line);
         if (match)
-            throw new Error(`bad character at ${match.index} in '${line}'`);
-    }
-
-    _checkLineLength(line) {
-        if (line.length > 72)
-            throw new Error(`too long line '${line}'`);
+            throw new PrDescriptionProblem(parsingContext, ErrorDescriptionInvalidCharacter, line);
     }
 
     // performs basic checks for a multi-line message
@@ -587,16 +709,24 @@ class CommitMessage
         const untrimmedMessage = rawMessage.replace(/\r+\n/g, '\n');
         const untrimmedLines = untrimmedMessage.split('\n');
         let lines = [];
-        for (let untrimmedLine of untrimmedLines) {
-            this._checkRawCharacters(untrimmedLine);
+        for (let i = 0; i < untrimmedLines.length; ++i) {
+            let untrimmedLine = untrimmedLines[i];
+            const parsingContext = `line ${i+1}`;
+            this._checkRawCharacters(untrimmedLine, parsingContext);
             // allow excessively long whitespace-only lines
             // that some copy-pasted PR descriptions may include
             const line = untrimmedLine.trimEnd();
-            // TODO: Allow longer header (and possibly even trailer) lines.
-            this._checkLineLength(line);
             lines.push(line);
         }
         return lines.join('\n');
+    }
+
+    _checkMessageLength(message, parsingContext) {
+        assert(message);
+        assert(parsingContext);
+        const lines = message.split('\n');
+        for (let line of lines)
+            checkLineLength(line, parsingContext);
     }
 
     // removes leading empty lines and trims the end
@@ -631,13 +761,14 @@ class CommitMessage
     }
 
     // authorField is a {name, value, raw}
-    _parseAuthor(authorField) {
+    _parseAuthor(authorField, parsingContext) {
+        assert(parsingContext);
         const cred = authorField.value.match(/^([\w][^@<>,]*)\s<(\S+@\S+\.\S+)>$/);
         if (!cred)
-            throw new Error(`unsupported ${authorField.name} value format: ${authorField.value}`);
+            throw new PrDescriptionProblem(parsingContext, `unsupported ${authorField.name} value format`, `${authorField.value}`);
 
         if (cred[0].includes(','))
-            throw new Error(`${authorField.name} author name with a comma: ${authorField.value}`);
+            throw new PrDescriptionProblem(parsingContext, `${authorField.name} author name with a comma`, `${authorField.value}`);
 
         return {name: cred[1].trim(), email: cred[2].trim()};
     }
@@ -647,13 +778,14 @@ class CommitMessage
         const prDescription = this._trim(prDescriptionRaw);
         const headerFieldName = 'Authored-by';
         if (this._startsWithFieldName(prDescription) === headerFieldName) {
-            let tokenizer = new FieldsTokenizer(prDescription);
+            const parsingContext = "PR description header";
+            let tokenizer = new FieldsTokenizer(prDescription, parsingContext);
             const authorField = tokenizer.nextField();
             assert(authorField);
             assert(authorField.name === headerFieldName);
-            this._customAuthor = this._parseAuthor(authorField);
+            this._customAuthor = this._parseAuthor(authorField, parsingContext);
             if (!tokenizer.atEnd())
-                throw new Error(`unexpected header lines after a single Authored-by attribute`);
+                throw new PrDescriptionProblem(parsingContext, `unexpected header lines after a single Authored-by attribute`, tokenizer.nextField().raw);
             return tokenizer.remaining();
         } else {
             return prDescription;
@@ -680,7 +812,9 @@ class CommitMessage
     _parseBody(prDescriptionWithoutHeaderAndTrailerRaw) {
         const prDescriptionWithoutHeaderAndTrailer = this._trim(prDescriptionWithoutHeaderAndTrailerRaw);
         if (prDescriptionWithoutHeaderAndTrailer.length > 0) {
-            this._checkForTypos(prDescriptionWithoutHeaderAndTrailer);
+            const parsingContext = "PR description body";
+            this._checkMessageLength(prDescriptionWithoutHeaderAndTrailer, parsingContext);
+            this._checkForTypos(prDescriptionWithoutHeaderAndTrailer, parsingContext);
             this._body = prDescriptionWithoutHeaderAndTrailer;
         }
     }
@@ -688,20 +822,21 @@ class CommitMessage
     // parses the extracted trailer into this._trailer
     _parseTrailer(trailerRaw) {
         const trailer = this._trim(trailerRaw);
-        let tokenizer = new FieldsTokenizer(trailer);
+        const parsingContext = "PR description trailer";
+        let tokenizer = new FieldsTokenizer(trailer, parsingContext);
 
         if (tokenizer.atEnd())
-            throw new Error(`an empty trailer`);
+            throw new PrDescriptionProblem(parsingContext, 'an empty trailer', null);
 
         while (!tokenizer.atEnd()) {
             const field = tokenizer.nextField();
             if (field.name === "Co-authored-by") {
-                const coAuthor = JSON.stringify(this._parseAuthor(field));
+                const coAuthor = JSON.stringify(this._parseAuthor(field, parsingContext));
                 this._log(`accepting trailer field: ${coAuthor}`);
             } else {
-                this._checkForTypos(field.name);
+                this._checkForTypos(field.name, parsingContext);
             }
-            this._checkForTypos(field.value);
+            this._checkForTypos(field.value, parsingContext);
         }
 
         if (trailer.length > 0)
@@ -710,10 +845,12 @@ class CommitMessage
 
     // checks the PR message (or its part) for some common/expected typos that may occur
     // when filling in PR attributes
-    _checkForTypos(text) {
+    _checkForTypos(text, parsingContext) {
+        assert(parsingContext.length);
         const possibleAuthoredByTypoRegex = /^\s*\S*authored[-_]?by/mi;
-        if (text.search(possibleAuthoredByTypoRegex) >= 0)
-            throw new Error(`suspicious '*Authored-by' attribute in the PR description`);
+        const match = possibleAuthoredByTypoRegex.exec(text);
+        if (match)
+            throw new PrDescriptionProblem(parsingContext, `suspicious '*Authored-by' attribute in the PR description`, match[0]);
     }
 
     _log(msg) {
@@ -752,6 +889,10 @@ class PullRequest {
         // while unexpected, PR merging and closing is not prohibited when staging is
         this._stagingBanned = banStaging;
 
+        // whether there is some label indicating that
+        // this PR was staged some time ago
+        this._wasStaged = false;
+
         // GitHub statuses of the staged commit
         this._stagedStatuses = null;
 
@@ -771,6 +912,9 @@ class PullRequest {
         this._labelPushBan = false;
 
         this._commitMessage = undefined;
+
+        // a PrDescriptionProblem instance if PR description problems were detected
+        this._prDescriptionProblem = null;
     }
 
     // this PR will need to be reprocessed in this many milliseconds
@@ -836,18 +980,26 @@ class PullRequest {
             usersVoted.push({reviewer: review.user.login, date: review.submitted_at, state: reviewState});
         }
 
+        // The loop could not just Approval.Block() on the first 'changes_requested'
+        // vote because that vote could have been dismissed later in the loop.
         const userRequested = usersVoted.find(el => el.state === 'changes_requested');
         if (userRequested !== undefined) {
             this._log("changes requested by " + userRequested.reviewer);
             return Approval.Block("blocked (see change requests)");
         }
-        const usersApproved = usersVoted.filter(u => u.state !== 'changes_requested');
-        this._log("approved by " + usersApproved.length + " core developer(s)");
+
+        const usersApproved = usersVoted.filter(u => u.state === 'approved');
+        this._log("approved by " + usersApproved.length + " out of " + Config.coreDeveloperIds().size + " core developer(s)");
+        assert.strictEqual(usersApproved.length, usersVoted.length);
 
         if (usersApproved.length < Config.necessaryApprovals()) {
             this._log("not approved by necessary " + Config.necessaryApprovals() + " votes");
             return Approval.Suspend("waiting for more votes");
         }
+
+        assert(usersApproved.length <= Config.coreDeveloperIds().size);
+        if (usersApproved.length === Config.coreDeveloperIds().size)
+            return Approval.GrantNow("approved (unanimously)");
 
         const prAgeMs = new Date() - new Date(this._createdAt());
         if (usersApproved.length >= Config.sufficientApprovals()) {
@@ -892,7 +1044,7 @@ class PullRequest {
         try {
             this._contextsRequiredByGitHubConfig = await GH.getProtectedBranchRequiredStatusChecks(this._prBaseBranch());
         } catch (e) {
-           if (e.name === 'ErrorContext' && e.notFound())
+           if (e instanceof RequestError && e.status === 404)
                this._logEx(e, "no status checks are required");
            else
                throw e;
@@ -903,6 +1055,19 @@ class PullRequest {
 
         assert(this._contextsRequiredByGitHubConfig);
         this._log("required contexts found: " + this._contextsRequiredByGitHubConfig.length);
+    }
+
+    async _getUniqueCheckRuns(sha) {
+        // Returns whole check runs history for the commit.
+        const checkRuns = await GH.getCheckRuns(sha);
+        // Filter out stale/older checks, assuming that check.id is greater in newer checks.
+        const sortedCheckRuns = checkRuns.sort((e1, e2) => parseInt(e2.id) - parseInt(e1.id));
+        let uniqueCheckRuns = [];
+        sortedCheckRuns.forEach(check => {
+            if (!uniqueCheckRuns.some(e => e.name === check.name))
+                uniqueCheckRuns.push(check);
+        });
+        return uniqueCheckRuns;
     }
 
     // returns filled StatusChecks object
@@ -916,6 +1081,15 @@ class PullRequest {
             else
                 statusChecks.addOptionalStatus(new StatusCheck(st));
         }
+
+        const uniqueCheckRuns = await this._getUniqueCheckRuns(this._prHeadSha());
+        for (let st of uniqueCheckRuns) {
+            if (this._contextsRequiredByGitHubConfig.some(el => el.trim() === st.name.trim()))
+                statusChecks.addRequiredStatus(StatusCheck.FromCheckRun(st));
+            else
+                statusChecks.addOptionalStatus(StatusCheck.FromCheckRun(st));
+        }
+
         this._log("pr status details: " + statusChecks);
         return statusChecks;
     }
@@ -943,6 +1117,11 @@ class PullRequest {
             assert(st.context.trim() !== Config.approvalContext());
             statusChecks.addOptionalStatus(new StatusCheck(st));
         }
+
+        // all check runs are 'required'
+        const uniqueCheckRuns = await this._getUniqueCheckRuns(this._stagedSha());
+        for (let st of uniqueCheckRuns)
+            statusChecks.addRequiredStatus(StatusCheck.FromCheckRun(st));
 
         this._log("staging status details: " + statusChecks);
         return statusChecks;
@@ -972,7 +1151,7 @@ class PullRequest {
         const stagedSha = await GH.getReference(Config.stagingBranchPath());
         const stagedCommit = await GH.getCommit(stagedSha);
         const prNum = Util.ParsePrNumber(stagedCommit.message);
-        if (prNum !== null && this._prNumber().toString() === prNum) {
+        if (prNum !== null && this._prNumber() === prNum) {
             this._log("found staged commit " + stagedSha);
             this._stagedCommit = stagedCommit;
             return;
@@ -984,6 +1163,8 @@ class PullRequest {
         let labels = await GH.getLabels(this._prNumber());
         assert(!this._labels);
         this._labels = new Labels(labels, this._prNumber());
+
+        this._wasStaged = this._labels.haveMatching(Config.stagingLabelRegex());
     }
 
     // stop processing if it is prohibited by a human-controlled label
@@ -1000,6 +1181,9 @@ class PullRequest {
 
         if (this._labels.has(Config.mergedLabel()))
             throw this._exLostControl("premature " + Config.mergedLabel());
+
+        if (this._labels.has(Config.ignoredByMergeBotsLabel()))
+            throw this._exLostControl("unexpected " + Config.ignoredByMergeBotsLabel());
     }
 
     // whether the PR should be staged (including re-staged)
@@ -1061,6 +1245,22 @@ class PullRequest {
         this._updated = true;
     }
 
+    async _pushFailedDescriptionCommentToGitHub() {
+        assert(this._prDescriptionProblem);
+        const comments = await GH.getComments(this._prNumber());
+        const filtered = comments.filter(c => c.user.login === Config.githubUserLogin());
+        let lastComment = filtered.length ? filtered[filtered.length-1].body : null;
+        if (lastComment) {
+            // remove CRs in CRLF sequences (added by GitHub after saving edited messages)
+            lastComment = lastComment.replace(/\r+\n/g, '\n');
+        }
+        const newComment = this._prDescriptionProblem.toGitHubComment();
+        if (lastComment === null || newComment !== lastComment)
+            await GH.createComment(this._prNumber(), newComment);
+        else
+            this._log(`not duplicating the last GitHub comment: ${lastComment}`);
+    }
+
     // brings GitHub labels in sync with ours
     async _pushLabelsToGitHub() {
         if (this._labels) {
@@ -1069,8 +1269,12 @@ class PullRequest {
                 return;
             }
             this._log("pushing changed labels: " + this._labels.diff());
-            if (!this._dryRun("pushing labels"))
+            if (!this._dryRun("pushing labels")) {
                 await this._labels.pushToGitHub();
+
+                if (this._labels.has(Config.failedDescriptionLabel()))
+                    await this._pushFailedDescriptionCommentToGitHub();
+            }
         }
     }
 
@@ -1203,7 +1407,7 @@ class PullRequest {
         let commits = await GH.getCommits(this._prBaseBranch(), dateSince);
         for (let commit of commits) {
             const num = Util.ParsePrNumber(commit.commit.message);
-            if (num && num === this._prNumber().toString()) {
+            if (num && num === this._prNumber()) {
                 assert(!mergedSha); // the PR can be merged only once
                 mergedSha = commit.sha;
             }
@@ -1214,11 +1418,6 @@ class PullRequest {
             return true;
         }
         return false;
-    }
-
-    async _getMergeCommit() {
-        const mergeSha = await GH.getReference("pull/" + this._prNumber() + "/merge");
-        return await GH.getCommit(mergeSha);
     }
 
     isSorted(arr) {
@@ -1280,9 +1479,10 @@ class PullRequest {
             this._restagingWouldFail = await this._preventStagingInVain();
             if (await this._mergedSomeTimeAgo()) {
                 this._enterMerged();
-                return;
+            } else {
+                this._signalAbandonmentOfStagingChecks = this._wasStaged;
+                await this._enterBrewing();
             }
-            await this._enterBrewing();
             return;
         }
 
@@ -1356,14 +1556,26 @@ class PullRequest {
 
         this._rawPr = pr;
 
+        let defaultAuthor = null;
+        let stageable = false;
         if (this._prMergeable()) {
             const mergeSha = await GH.getReference(this._mergePath());
             this._mergeCommit = await GH.getCommit(mergeSha);
-            try {
-                this._commitMessage = new CommitMessage(this._rawPr, this._mergeCommit.author);
-            } catch (e) {
-                this._logEx(e, "cannot parse commit message");
-            }
+            defaultAuthor = this._mergeCommit.author;
+            stageable = true;
+        } else {
+            const headCommit = await GH.getCommit(this._prHeadSha());
+            defaultAuthor = headCommit.author;
+        }
+
+        try {
+            this._commitMessage = new CommitMessage(this._rawPr, defaultAuthor, stageable);
+        } catch (e) {
+            if (!(e instanceof PrDescriptionProblem))
+                throw e;
+            this._prDescriptionProblem = e;
+            // saved exception will be used when/if we check commit message
+            assert(!this._commitMessage);
         }
     }
 
@@ -1388,6 +1600,13 @@ class PullRequest {
         const treeShaIsFresh = this._stagedCommit.tree.sha === this._mergeCommit.tree.sha;
         this._log("staged commit tree sha freshness: " + treeShaIsFresh);
         if (!treeShaIsFresh)
+            return false;
+
+        assert(this._stagedCommit.parents.length === 1);
+        const stagedCommitParentSha = this._stagedCommit.parents[0].sha;
+        const parentIsFresh = this._mergeCommit.parents.some(p => p.sha === stagedCommitParentSha);
+        this._log("staged commit parent freshness: " + parentIsFresh);
+        if (!parentIsFresh)
             return false;
 
         const stagedCommitDate = new Date(this._stagedCommit.author.date);
@@ -1524,7 +1743,8 @@ class PullRequest {
         try {
             await GH.updateReference(this._prBaseBranchPath(), this._stagedSha(), false);
         } catch (e) {
-            if (e.name === 'ErrorContext' && e.unprocessable()) {
+            if (e instanceof RequestError && e.status === 422) {
+                // fast-forward failure returns 422 (unprocessable entity)
                 await this._stagedPosition.compute();
                 if (this._stagedPosition.diverged())
                     this._log("could not fast-forward, the base " + this._prBaseBranchPath() + " was probably modified while we were merging");
@@ -1551,7 +1771,6 @@ class PullRequest {
     }
 
     async _createStaged() {
-        const baseSha = await GH.getReference(this._prBaseBranchPath());
         if (!Config.githubUserName())
             await this._acquireUserProperties();
         let now = new Date();
@@ -1560,13 +1779,27 @@ class PullRequest {
         if (this._dryRun("create staged commit"))
             throw this._exObviousFailure("dryRun");
 
+        assert(this._commitMessage.stageable);
+
+        const baseSha = await GH.getReference(this._prBaseBranchPath());
+        // We want to fast-forward this._mergeCommit code changes into the base branch, but we
+        // cannot use both this._mergeCommit.parents as this._stagedCommit parents because that
+        // would create a git merge commit, importing PR branch. We want flat history instead.
+        // Any commit created with baseSha as a parent can be fast-forwarded. To use baseSha, we must
+        // ensure that this._mergeCommit can still be fast-forwarded onto baseSha:
+        if (!this._mergeCommit.parents.some(p => p.sha === baseSha))
+            throw this._exLabeledFailure("PR merge commit is stale", Config.failedOtherLabel());
+        // If base branch changes after the above check, our _stagedPosition.ahead() checks
+        // or, ultimately, GH.updateReference(...force:false) call will reject this._stagedCommit.
         this._stagedCommit = await GH.createCommit(this._mergeCommit.tree.sha, this._commitMessage.whole(), [baseSha], this._commitMessage.author(), committer);
 
         assert(!this._stagingBanned);
         await GH.updateReference(Config.stagingBranchPath(), this._stagedSha(), true);
 
         this._stagedPosition = new BranchPosition(this._prBaseBranch(), Config.stagingBranch());
-        await this._stagedPosition.compute();
+        // If needed, give GitHub extra time to update the staging branch,
+        // even though the GH.updateReference() call above have succeeded.
+        await this._stagedPosition.computeUntilAhead();
         assert(this._stagedPosition.ahead());
 
         await this._enterStaged();
@@ -1746,7 +1979,9 @@ class PullRequest {
         return problem;
     }
 
-    // somebody else appears to perform Anubis-only PR manipulations
+    // After it started processing a PR, Anubis was prohibited from
+    // manipulating that PR or discovered a concurrent Anubis-only PR
+    // manipulation (evidently performed by somebody else).
     // minimize changes to avoid conflicts (but do not block other PRs)
     _exLostControl(why) {
         assert(arguments.length === 1);
@@ -1773,13 +2008,8 @@ class PullRequest {
 }
 
 // promises to update/advance the given PR, hiding PullRequest from callers
-function Process(rawPr, banStaging) {
+export function Process(rawPr, banStaging) {
     let pr = new PullRequest(rawPr, banStaging);
     return pr.process();
 }
-
-
-module.exports = {
-    Process: Process
-};
 

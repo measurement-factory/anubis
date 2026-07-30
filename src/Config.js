@@ -1,6 +1,6 @@
-const fs = require('fs');
-const timestring = require('timestring');
-const assert = require('assert');
+import assert from 'assert';
+import fs from 'fs';
+import timestring from 'timestring';
 
 class ConfigOptions {
     constructor(fname) {
@@ -87,6 +87,7 @@ class ConfigOptions {
     host() { return this._host; }
     port() { return this._port; }
     owner() { return this._owner; }
+    baseUrl() { return 'https://api.github.com'; }
     stagingBranchPath() { return "heads/" + this._stagingBranch; }
     stagingBranch() { return this._stagingBranch; }
     dryRun() { return this._dryRun; }
@@ -103,22 +104,31 @@ class ConfigOptions {
 
     // an unexpected error occurred outside the "staged" phase
     failedOtherLabel() { return "M-failed-other"; }
+
+    // a regex matching any label that is only set for staged PRs
+    stagingLabelRegex() { return /-staging-/; }
+
+    // keep stagingLabelRegex() in sync with these labels:
+
     // an unexpected error occurred during the "staged" phase
     failedStagingOtherLabel() { return "M-failed-staging-other"; }
     // some of required staging checks failed
     failedStagingChecksLabel() { return "M-failed-staging-checks"; }
-    // fast-forward merge succeeded
-    mergedLabel() { return "M-merged"; }
     // merge started (tag and staging branch successfully adjusted)
     waitingStagingChecksLabel() { return "M-waiting-staging-checks"; }
     // passed staging checks (in staging-only mode)
     passedStagingChecksLabel() { return "M-passed-staging-checks"; }
+    // whether the last staged commit for the labeled PR is now being ignored
+    abandonedStagingChecksLabel() { return "M-abandoned-staging-checks"; }
+
+    // fast-forward merge succeeded
+    mergedLabel() { return "M-merged"; }
     // future commit message violates requirements
     failedDescriptionLabel() { return "M-failed-description"; }
     // allows target branch update in 'guarded_run' mode
     clearedForMergeLabel() { return "M-cleared-for-merge"; }
-    // whether the PR was abandoned due to a stale staged commit
-    abandonedStagingChecksLabel() { return "M-abandoned-staging-checks"; }
+    // whether this PR is marked by a human to be skipped
+    ignoredByMergeBotsLabel() { return "M-ignored-by-merge-bots"; }
 
     // an URL of the description of the approval test status
     approvalUrl() { return this._approvalUrl; }
@@ -139,4 +149,4 @@ class ConfigOptions {
 const configFile = process.argv.length > 2 ? process.argv[2] : './config.json';
 const Config = new ConfigOptions(configFile);
 
-module.exports = Config;
+export default Config;

@@ -53,6 +53,7 @@ are satisfied:
 * The PR is approved for merging (see below for voting rules).
 * The PR has a valid title and description (see below for commit message rules).
 * The PR does _not_ have an `M-merged` label.
+* The PR does _not_ have an `M-ignored-by-merge-bots` label.
 
 Satisfying the above conditions results in an attempt to merge the pull
 request (in the ascending PR number order), but merging may still fail.
@@ -161,18 +162,31 @@ request state:
 * `M-cleared-for-merge`: A human has allowed the bot running in
   `config::guarded_run` mode to perform the final merging step --
   updating the target branch. The label has no effect unless the bot is
-  running in that mode. This is the only bot-related label that is meant
+  running in that mode. This is one of a few bot-related label that are meant
   to be set by humans; the bot itself never sets this label. The bot
   removes this label after successfully merging the PR. Avoid setting
   this label unless you are a human responsible for testing the bot.
 * `M-merged`: The PR was successfully merged (and probably closed).
   The bot will not attempt to merge this PR again even if it is
   reopened. The bot never removes this label.
+* `M-ignored-by-merge-bots`: A human marked the PR to be ignored
+   by Anubis: The bot does not modify or merge PRs with this label.
+   This label should be set and removed by humans. Anubis does not
+   set and never removes this label.
 
 All labels except `M-failed-staging-checks`, `M-failed-staging-other`,
-`M-cleared-for-merge`, and `M-merged` are ignored by Anubis! Humans may find
-them useful when determining the current state of a PR.
+`M-cleared-for-merge`, `M-merged`, and `M-ignored-by-merge-bots` are ignored
+by Anubis! Humans may find them useful when determining the current
+state of a PR.
 
+
+## PR title
+
+PR titles are used as staged commit message title prefixes. Commit
+message titles are limited to 72 characters. The automatically added
+`#(NNNN)` title suffix reduces the maximum PR title length to ~64
+characters. PR titles violating line length limits are labeled
+`M-failed-description` and are not merged.
 
 ## PR description
 
@@ -190,8 +204,12 @@ Co-authored-by: Co-Author Two <user2@host2>
 
 All parts are optional. Header and trailer parts are separated from the
 regular PR description paragraph(s) (or each other) by an empty line.
-Additional PR description formatting requirements are documented in the
-"Commit message" section further below.
+
+The length of each header and trailer line is limited to 512 characters,
+which should be enough to accommodate most long emails/URLs. The length
+of regular paragraphs is limited to 72 characters. PR descriptions
+violating line length limits are labeled `M-failed-description` and are
+not merged.
 
 A header and trailer paragraphs consist of special `name: value` metadata
 fields documented below. Header fields are recognized only by the bot. Some
@@ -252,11 +270,8 @@ number appended) and the PR description (without the header, if any) delimited
 by an empty line. Empty and header-only PR descriptions are allowed and result
 in a title-only commit message.
 
-Neither the title nor the description are currently processed to convert
-GitHub markdown to plain text. However, both texts must conform to the
-72 characters/line limit. The automatically added ` #(NNN)` title suffix
-further reduces the maximum PR title length to ~65 characters. PRs violating
-these limits are labeled `M-failed-description` and are not merged.
+Neither the title nor the description are currently processed to convert GitHub
+markdown to plain text.
 
 
 ## Voting and PR approvals
@@ -268,7 +283,15 @@ single event is sufficient for PR disqualification:
 * A GitHub review request naming a core developer.
 
 A PR without disqualifications is considered approved for merging if
-either of the following two conditions is met:
+either of the following three conditions has been met:
+
+* Unanimous: A PR has been approved by all core developers
+  (`config::core_developers`). There is usually no point in waiting longer if
+  each and every decision maker is happy with the PR state. However, a core
+  developer approving a PR must keep in mind that their action may have an
+  _immediate_ merging effect. For example, "LGTM with changes" approvals may
+  not work as intended (especially when `config::guarded_run` is not enabled,
+  or the PR already has an `M-cleared-for-merge` label).
 
 * Fast track: A PR has at least two approvals
   (`config::sufficient_approvals`) by core developers and has been open

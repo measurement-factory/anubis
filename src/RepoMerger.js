@@ -1,9 +1,10 @@
-const assert = require('assert');
-const http = require('http');
-const Config = require('./Config.js');
-const Log = require('./Logger.js');
-const Util = require('./Util.js');
-const Step = require('./PrMerger.js');
+import * as Log from './Logger.js';
+import * as PrMerger from './PrMerger.js';
+import * as Util from './Util.js';
+import Config from './Config.js';
+
+import assert from 'assert';
+import http from 'http';
 
 const Logger = Log.Logger;
 
@@ -16,6 +17,7 @@ class RepoMerger {
         this._running = false;
         this._handler = null;
         this._server = null;
+        this._prIds = null;
     }
 
     _createServer() {
@@ -40,14 +42,21 @@ class RepoMerger {
                 params.host = Config.host();
             this._server.listen(params, () => {
                 let hostStr = Config.host() ? Config.host() : "unspecified";
-                Log.Logger.info("HTTP server started and listening on " + hostStr + ":" + Config.port());
+                Logger.info("HTTP server started and listening on " + hostStr + ":" + Config.port());
                 resolve(true);
             });
         });
     }
 
-    // prNum (if provided) corresponds to a PR, scheduled this 'run'
-    async run(handler) {
+    // prIds is an array of Util.PrId objects collected by event handlers (or null)
+    async run(prIds, handler) {
+        assert(prIds !== undefined);
+        if (prIds === null)
+            this._prIds = null;
+        else if (this._prIds !== null)
+            this._prIds.push(...prIds);
+        // else keep discarding prIds until this._prIds is reset below
+
         if (handler)
             this._handler = handler;
 
@@ -62,12 +71,15 @@ class RepoMerger {
         do {
             try {
                 this._rerun = false;
+                const ids = this._prIds; // may be null
+                this._prIds = [];
                 if (!this._server)
                     await this._createServer();
-                rerunIn = await Step();
+                rerunIn = await PrMerger.Step(ids);
             } catch (e) {
                 Log.LogError(e, "RepoMerger.run");
                 this._rerun = true;
+                this._prIds = null;
                 Logger.info("closing HTTP server");
                 this._server.close(this._onServerClosed.bind(this));
 
@@ -95,7 +107,7 @@ class RepoMerger {
         assert(this._timer === null);
         let date = new Date();
         date.setSeconds(date.getSeconds() + ms/1000);
-        this._timer = setTimeout(this.run.bind(this), ms);
+        this._timer = setTimeout(this.run.bind(this, []), ms);
         Logger.info("planning rerun in " + this._msToTime(ms));
     }
 
@@ -122,7 +134,5 @@ class RepoMerger {
     }
 }
 
-const Merger = new RepoMerger();
-
-module.exports = Merger;
+export const Merger = new RepoMerger();
 
