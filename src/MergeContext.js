@@ -777,7 +777,8 @@ class CommitMessage
     _extractHeader(prDescriptionRaw) {
         const prDescription = this._trim(prDescriptionRaw);
         const headerFieldName = 'Authored-by';
-        if (this._startsWithFieldName(prDescription) === headerFieldName) {
+        const fieldNameCandidate = this._startsWithFieldName(prDescription);
+        if (fieldNameCandidate === headerFieldName) {
             const parsingContext = "PR description header";
             let tokenizer = new FieldsTokenizer(prDescription, parsingContext);
             const authorField = tokenizer.nextField();
@@ -788,6 +789,8 @@ class CommitMessage
                 throw new PrDescriptionProblem(parsingContext, `unexpected header lines after a single Authored-by attribute`, tokenizer.nextField().raw);
             return tokenizer.remaining();
         } else {
+            if (fieldNameCandidate !== null && fieldNameCandidate.toLowerCase() === headerFieldName.toLowerCase())
+                throw new PrDescriptionProblem(parsingContext, `wrong capitalization of ${headerFieldName} attribute`, fieldNameCandidate);
             return prDescription;
         }
     }
@@ -830,10 +833,13 @@ class CommitMessage
 
         while (!tokenizer.atEnd()) {
             const field = tokenizer.nextField();
-            if (field.name === "Co-authored-by") {
+            const headerFieldName = "Co-authored-by";
+            if (field.name === headerFieldName) {
                 const coAuthor = JSON.stringify(this._parseAuthor(field, parsingContext));
                 this._log(`accepting trailer field: ${coAuthor}`);
             } else {
+                if (field.name.toLowerCase() === headerFieldName.toLowerCase())
+                    throw new PrDescriptionProblem(parsingContext, `wrong capitalization of ${headerFieldName} attribute`, field.name);
                 this._checkForTypos(field.name, parsingContext);
             }
             this._checkForTypos(field.value, parsingContext);
