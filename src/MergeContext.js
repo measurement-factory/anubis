@@ -1441,6 +1441,7 @@ class PullRequest {
     }
 
     _isRestagingCandidate(abandonedStagedCommit) {
+        // XXX: cannot compare with absent this._mergeCommit
         assert(this._mergeCommit);
         return abandonedStagedCommit.tree.sha === this._mergeCommit.tree.sha;
     }
