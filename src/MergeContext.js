@@ -735,7 +735,7 @@ class CommitMessage
         return str.replace(/^\s*\n+/g, '').trimEnd();
     }
 
-    // returns either a string containing canonical spelling of the first paragraph word
+    // returns either a string containing the first paragraph word
     // that is followed by a colon, or null
     _paragraphLabel(str) {
         if (/^\s{4}/.test(str)) // not a regular paragraph but a quotation
@@ -743,8 +743,7 @@ class CommitMessage
         const rawLabel = str.match(/^\s*([\w-]+):/);
         if (!rawLabel)
             return null;
-        const label = rawLabel[1].toLowerCase();
-        return label[0].toUpperCase() + label.substring(1);
+        return rawLabel[1];
     }
 
     // returns either paragraphLabel(x) if that value contains a dash, or null
@@ -773,12 +772,18 @@ class CommitMessage
         return {name: cred[1].trim(), email: cred[2].trim()};
     }
 
+    _checkCapitalization(fieldNameCandidate, headerFieldName, parsingContext) {
+        if (fieldNameCandidate !== null && fieldNameCandidate.toLowerCase() === headerFieldName.toLowerCase())
+            throw new PrDescriptionProblem(parsingContext, `wrong capitalization of ${headerFieldName} attribute`, fieldNameCandidate);
+    }
+
     // returns the passed description without header (if any)
     _extractHeader(prDescriptionRaw) {
         const prDescription = this._trim(prDescriptionRaw);
         const headerFieldName = 'Authored-by';
-        if (this._startsWithFieldName(prDescription) === headerFieldName) {
-            const parsingContext = "PR description header";
+        const parsingContext = "PR description header";
+        const fieldNameCandidate = this._startsWithFieldName(prDescription);
+        if (fieldNameCandidate !== null && fieldNameCandidate === headerFieldName) {
             let tokenizer = new FieldsTokenizer(prDescription, parsingContext);
             const authorField = tokenizer.nextField();
             assert(authorField);
@@ -788,6 +793,7 @@ class CommitMessage
                 throw new PrDescriptionProblem(parsingContext, `unexpected header lines after a single Authored-by attribute`, tokenizer.nextField().raw);
             return tokenizer.remaining();
         } else {
+            this._checkCapitalization(fieldNameCandidate, headerFieldName, parsingContext);
             return prDescription;
         }
     }
@@ -830,10 +836,12 @@ class CommitMessage
 
         while (!tokenizer.atEnd()) {
             const field = tokenizer.nextField();
-            if (field.name === "Co-authored-by") {
+            const headerFieldName = "Co-authored-by";
+            if (field.name === headerFieldName) {
                 const coAuthor = JSON.stringify(this._parseAuthor(field, parsingContext));
                 this._log(`accepting trailer field: ${coAuthor}`);
             } else {
+                this._checkCapitalization(field.name, headerFieldName, parsingContext);
                 this._checkForTypos(field.name, parsingContext);
             }
             this._checkForTypos(field.value, parsingContext);
