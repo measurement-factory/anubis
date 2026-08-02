@@ -101,6 +101,15 @@ async function waitFor(description, code) {
     throw new Error(`Timed out waiting for ${description}`);
 }
 
+export async function getIssueEvents(prNum) {
+    let params = commonParams();
+    params.issue_number = prNum;
+
+    const events = await paginatedGet(GitHub.rest.issues.listEvents, params);
+    logApiResult(getIssueEvents.name, params, {events: events.length});
+    return events;
+}
+
 // Gets PR metadata from GitHub
 // If requested and needed, retries until GitHub calculates PR mergeable flag.
 // Those retries, if any, are limited to a few minutes.
@@ -174,14 +183,18 @@ export async function createCommit(treeSha, message, parents, author, committer)
     return await rateLimitedPromise(result);
 }
 
-// returns one of: "ahead", "behind", "identical" or "diverged"
-export async function compareCommits(baseRef, headRef) {
+// if diffFormat=false, returns one of: "ahead", "behind", "identical" or "diverged"
+// if diffFormat=true,  returns the result of comparison in the unified diff format
+export async function compareCommits(baseRef, headRef, diffFormat = false) {
     let params = commonParams();
     params.basehead = `${baseRef}...${headRef}`;
+    if (diffFormat)
+        params.mediaType = { format: "diff" }; // default format is 'json'
 
     const result = await GitHub.rest.repos.compareCommitsWithBasehead(params);
-    logApiResult(compareCommits.name, params, {status: result.data.status});
-    return (await rateLimitedPromise(result)).status;
+    const logResult = diffFormat ? {diff: result.data.length} : {status: result.data.status};
+    logApiResult(compareCommits.name, params, logResult);
+    return (await rateLimitedPromise(result));
 }
 
 export async function getCommits(branch, since) {
