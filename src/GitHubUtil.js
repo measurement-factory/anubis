@@ -102,7 +102,6 @@ async function waitFor(description, code) {
 }
 
 export async function getIssueEvents(prNum) {
-
     let params = commonParams();
     params.issue_number = prNum;
 
@@ -184,7 +183,8 @@ export async function createCommit(treeSha, message, parents, author, committer)
     return await rateLimitedPromise(result);
 }
 
-// returns one of: "ahead", "behind", "identical" or "diverged"
+// if diffFormat=false, returns one of: "ahead", "behind", "identical" or "diverged"
+// if diffFormat=true,  returns the result of comparison in the unified diff format
 export async function compareCommits(baseRef, headRef, diffFormat = false) {
     let params = commonParams();
     params.basehead = `${baseRef}...${headRef}`;
@@ -192,12 +192,8 @@ export async function compareCommits(baseRef, headRef, diffFormat = false) {
         params.mediaType = { format: "diff" }; // default format is 'json'
 
     const result = await GitHub.rest.repos.compareCommitsWithBasehead(params);
-
-    if (diffFormat)
-        logApiResult(compareCommits.name, params, {diff: result.data.length});
-    else
-        logApiResult(compareCommits.name, params, {status: result.data.status});
-
+    const logResult = diffFormat ? {diff: result.data.length} : {status: result.data.status};
+    logApiResult(compareCommits.name, params, logResult);
     return (await rateLimitedPromise(result));
 }
 

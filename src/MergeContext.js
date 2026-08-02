@@ -521,8 +521,8 @@ class BranchPosition
     }
 
     async compute() {
-        const data = await GH.compareCommits(this._baseRef, this._featureRef);
-        this._status = data.status;
+        const difference = await GH.compareCommits(this._baseRef, this._featureRef);
+        this._status = difference.status;
         return this._status;
     }
 
@@ -1419,9 +1419,9 @@ class PullRequest {
         return false;
     }
 
-    isSorted(arr) {
+    isChronologicallySorted(arr) {
         for (let i = 0; i < arr.length-1; ++i) {
-            if (arr[i] > arr[i+1])
+            if (arr[i].created_at > arr[i+1].created_at)
                 return false;
         }
         return true;
@@ -1436,7 +1436,7 @@ class PullRequest {
             return null;
 
         // we expect that GitHub yields events in chronological order
-        assert(this.isSorted(stagingEvents));
+        assert(this.isChronologicallySorted(stagingEvents));
 
         const lastStagingEvent = stagingEvents[stagingEvents.length - 1];
         return await GH.getCommit(lastStagingEvent.commit_id);
@@ -1543,6 +1543,8 @@ class PullRequest {
     _enterMerged() {
         this._prState = PrState.Merged();
 
+        // it is not possible to 'restage' in the merged stage
+        this._restagingWouldFail = false;
         // do not signal about the old staged commit when we have a merged one
         this._signalAbandonmentOfStagingChecks = false; // may already be false
     }
