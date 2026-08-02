@@ -521,7 +521,8 @@ class BranchPosition
     }
 
     async compute() {
-        this._status = await GH.compareCommits(this._baseRef, this._featureRef);
+        const data = await GH.compareCommits(this._baseRef, this._featureRef);
+        this._status = data.status;
         return this._status;
     }
 
@@ -1116,7 +1117,7 @@ class PullRequest {
         }
 
         // all check runs are 'required'
-        const uniqueCheckRuns = await this._getUniqueCheckRuns(this._stagedSha());
+        const uniqueCheckRuns = await this._getUniqueCheckRuns(stagedSha);
         for (let st of uniqueCheckRuns)
             statusChecks.addRequiredStatus(StatusCheck.FromCheckRun(st));
 
@@ -1430,6 +1431,7 @@ class PullRequest {
         const allEvents = await GH.getIssueEvents(this._prNumber());
         // staging events are PR events where the bot user created a commit referencing this PR
         let stagingEvents = allEvents.filter(ev => ev.event === "referenced" && ev.actor.login === Config.githubUserLogin());
+        this._log(`abandoned staged commits number: ${stagingEvents.length}`);
         if (!stagingEvents.length)
             return null;
 
@@ -1440,10 +1442,15 @@ class PullRequest {
         return await GH.getCommit(lastStagingEvent.commit_id);
     }
 
-    _isRestagingCandidate(abandonedStagedCommit) {
-        // XXX: cannot compare with absent this._mergeCommit
-        assert(this._mergeCommit);
-        return abandonedStagedCommit.tree.sha === this._mergeCommit.tree.sha;
+    async _isRestagingCandidate(abandonedStagedCommit) {
+        this._log(`abandoned restaging candidate: ${abandonedStagedCommit.sha}`);
+        if (!this._authorAndMessageAreFresh(abandonedStagedCommit))
+            return false;
+        const diffAbandoned = await GH.compareCommits(this._prBaseBranch(), abandonedStagedCommit.sha, true);
+        const diffPrBranch = await GH.compareCommits(this._prBaseBranch(), this._prHeadSha(), true);
+        const isFresh = (diffPrBranch === diffAbandoned);
+        this._log(`abandoned restaging candidate freshness: ${isFresh}`);
+        return isFresh;
     }
 
     // whether we should not stage (because we likely to fail again)
@@ -1462,7 +1469,7 @@ class PullRequest {
         if (!abandonedStagedCommit)
             return false; // we have not staged this PR (in recent memory)
 
-        if (!this._isRestagingCandidate(abandonedStagedCommit))
+        if (!(await this._isRestagingCandidate(abandonedStagedCommit)))
             return false; // something has changed
 
         // note that any unfinished tests are acceptable
@@ -1580,22 +1587,29 @@ class PullRequest {
         }
     }
 
-    // Whether the staged commit metadata remained intact since staging.
-    async _stagedCommitMetadataIsFresh() {
+    _authorAndMessageAreFresh(stagedCommit) {
         if (!this._commitMessage) {
             this._log("staged commit message became invalid (and will be treated as stale)");
             return false;
         }
-        const result = this._commitMessage.whole() === this._stagedCommit.message;
+        const result = this._commitMessage.whole() === stagedCommit.message;
         this._log("staged commit message freshness: " + result);
         if (!result)
             return false;
 
-        const oldAuthor = this._stagedCommit.author;
+        const oldAuthor = stagedCommit.author;
         const newAuthor = this._commitMessage.author();
         const authorIsFresh = oldAuthor.name === newAuthor.name && oldAuthor.email === newAuthor.email;
         this._log("staged commit author freshness: " + authorIsFresh);
         if (!authorIsFresh)
+            return false;
+
+        return true;
+    }
+
+    // Whether the staged commit metadata remained intact since staging.
+    async _stagedCommitMetadataIsFresh() {
+        if (!this._authorAndMessageAreFresh(this._stagedCommit))
             return false;
 
         const mergeSha = await GH.getReference(Config.botMergeBranchPath());
